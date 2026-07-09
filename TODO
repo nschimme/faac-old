@@ -1,4 +1,21 @@
 - add PCE (Program Config Element)
+- rate-aware long-window coding below ~18 kbps/ch, where side info is most of the frame (the side-info ceiling was only measured at 96k)
+- stereo: threshold the side channel from L/R masking; apply_ms zeroes it at 3-12 kHz on wide material
 - HE-AAC v1: SBR noise floor / invf mode from within-band tonality
 - HE-AAC v1: Move numEnvelopes/eff_amp_res/tEnv to SBRChannel for independent borders
 - HE-AAC v1: Use dedicated noise Huffman tables in write_sbr_noise
+- VBR: SBR reads quantqual * 1280 as a rate for amp_res and the band table; measure the two tiers at -q
+- VBR: recalibrate -q; short-block targets (#528) and the quiet-band slope move bits at fixed -q
+- LC 96-192k gap vs Apple/fdk is spectrum coding at equal bits (fdk codes low-band tonal lines ~15 dB finer); untried: per-line RD quantization (q vs q-1 by Huffman cost), size the ceiling offline first
+
+Measured and closed; don't retry without a new mechanism (MOS deltas at 96k unless noted):
+- sectioning: DP (#513, fixed to 16 books) +0.017 for +5.2 KB and +16-28 % Ir; greedy keep-in-section (#221) landed; zero-island merge -0.12 % bytes for +1.3 KB
+- side info: sf/section ceiling +0.025 even at zero quality cost (every lever alone < +0.011)
+- stereo: sparsity mute removed (#225); fdk's M/S flags +0.010, true M/S on every band -0.045, S with its own scalefactors -0.015; M/S threshold x0.3-0.6 +0.005 (gate only); IS off on long windows -0.15
+- TNS: loosened gates +0.005, 3 filters/order 12 -0.002, short-window TNS -0.01..-0.06, raw-domain gain check (#544) -0.002; current TNS is worth +0.01 at 32k input
+- block switching: fdk's schedule -0.072, best-of-both oracle +0.010, attack ratio sweep a clip-dependent wash
+- psy model: fdk's scalefactor shape as oracle -0.006 (+ band class -0.065); Bark spreading +0.001 for +1.6 KB; local reference, post-masking, loudness exponent 0.3/0.5 all lose; KBD window -0.02..-0.03; two-loop NMR, PE allocation and log-domain rate control all regressed
+- PNS: tonal/transient vetoes lose (-0.02..-0.30), extension +0.002; level 4 optimal except 16 kHz mono
+- HE core: long windows lose below 14 kbps/ch (detector above it landed in #224); PNS-free core -0.60; stopping the core at the crossover (#540) +-0.000
+- SBR: tonality-driven invf/noise/harmonics (#520) -0.023, each alone 0; invf 2 +0.0045; 3 noise bands -0.003; more FIXFIX envelopes -0.01..-0.04; time deltas (#534) +0.003 for +1.1 KB, + coupling (#535) +0.007 for +3.7 KB; bs_start_freq 14 -0.115, 12 -0.23; envelope level is exact
+- SBR noise Huffman tables and per-channel borders: only matter with >1 noise band or envelope, both measured dead above
