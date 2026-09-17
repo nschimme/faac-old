@@ -5,7 +5,6 @@
 #ifndef LIBFAAM_INTERNAL_H
 #define LIBFAAM_INTERNAL_H
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -26,8 +25,6 @@ typedef struct {
 
 struct faam_demuxer {
     faam_io io;
-    FILE *file_handle;
-    bool is_heap_allocated;
 
     faam_asc_info asc_info;
     uint8_t asc_buf[64];
@@ -35,6 +32,14 @@ struct faam_demuxer {
 
     faam_gapless_info gapless;
     bool has_gapless;
+
+    /* Raw edts/elst edit-list entry, used as a gapless fallback (see
+     * faam_parse_stream()) when no iTunSMPB tag is present -- e.g. files
+     * produced by non-Apple encoders/muxers that only write the
+     * standards-based edit list. */
+    uint64_t elst_media_time;
+    uint64_t elst_segment_duration;
+    bool has_elst;
 
     faam_metadata metadata;
     faam_chapter chapters[64];
@@ -54,8 +59,6 @@ struct faam_demuxer {
 
 struct faam_muxer {
     faam_io io;
-    FILE *file_handle;
-    bool is_heap_allocated;
 
     faam_muxer_config cfg;
     uint8_t asc_buf[64];

@@ -2,6 +2,7 @@
  * Full Thread-Safe ISO BMFF Muxer Engine for libfaam
  */
 
+#include <stdio.h>
 #include "libfaam_internal.h"
 
 #if defined(__has_builtin)
@@ -72,8 +73,6 @@ static inline void mem_write(faam_muxer *m, const void *data, size_t size) {
         if (!grow_membuf(m, size)) { m->mem_error = 1; return; }
         memcpy(m->membuf + m->mempos, data, size);
         m->mempos += size;
-    } else if (m->file_handle && !m->mem_error) {
-        if (fwrite(data, 1, size, m->file_handle) != size) m->mem_error = 1;
     } else if (m->io.write && !m->mem_error) {
         if (m->io.write(m->io.user_data, data, (uint32_t)size) != (int32_t)size) m->mem_error = 1;
     }
@@ -121,7 +120,7 @@ static inline void put_u8(faam_muxer *m, uint8_t val) { mem_write(m, &val, 1); }
 static inline void put_data(faam_muxer *m, const void *data, size_t size) { mem_write(m, data, size); }
 
 static inline long start_atom(faam_muxer *m, const char *name) {
-    long pos = m->membuf ? (long)m->mempos : (m->file_handle ? ftell(m->file_handle) : (long)m->io.tell(m->io.user_data));
+    long pos = m->membuf ? (long)m->mempos : (long)m->io.tell(m->io.user_data);
     put_u32(m, 0);
     put_data(m, name, 4);
     return pos;
@@ -134,11 +133,6 @@ static inline void end_atom(faam_muxer *m, long pos) {
         size = BSWAP32(size);
 #endif
         memcpy(m->membuf + pos, &size, 4);
-    } else if (m->file_handle) {
-        long curr = ftell(m->file_handle);
-        fseek(m->file_handle, pos, SEEK_SET);
-        put_u32(m, (uint32_t)(curr - pos));
-        fseek(m->file_handle, curr, SEEK_SET);
     } else if (m->io.seek && m->io.write && m->io.tell) {
         uint64_t curr = m->io.tell(m->io.user_data);
         m->io.seek(m->io.user_data, (uint64_t)pos);
@@ -304,9 +298,7 @@ faam_status faam_muxer_write_frame(faam_muxer *m, const uint8_t *frame_buf, uint
 {
     if (!m || !frame_buf || frame_bytes == 0) return FAAM_ERR_INVALID_ARG;
 
-    if (m->file_handle) {
-        if (fwrite(frame_buf, 1, frame_bytes, m->file_handle) != frame_bytes) return FAAM_ERR_IO_WRITE;
-    } else if (m->io.write) {
+    if (m->io.write) {
         if (m->io.write(m->io.user_data, frame_buf, frame_bytes) != (int32_t)frame_bytes) return FAAM_ERR_IO_WRITE;
     }
 
@@ -363,14 +355,8 @@ faam_status faam_muxer_finalize(faam_muxer *m)
     if (!m) return FAAM_ERR_INVALID_ARG;
     m->mem_error = 0;
 
-    /* Write updated mdat atom size directly to file/stream before allocating membuf for moov */
-    if (m->file_handle) {
-        long pos = ftell(m->file_handle);
-        fseek(m->file_handle, (long)m->mdat_pos - 8, SEEK_SET);
-        uint32_t sz_be = BSWAP32((uint32_t)(m->mdat_size + 8));
-        fwrite(&sz_be, 1, 4, m->file_handle);
-        fseek(m->file_handle, pos, SEEK_SET);
-    } else if (m->io.seek && m->io.write) {
+    /* Write updated mdat atom size directly to the stream before allocating membuf for moov */
+    if (m->io.seek && m->io.write) {
         uint64_t pos = m->io.tell ? m->io.tell(m->io.user_data) : 0;
         m->io.seek(m->io.user_data, m->mdat_pos - 8);
         uint32_t sz_be = BSWAP32((uint32_t)(m->mdat_size + 8));
@@ -572,9 +558,7 @@ faam_status faam_muxer_finalize(faam_muxer *m)
     end_atom(m, udta);
     end_atom(m, moov);
 
-    if (m->file_handle) {
-        fwrite(m->membuf, 1, m->mempos, m->file_handle);
-    } else if (m->io.write) {
+    if (m->io.write) {
         m->io.write(m->io.user_data, m->membuf, (uint32_t)m->mempos);
     }
 
@@ -587,11 +571,9 @@ faam_status faam_muxer_finalize(faam_muxer *m)
 void faam_muxer_close(faam_muxer *m)
 {
     if (!m) return;
-    if (m->file_handle) fclose(m->file_handle);
     if (m->samples) free(m->samples);
     if (m->stts_entries) free(m->stts_entries);
     if (m->membuf) free(m->membuf);
-    if (m->is_heap_allocated) free(m);
 }
 
 faam_status faam_muxer_get_info(const faam_muxer *m, faam_muxer_info *out_info)

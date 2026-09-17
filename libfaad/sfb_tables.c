@@ -2,9 +2,8 @@
  * ISO/IEC 14496-3 Scale Factor Band (SFB) Tables
  */
 
+#include "faad_internal.h"
 #include "sfb_tables.h"
-
-extern const uint32_t faad_sample_rates[16];
 
 /* 96000 Hz / 88200 Hz Long (41 SFBs, 42 entries) */
 static const uint16_t sfb_1024_96000[] = {
