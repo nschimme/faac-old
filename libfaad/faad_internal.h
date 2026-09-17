@@ -130,6 +130,38 @@ typedef struct {
     ICSInfo ics[2];
 } CPEInfo;
 
+#ifdef FAAD_STATS
+/* Aggregate, opt-in decoder diagnostics -- mirrors libfaac's FAAC_STATS in
+ * spirit (see libfaac/stats.h), but embedded per-decoder rather than a
+ * process-wide global: test_faad.c decodes with multiple concurrent
+ * faad_decoder instances, and a global would race and corrupt across them. */
+typedef struct FaadDecStats {
+    unsigned int totalFrames;
+    unsigned int elementCounts[8]; /* indexed by syntax_id: SCE,CPE,CCE,LFE,DSE,PCE,FIL,END */
+    unsigned int nonEndTermination;
+
+    unsigned int lastChannels;
+    bool haveLastChannels;
+    unsigned int channelCountChanges;
+    unsigned int minChannels, maxChannels;
+
+    unsigned int icsCount;
+    unsigned int tnsActiveFrames;
+    unsigned int shortBlockIcsCount;
+    unsigned int sbrActiveFrames;
+
+    unsigned int huffEscapeHits[13]; /* 1..11 spectral books, 12 = scalefactor book */
+    unsigned int huffEscapeMisses;
+    unsigned int escbookMagnitudeEscapes;
+
+    unsigned int fillElementCount;
+    unsigned int fillElementPadBitsSum;
+    unsigned int fillElementMaxPad;
+
+    unsigned int errorConcealmentFrames;
+} FaadDecStats;
+#endif
+
 typedef struct {
     bool header_present;
     bool enable_iid;
@@ -186,11 +218,23 @@ struct faad_decoder {
     uint32_t pns_seed;
     uint32_t consecutive_errors;
     float prev_spec[MAX_CHANNELS][FRAME_LEN_LONG];
+
+#ifdef FAAD_STATS
+    FaadDecStats stats;
+#endif
 };
 
 void setup_sfb_offsets(ICSInfo *ics, uint32_t sample_rate);
-faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sample_rate);
-faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec);
+faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sample_rate
+#ifdef FAAD_STATS
+    , FaadDecStats *stats
+#endif
+);
+faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
+#ifdef FAAD_STATS
+    , FaadDecStats *stats
+#endif
+);
 void dequantize_spectrum(ICSInfo *ics, float *spec);
 void apply_pns(ICSInfo *ics, float *spec, uint32_t *pns_seed);
 void apply_ms_stereo(CPEInfo *cpe, float *spec_l, float *spec_r);
