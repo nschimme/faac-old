@@ -566,7 +566,7 @@ int main(int argc, char **argv)
     }
     fifo_free(&fifo);
 
-    double duration_sec = (double)(frames_decoded * 1024) / (sample_rate ? sample_rate : 44100);
+    double duration_sec = (double)(frames_decoded * (obj_type == FAAD_OBJ_HE_AAC_V1 ? 2048 : 1024)) / (sample_rate ? sample_rate : 44100);
     double avg_bitrate_kbps = (file_len * 8.0) / (duration_sec > 0 ? duration_sec * 1000.0 : 1.0);
 
     if (json_info) {
