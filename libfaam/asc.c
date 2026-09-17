@@ -120,7 +120,13 @@ faam_status faam_asc_build(const faam_asc_info *info, uint8_t *out_asc, uint32_t
     memset(out_asc, 0, asc_cap);
     bitwriter bw = { out_asc, asc_cap * 8, 0 };
 
-    bw_put(&bw, obj & 0x1F, 5);
+    if (obj >= 32) {
+        /* AOT-escape form, mirroring faam_asc_parse()'s aot==31 read below. */
+        bw_put(&bw, 31, 5);
+        bw_put(&bw, obj - 32, 6);
+    } else {
+        bw_put(&bw, obj, 5);
+    }
     bw_put(&bw, sr_idx, 4);
     bw_put(&bw, ch & 0x0F, 4);
 
