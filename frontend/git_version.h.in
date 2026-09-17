@@ -1,2 +1,0 @@
-#pragma once
-#define FAAC_GIT_VERSION "@GIT_VERSION@"
