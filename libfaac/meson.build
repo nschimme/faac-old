@@ -49,23 +49,19 @@ common_src = [
     'util.h',
 ]
 
-# fft.c, sbr_tables.c and huffdata.c are shared verbatim with libfaad (decoder
-# tables/transform are the same non-copyrightable ISO/IEC 14496-3 data and FFT
-# engine). Built once here, as a static-only helper, and link_with'd into both
-# libfaac and libfaad so a consumer linking both static archives into one
-# program doesn't hit duplicate-symbol errors from two independent copies of
-# these non-static globals.
+# Shared ISO tables/FFT engine static helper for libfaad and internal targets.
 libfaac_common_static = static_library(
     'faac_common',
     ['fft.c', 'fft.h', 'sbr_tables.c', 'sbr_tables.h', 'huffdata.c', 'huffdata.h'],
     include_directories: ['..', '../include'],
     c_args: c_args,
-    dependencies: [libm],
     gnu_symbol_visibility: 'hidden',
-    override_options: ['b_lto=false'],
 )
 
 libfaac = disabler()
+
+# Derives library shared object version directly from project_version in root meson.build
+project_ver = meson.project_version()
 
 common_args = {
     'include_directories' : ['..', '../include'],
@@ -78,7 +74,6 @@ common_args = {
 
 default_lib = get_option('default_library')
 
-# LTO on the static archive ships unportable compiler bytecode, so keep it off.
 if default_lib == 'static' or default_lib == 'both'
     libfaac_static = static_library(
         'faac',
@@ -94,8 +89,7 @@ if default_lib == 'shared' or default_lib == 'both'
         'faac',
         common_src,
         kwargs : common_args + {
-          # Keep in sync with FAAC_VERSION_MAJOR/MINOR/PATCH in include/faac.h.
-          'version' : '2.0.0',
+          'version' : project_ver,
           'vs_module_defs' : 'libfaac.def',
         },
     )
@@ -113,6 +107,6 @@ pkgconfig.generate(
     libfaac,
     name: 'FAAC',
     description: 'Freeware Advanced Audio Coder',
-    version: meson.project_version(),
+    version: project_ver,
     filebase: 'faac'
 )
