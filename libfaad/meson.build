@@ -10,9 +10,6 @@ faad_src = [
     'imdct.c',
     'sbr.c',
     'sfb_tables.c',
-    '../libfaac/huffdata.c',
-    '../libfaac/fft.c',
-    '../libfaac/sbr_tables.c',
 ]
 
 faad_c_args = c_args
@@ -23,10 +20,13 @@ if not get_option('decoder-ps')
     faad_c_args += ['-DFAAD_DISABLE_PS']
 endif
 
+thread_dep = dependency('threads', required: false)
+
 common_args = {
     'include_directories' : ['..', '../include', '../libfaac'],
     'c_args' : faad_c_args,
-    'dependencies' : [libm],
+    'dependencies' : [libm, thread_dep],
+    'link_with' : [libfaac_common_static],
     'install' : true,
     'gnu_symbol_visibility' : 'hidden',
 }
@@ -72,5 +72,6 @@ test_faad = executable('test_faad',
     'test_faad.c',
     include_directories: ['..', '../include'],
     link_with: [libfaad],
+    dependencies: [thread_dep],
 )
 test('faad_smoke_test', test_faad)

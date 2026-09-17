@@ -2,6 +2,7 @@
  * Stream-based Demuxer Engine for libfaam (Recursive ISO MP4/M4A/M4B Box Walker)
  */
 
+#include <stdio.h>
 #include "libfaam_internal.h"
 
 typedef struct {
@@ -92,7 +93,8 @@ static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, str
             memcmp(type, "mdia", 4) == 0 || memcmp(type, "minf", 4) == 0 ||
             memcmp(type, "stbl", 4) == 0 || memcmp(type, "udta", 4) == 0 ||
             memcmp(type, "meta", 4) == 0 || memcmp(type, "ilst", 4) == 0 ||
-            memcmp(type, "stsd", 4) == 0 || memcmp(type, "mp4a", 4) == 0) {
+            memcmp(type, "stsd", 4) == 0 || memcmp(type, "mp4a", 4) == 0 ||
+            memcmp(type, "edts", 4) == 0) {
             long sub_offset = payload_offset;
             if (memcmp(type, "meta", 4) == 0) sub_offset += 4;
             if (memcmp(type, "stsd", 4) == 0) sub_offset += 8;
@@ -128,6 +130,31 @@ static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, str
                     d->has_gapless = true;
                     break;
                 }
+            }
+        } else if (memcmp(type, "elst", 4) == 0 && !d->has_elst && payload_offset + 8 <= payload_end) {
+            uint8_t version = buf[payload_offset];
+            long p = payload_offset + 4;
+            uint32_t entry_count = read_u32_be(buf + p);
+            p += 4;
+            uint32_t entry_size = version == 1 ? 20 : 12;
+            for (uint32_t e = 0; e < entry_count && p + entry_size <= payload_end; e++, p += entry_size) {
+                uint64_t seg_dur, media_time_raw, empty_edit_sentinel;
+                if (version == 1) {
+                    seg_dur = read_u64_be(buf + p);
+                    media_time_raw = read_u64_be(buf + p + 8);
+                    empty_edit_sentinel = 0xFFFFFFFFFFFFFFFFULL;
+                } else {
+                    seg_dur = read_u32_be(buf + p);
+                    media_time_raw = read_u32_be(buf + p + 4);
+                    empty_edit_sentinel = 0xFFFFFFFFULL;
+                }
+                /* Skip "empty edit" entries (media_time == -1); the first
+                 * real entry carries the gapless trim. */
+                if (media_time_raw == empty_edit_sentinel) continue;
+                d->elst_segment_duration = seg_dur;
+                d->elst_media_time = media_time_raw;
+                d->has_elst = true;
+                break;
             }
         } else if (memcmp(type, "stsz", 4) == 0 && payload_offset + 12 <= payload_end) {
             *fixed_sample_size = read_u32_be(buf + payload_offset + 4);
@@ -226,6 +253,19 @@ static faam_status faam_parse_stream(struct faam_demuxer *d, const uint8_t *buf,
     if (stsz_table) free(stsz_table);
     if (stsc_table) free(stsc_table);
     if (stco_table) free(stco_table);
+
+    /* Fall back to the edts/elst edit list for gapless trim when no
+     * iTunSMPB tag was found -- e.g. files muxed by ffmpeg, Android's own
+     * muxer, or anything else that only writes the standards-based edit
+     * list. total_frames is only known now that stsz has been walked, since
+     * edts precedes stbl within a trak. */
+    if (!d->has_gapless && d->has_elst) {
+        uint64_t total_raw_samples = (uint64_t)d->total_frames * 1024;
+        d->gapless.encoder_delay = (uint32_t)d->elst_media_time;
+        uint64_t audible = d->elst_segment_duration + d->elst_media_time;
+        d->gapless.end_padding = (uint32_t)(total_raw_samples > audible ? total_raw_samples - audible : 0);
+        d->has_gapless = true;
+    }
 
     if (d->asc_len == 0) {
         d->asc_info.object_type = 2;

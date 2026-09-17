@@ -27,6 +27,10 @@
 #define FRAME_LEN_SHORT 128
 #define NUM_WINDOWS 8
 
+/* ISO/IEC 14496-3 Table 1.16 sampling_frequency_index, shared by asc.c
+ * (parsing) and sfb_tables.c (scale-factor-band table selection). */
+extern const uint32_t faad_sample_rates[16];
+
 /* Syntactic Element IDs per ISO 14496-3 */
 #define ID_SCE 0x0
 #define ID_CPE 0x1
