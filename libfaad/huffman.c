@@ -44,7 +44,14 @@ typedef struct {
     uint16_t sym;
 } HuffEscEntry;
 
-static HuffEscEntry huff_esc_table[13][64];
+/* Codewords >= 12 bits fall through the direct 11-bit LUT into this table,
+ * searched linearly. 64 slots silently dropped real codewords -- book09 has
+ * 88 such entries and book12 (scalefactors) has 86 -- so any coefficient or
+ * scalefactor delta landing on a dropped codeword made decode_huffman_symbol/
+ * decode_huffman_scalefactor return 0 while consuming zero bits, desyncing
+ * the rest of the element. 128 covers the real maximum (88) with headroom. */
+#define HUFF_ESC_TABLE_CAP 128
+static HuffEscEntry huff_esc_table[13][HUFF_ESC_TABLE_CAP];
 static uint8_t huff_esc_count[13];
 
 static bool huff_luts_initialized = false;
@@ -76,7 +83,7 @@ void init_huffman_luts(void)
         /* Build compact escape table for codewords >= 12 bits */
         huff_esc_count[b] = 0;
         for (int i = 0; i < size; i++) {
-            if (table[i].len >= 12 && huff_esc_count[b] < 64) {
+            if (table[i].len >= 12 && huff_esc_count[b] < HUFF_ESC_TABLE_CAP) {
                 huff_esc_table[b][huff_esc_count[b]].len = (uint8_t)table[i].len;
                 huff_esc_table[b][huff_esc_count[b]].data = table[i].data;
                 huff_esc_table[b][huff_esc_count[b]].sym = (uint16_t)i;
@@ -103,7 +110,7 @@ void init_huffman_luts(void)
 
     huff_esc_count[12] = 0;
     for (int i = 0; i < 121; i++) {
-        if (book12[i].len >= 12 && huff_esc_count[12] < 64) {
+        if (book12[i].len >= 12 && huff_esc_count[12] < HUFF_ESC_TABLE_CAP) {
             huff_esc_table[12][huff_esc_count[12]].len = (uint8_t)book12[i].len;
             huff_esc_table[12][huff_esc_count[12]].data = book12[i].data;
             huff_esc_table[12][huff_esc_count[12]].sym = (uint16_t)i;
@@ -199,9 +206,19 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y)
         *x -= 4;
         *y -= 4;
     } else if (book == 11) {
-        /* Codebook 11 (ESCBOOK): decode escape sequence FIRST for max magnitude (16) */
+        /* Codebook 11 (ESCBOOK): sign bits for both values come immediately
+         * after the Huffman codeword -- matching how libfaac's encoder
+         * actually packs them (HCB_ESC in huff2.c appends both sign bits to
+         * the codeword's own bit pattern before separately appending any
+         * escape-sequence data) -- not after the escape sequence. Reading
+         * escape data first only desyncs when a value actually needs
+         * escaping (magnitude >= 16), which is why this went unnoticed on
+         * quieter content. */
         int abs_x = *x;
         int abs_y = *y;
+        bool neg_x = abs_x && bits_get(bs, 1);
+        bool neg_y = abs_y && bits_get(bs, 1);
+
         if (abs_x == 16) {
             int prefix = 0;
             while (bits_get(bs, 1) == 1) prefix++;
@@ -212,15 +229,8 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y)
             while (bits_get(bs, 1) == 1) prefix++;
             abs_y = (1 << (prefix + 4)) + bits_get(bs, prefix + 4);
         }
-        /* Read sign bits AFTER escape sequence per ISO/IEC 14496-3 Section 4.6.3 */
-        if (abs_x) {
-            if (bits_get(bs, 1)) abs_x = -abs_x;
-        }
-        if (abs_y) {
-            if (bits_get(bs, 1)) abs_y = -abs_y;
-        }
-        *x = abs_x;
-        *y = abs_y;
+        *x = neg_x ? -abs_x : abs_x;
+        *y = neg_y ? -abs_y : abs_y;
     } else if (book == 5 || (book >= 7 && book <= 10)) {
         /* Unsigned 2-tuple: read sign bit for non-zero values */
         if (*x) if (bits_get(bs, 1)) *x = -*x;
