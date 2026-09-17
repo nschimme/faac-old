@@ -60,7 +60,9 @@ static bool is_audio_trak(const uint8_t *buf, long offset, long end)
         }
         cur = payload_end;
     }
-    return true;
+    /* No mdia/hdlr found at all (malformed or unusual trak) -- fail closed
+     * rather than risk treating a non-audio trak as the audio track. */
+    return false;
 }
 
 static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, struct faam_demuxer *d,
