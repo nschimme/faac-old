@@ -121,7 +121,11 @@ void init_huffman_luts(void)
     huff_luts_initialized = true;
 }
 
-static inline int decode_huffman_symbol(BitReader *bs, int book)
+static inline int decode_huffman_symbol(BitReader *bs, int book
+#ifdef FAAD_STATS
+    , FaadDecStats *stats
+#endif
+)
 {
     if (book < 1 || book > 11) return 0;
 
@@ -139,13 +143,23 @@ static inline int decode_huffman_symbol(BitReader *bs, int book)
         uint32_t l = esc_tab[i].len;
         if (bits_show(bs, l) == esc_tab[i].data) {
             bits_skip(bs, l);
+#ifdef FAAD_STATS
+            if (stats) stats->huffEscapeHits[book]++;
+#endif
             return esc_tab[i].sym;
         }
     }
+#ifdef FAAD_STATS
+    if (stats) stats->huffEscapeMisses++;
+#endif
     return 0;
 }
 
-static inline int decode_huffman_scalefactor(BitReader *bs)
+static inline int decode_huffman_scalefactor(BitReader *bs
+#ifdef FAAD_STATS
+    , FaadDecStats *stats
+#endif
+)
 {
     uint32_t cw11 = bits_show(bs, 11);
     HuffLutEntry lut = huff_lut_11bit[12][cw11];
@@ -161,16 +175,39 @@ static inline int decode_huffman_scalefactor(BitReader *bs)
         uint32_t l = esc_tab[i].len;
         if (bits_show(bs, l) == esc_tab[i].data) {
             bits_skip(bs, l);
+#ifdef FAAD_STATS
+            if (stats) stats->huffEscapeHits[12]++;
+#endif
             return esc_tab[i].sym;
         }
     }
+#ifdef FAAD_STATS
+    if (stats) stats->huffEscapeMisses++;
+#endif
     return 0;
 }
 
 
-static inline void decode_quad(BitReader *bs, int book, int *v, int *w, int *x, int *y)
+/* Convenience wrappers so call sites don't need to spell out the #ifdef at
+ * every call -- they assume a `stats` variable (possibly NULL) is in scope
+ * under FAAD_STATS, matching the parameter name used throughout this file. */
+#ifdef FAAD_STATS
+#define DECODE_HUFF_SF(bs) decode_huffman_scalefactor((bs), stats)
+#else
+#define DECODE_HUFF_SF(bs) decode_huffman_scalefactor((bs))
+#endif
+
+static inline void decode_quad(BitReader *bs, int book, int *v, int *w, int *x, int *y
+#ifdef FAAD_STATS
+    , FaadDecStats *stats
+#endif
+)
 {
-    int idx = decode_huffman_symbol(bs, book);
+    int idx = decode_huffman_symbol(bs, book
+#ifdef FAAD_STATS
+        , stats
+#endif
+    );
     *v = idx / 27;
     idx %= 27;
     *w = idx / 9;
@@ -190,9 +227,17 @@ static inline void decode_quad(BitReader *bs, int book, int *v, int *w, int *x, 
     }
 }
 
-static inline void decode_pair(BitReader *bs, int book, int *x, int *y)
+static inline void decode_pair(BitReader *bs, int book, int *x, int *y
+#ifdef FAAD_STATS
+    , FaadDecStats *stats
+#endif
+)
 {
-    int idx = decode_huffman_symbol(bs, book);
+    int idx = decode_huffman_symbol(bs, book
+#ifdef FAAD_STATS
+        , stats
+#endif
+    );
     int base = 17;
     if (book == 5 || book == 6) base = 9;
     else if (book == 7 || book == 8) base = 8;
@@ -220,11 +265,17 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y)
         bool neg_y = abs_y && bits_get(bs, 1);
 
         if (abs_x == 16) {
+#ifdef FAAD_STATS
+            if (stats) stats->escbookMagnitudeEscapes++;
+#endif
             int prefix = 0;
             while (bits_get(bs, 1) == 1) prefix++;
             abs_x = (1 << (prefix + 4)) + bits_get(bs, prefix + 4);
         }
         if (abs_y == 16) {
+#ifdef FAAD_STATS
+            if (stats) stats->escbookMagnitudeEscapes++;
+#endif
             int prefix = 0;
             while (bits_get(bs, 1) == 1) prefix++;
             abs_y = (1 << (prefix + 4)) + bits_get(bs, prefix + 4);
@@ -238,7 +289,11 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y)
     }
 }
 
-faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sample_rate)
+faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sample_rate
+#ifdef FAAD_STATS
+    , FaadDecStats *stats
+#endif
+)
 {
     setup_sfb_offsets(ics, sample_rate);
 
@@ -261,7 +316,7 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
                         pns_energy = (int)bits_get(bs, 9) - 256;
                         is_first_pns = false;
                     } else {
-                        int dpns = decode_huffman_scalefactor(bs);
+                        int dpns = DECODE_HUFF_SF(bs);
                         pns_energy += dpns - 60;
                     }
                     ics->scalefactors[g][sfb] = pns_energy;
@@ -269,13 +324,13 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
                 }
             } else if (cb == 14 || cb == 15) { /* Intensity stereo */
                 for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
-                    int dis = decode_huffman_scalefactor(bs);
+                    int dis = DECODE_HUFF_SF(bs);
                     is_pos += dis - 60;
                     ics->scalefactors[g][sfb] = is_pos;
                 }
             } else {
                 for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
-                    int dsf = decode_huffman_scalefactor(bs);
+                    int dsf = DECODE_HUFF_SF(bs);
                     sf += dsf - 60;
                     ics->scalefactors[g][sfb] = sf;
                     ics->sfb_cb[g][sfb] = cb;
@@ -286,7 +341,11 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
     return FAAD_OK;
 }
 
-faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec)
+faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
+#ifdef FAAD_STATS
+    , FaadDecStats *stats
+#endif
+)
 {
     int window_offset = 0;
     for (int g = 0; g < ics->num_window_groups && g < 8; g++) {
@@ -309,7 +368,11 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec)
                     while (k < end_k) {
                         if (cb <= 4) {
                             int v, w_val, x, y;
-                            decode_quad(bs, cb, &v, &w_val, &x, &y);
+                            decode_quad(bs, cb, &v, &w_val, &x, &y
+#ifdef FAAD_STATS
+                                , stats
+#endif
+                            );
                             ptr[0] = (float)v;
                             ptr[1] = (float)w_val;
                             ptr[2] = (float)x;
@@ -318,7 +381,11 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec)
                             k += 4;
                         } else {
                             int x, y;
-                            decode_pair(bs, cb, &x, &y);
+                            decode_pair(bs, cb, &x, &y
+#ifdef FAAD_STATS
+                                , stats
+#endif
+                            );
                             ptr[0] = (float)x;
                             ptr[1] = (float)y;
                             ptr += 2;

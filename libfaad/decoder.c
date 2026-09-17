@@ -4,6 +4,10 @@
 
 #include "faad_internal.h"
 
+#ifdef FAAD_STATS
+#include <stdio.h>
+#endif
+
 #if defined(_WIN32)
 #include <windows.h>
 #else
@@ -156,9 +160,62 @@ FAADAPI faad_status faad_decoder_create(const faad_config *cfg,
     return FAAD_OK;
 }
 
+#ifdef FAAD_STATS
+static void faad_print_stats(const struct faad_decoder *dec)
+{
+    const FaadDecStats *s = &dec->stats;
+    if (s->totalFrames == 0) return;
+
+    double tns_pct = s->icsCount > 0 ? 100.0 * s->tnsActiveFrames / s->icsCount : 0.0;
+    double sbr_pct = s->totalFrames > 0 ? 100.0 * s->sbrActiveFrames / s->totalFrames : 0.0;
+    double short_pct = s->icsCount > 0 ? 100.0 * s->shortBlockIcsCount / s->icsCount : 0.0;
+    double pad_avg = s->fillElementCount > 0 ? (double)s->fillElementPadBitsSum / s->fillElementCount : 0.0;
+
+    fprintf(stderr, "\n--- Decoder Diagnostics ---\n");
+    fprintf(stderr, " Frames              : %u (non-END termination: %u)\n",
+            s->totalFrames, s->nonEndTermination);
+    fprintf(stderr, " Elements            : SCE=%u CPE=%u CCE=%u LFE=%u DSE=%u PCE=%u FIL=%u END=%u\n",
+            s->elementCounts[0], s->elementCounts[1], s->elementCounts[2], s->elementCounts[3],
+            s->elementCounts[4], s->elementCounts[5], s->elementCounts[6], s->elementCounts[7]);
+    if (s->minChannels == s->maxChannels) {
+        fprintf(stderr, " Channels            : %u (constant, 0 changes)\n", s->minChannels);
+    } else {
+        fprintf(stderr, " Channels            : varied %u-%u (%u changes)\n",
+                s->minChannels, s->maxChannels, s->channelCountChanges);
+    }
+    fprintf(stderr, " TNS                 : active in %u/%u ics (%.1f%%)\n",
+            s->tnsActiveFrames, s->icsCount, tns_pct);
+    fprintf(stderr, " SBR                 : active in %u/%u frames (%.1f%%)\n",
+            s->sbrActiveFrames, s->totalFrames, sbr_pct);
+    fprintf(stderr, " Short blocks        : %u/%u ics (%.1f%%)\n",
+            s->shortBlockIcsCount, s->icsCount, short_pct);
+
+    fprintf(stderr, " Huffman escapes     : ");
+    bool any_esc = false;
+    for (int b = 1; b <= 12; b++) {
+        if (s->huffEscapeHits[b] > 0) {
+            fprintf(stderr, "%sbook%02u=%u", any_esc ? " " : "", b, s->huffEscapeHits[b]);
+            any_esc = true;
+        }
+    }
+    if (!any_esc) fprintf(stderr, "none");
+    fprintf(stderr, " (table misses: %u)\n", s->huffEscapeMisses);
+
+    fprintf(stderr, " ESCBOOK magnitude   : %u values needed the >=16 escape path\n",
+            s->escbookMagnitudeEscapes);
+    fprintf(stderr, " Fill-elt pad-align  : %u elements, avg %.1f bits, max %u bits\n",
+            s->fillElementCount, pad_avg, s->fillElementMaxPad);
+    fprintf(stderr, " Error concealment   : %u frames\n", s->errorConcealmentFrames);
+    fprintf(stderr, "---------------------------\n");
+}
+#endif
+
 FAADAPI void faad_decoder_destroy(faad_decoder *dec)
 {
     if (!dec) return;
+#ifdef FAAD_STATS
+    faad_print_stats(dec);
+#endif
     if (dec->is_heap_allocated) {
         free(dec);
     }
@@ -204,6 +261,10 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
         return FAAD_ERR_NEED_MORE_DATA;
     }
 
+#ifdef FAAD_STATS
+    dec->stats.totalFrames++;
+#endif
+
     memset(dec->spec, 0, sizeof(dec->spec));
 
     BitReader bs;
@@ -231,10 +292,19 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
     ICSInfo ics_list[MAX_CHANNELS];
     memset(ics_list, 0, sizeof(ics_list));
 
+#ifdef FAAD_STATS
+    bool saw_end = false;
+#endif
     if (decode_success) {
         while (bits_get_consumed(&bs) + 3 <= bs.len * 8 && ch_idx < MAX_CHANNELS) {
             uint32_t syntax_id = bits_get(&bs, 3);
+#ifdef FAAD_STATS
+            dec->stats.elementCounts[syntax_id]++;
+#endif
             if (syntax_id == ID_END) {
+#ifdef FAAD_STATS
+                saw_end = true;
+#endif
                 break;
             } else if (syntax_id == ID_SCE || syntax_id == ID_LFE) {
                 decode_sce(&bs, dec, &ics_list[ch_idx], ch_idx);
@@ -284,14 +354,29 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                      * rather than let the outer loop misread it as the next
                      * syntax element. */
                     uint32_t consumed = bits_get_consumed(&bs);
+#ifdef FAAD_STATS
+                    dec->stats.fillElementCount++;
+#endif
                     if (consumed < fill_end) {
-                        bits_skip(&bs, fill_end - consumed);
+                        uint32_t pad = fill_end - consumed;
+                        bits_skip(&bs, pad);
+#ifdef FAAD_STATS
+                        dec->stats.fillElementPadBitsSum += pad;
+                        if (pad > dec->stats.fillElementMaxPad) {
+                            dec->stats.fillElementMaxPad = pad;
+                        }
+#endif
                     }
                 } else {
                     bits_skip(&bs, (count - 1) * 8 + 4);
                 }
             }
         }
+#ifdef FAAD_STATS
+        if (!saw_end) {
+            dec->stats.nonEndTermination++;
+        }
+#endif
     }
 
     /* Error Concealment & Fade-Out Fading Mechanism */
@@ -299,7 +384,25 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
         dec->consecutive_errors = 0;
         memcpy(dec->prev_spec, dec->spec, sizeof(dec->spec));
         dec->num_channels = ch_idx;
+#ifdef FAAD_STATS
+        if (!dec->stats.haveLastChannels) {
+            dec->stats.haveLastChannels = true;
+            dec->stats.lastChannels = ch_idx;
+            dec->stats.minChannels = ch_idx;
+            dec->stats.maxChannels = ch_idx;
+        } else {
+            if (ch_idx != dec->stats.lastChannels) {
+                dec->stats.channelCountChanges++;
+                dec->stats.lastChannels = ch_idx;
+            }
+            if (ch_idx < dec->stats.minChannels) dec->stats.minChannels = ch_idx;
+            if (ch_idx > dec->stats.maxChannels) dec->stats.maxChannels = ch_idx;
+        }
+#endif
     } else {
+#ifdef FAAD_STATS
+        dec->stats.errorConcealmentFrames++;
+#endif
         dec->consecutive_errors++;
         float fade = 0.0f;
         if (dec->consecutive_errors <= 5) {
@@ -355,11 +458,18 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
     *bytes_consumed = adts_frame_len;
     *bytes_written = required_bytes;
 
+    bool sbr_active = dec->sbr_present || dec->asc.is_sbr;
+#ifdef FAAD_STATS
+    if (sbr_active) {
+        dec->stats.sbrActiveFrames++;
+    }
+#endif
+
     if (frame_info) {
         frame_info->sample_rate = dec->sample_rate;
         frame_info->samples_per_ch = dec->frame_samples;
         frame_info->channels = (uint8_t)dec->num_channels;
-        frame_info->sbr_active = dec->sbr_present || dec->asc.is_sbr;
+        frame_info->sbr_active = sbr_active;
         frame_info->ps_active = dec->ps_present || dec->asc.is_ps;
     }
 

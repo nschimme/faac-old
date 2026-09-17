@@ -110,6 +110,10 @@ faad_status decode_dse(BitReader *bs)
 
 faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, float *spec, bool common_window)
 {
+#ifdef FAAD_STATS
+    dec->stats.icsCount++;
+#endif
+
     ics->global_gain = bits_get(bs, 8);
 
     if (!common_window) {
@@ -122,6 +126,12 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
      * post-SBR rate reported to callers. */
     setup_sfb_offsets(ics, dec->core_sample_rate);
 
+#ifdef FAAD_STATS
+    if (ics->window_sequence == EIGHT_SHORT_SEQUENCE) {
+        dec->stats.shortBlockIcsCount++;
+    }
+#endif
+
     decode_section_data(bs, ics);
 
     /* scale_factor_data() comes immediately after section_data(), before
@@ -131,7 +141,11 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
      * whole rest of the element on any frame where TNS actually fires (most
      * frames escape unnoticed only because pulse/TNS/gain-control are all
      * fixed-length flag bits when their payloads are absent). */
-    decode_scale_factor_data(bs, ics, dec->core_sample_rate);
+    decode_scale_factor_data(bs, ics, dec->core_sample_rate
+#ifdef FAAD_STATS
+        , &dec->stats
+#endif
+    );
 
     ics->pulse_data_present = bits_get(bs, 1);
     if (ics->pulse_data_present) {
@@ -145,6 +159,11 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
     }
 
     ics->tns_data_present = bits_get(bs, 1);
+#ifdef FAAD_STATS
+    if (ics->tns_data_present) {
+        dec->stats.tnsActiveFrames++;
+    }
+#endif
     if (ics->tns_data_present) {
         uint32_t n_filt_bits = (ics->window_sequence == EIGHT_SHORT_SEQUENCE) ? 1 : 2;
         for (int w = 0; w < ics->num_windows && w < 8; w++) {
@@ -177,7 +196,11 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
     if (ics->gain_control_present) {
     }
 
-    return decode_spectral_data(bs, ics, spec);
+    return decode_spectral_data(bs, ics, spec
+#ifdef FAAD_STATS
+        , &dec->stats
+#endif
+    );
 }
 
 faad_status decode_cpe(BitReader *bs, struct faad_decoder *dec, CPEInfo *cpe, uint32_t ch)
