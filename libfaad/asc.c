@@ -41,6 +41,41 @@ faad_status asc_decode(BitReader *bs, AudioSpecificConfig *asc)
         asc->object_type = (enum faad_object_type)real_aot;
     } else {
         asc->sbr_sample_rate = asc->sample_rate * 2;
+
+        /* GASpecificConfig() per ISO/IEC 14496-3 1.6.2.1. Real-world MP4/M4A
+         * muxers signal HE-AAC "implicitly": a plain AAC-LC ASC (no top-level
+         * AOT==5) with an SBR/PS sync-extension appended after this config,
+         * rather than the "explicit" nested-AOT form handled above. We have
+         * to walk past these fields to reach it. */
+        if (asc->object_type == FAAD_OBJ_LC) {
+            bits_skip(bs, 1); /* frameLengthFlag */
+            if (bits_get(bs, 1)) {
+                bits_skip(bs, 14); /* coreCoderDelay, iff dependsOnCoreCoder */
+            }
+            bool extension_flag = bits_get(bs, 1);
+            if (asc->num_channels == 0) {
+                decode_pce(bs, NULL);
+            }
+            if (extension_flag) {
+                bits_skip(bs, 1); /* extensionFlag3 (reserved for AOT LC) */
+            }
+
+            uint32_t bits_left = bs->len * 8 - bits_get_consumed(bs);
+            if (bits_left >= 16 && bits_get(bs, 11) == 0x2b7) {
+                uint32_t ext_aot = bits_get(bs, 5);
+                if (ext_aot == 5) {
+                    asc->is_sbr = true;
+                    bits_skip(bs, 1); /* sbrPresentFlag: implied by the sync-extension itself */
+                    uint32_t sbr_sr_idx = bits_get(bs, 4);
+                    asc->sbr_sample_rate = (sbr_sr_idx == 15) ? bits_get(bs, 24) : faad_sample_rates[sbr_sr_idx];
+
+                    bits_left = bs->len * 8 - bits_get_consumed(bs);
+                    if (bits_left >= 12 && bits_get(bs, 11) == 0x548) {
+                        asc->is_ps = bits_get(bs, 1) != 0;
+                    }
+                }
+            }
+        }
     }
 
     /* Set default if AOT == LC */
