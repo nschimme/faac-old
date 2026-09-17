@@ -22,6 +22,8 @@ endif
 
 thread_dep = dependency('threads', required: false)
 
+project_ver = meson.project_version()
+
 common_args = {
     'include_directories' : ['..', '../include', '../libfaac'],
     'c_args' : faad_c_args,
@@ -48,7 +50,7 @@ if default_lib == 'shared' or default_lib == 'both'
         'faad',
         faad_src,
         kwargs : common_args + {
-          'version' : '2.0.0',
+          'version' : project_ver,
         },
     )
 endif
@@ -64,7 +66,7 @@ pkgconfig.generate(
     libfaad,
     name: 'FAAD',
     description: 'Freeware Advanced Audio Decoder',
-    version: meson.project_version(),
+    version: project_ver,
     filebase: 'faad'
 )
 

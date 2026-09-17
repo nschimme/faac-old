@@ -20,6 +20,9 @@
 #include <stdbool.h>
 #include <string.h>
 
+#define ASC_SYNC_EXTENSION_SBR 0x2b7u
+#define ASC_SYNC_EXTENSION_PS  0x548u
+
 /* ISO/IEC 14496-3 Table 1.16 sampling_frequency_index. */
 static const uint32_t asc_codec_sample_rates[16] = {
     96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050,
@@ -70,9 +73,6 @@ static inline uint32_t asc_parse_sample_rate(asc_bitreader *br)
     uint32_t idx = asc_br_get(br, 4);
     return idx == 15 ? asc_br_get(br, 24) : asc_codec_sample_rates[idx];
 }
-
-#define ASC_SYNC_EXTENSION_SBR 0x2b7u
-#define ASC_SYNC_EXTENSION_PS  0x548u
 
 /*
  * Parses aot/sample_rate/channels, then either the "explicit" nested-AOT
