@@ -66,12 +66,10 @@ libfaac_common_static = static_library(
 
 libfaac = disabler()
 
-thread_dep = dependency('threads', required: false)
-
 common_args = {
     'include_directories' : ['..', '../include'],
     'c_args' : c_args,
-    'dependencies' : [libm, thread_dep],
+    'dependencies' : [libm],
     'link_with' : quantize_simd_libs + [libfaac_common_static],
     'install' : true,
     'gnu_symbol_visibility' : 'hidden',
