@@ -117,7 +117,10 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
     }
 
     extern void setup_sfb_offsets(ICSInfo *ics, uint32_t sample_rate);
-    setup_sfb_offsets(ics, dec->sample_rate);
+    /* Window/sfb layout is defined relative to the AAC core codec's own rate
+     * (Fs/2 of the nominal rate when SBR is present), not the nominal
+     * post-SBR rate reported to callers. */
+    setup_sfb_offsets(ics, dec->core_sample_rate);
 
     decode_section_data(bs, ics);
 
@@ -165,7 +168,7 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
     if (ics->gain_control_present) {
     }
 
-    decode_scale_factor_data(bs, ics, dec->sample_rate);
+    decode_scale_factor_data(bs, ics, dec->core_sample_rate);
     return decode_spectral_data(bs, ics, spec);
 }
 

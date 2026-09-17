@@ -178,7 +178,7 @@ faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32
     int huff_nsyms = bs_amp_res ? F_HUFF_ENV_1_5DB_NSYMS : F_HUFF_ENV_3_0DB_NSYMS;
     int huff_offset = bs_amp_res ? F_HUFF_ENV_1_5DB_OFFSET : F_HUFF_ENV_3_0DB_OFFSET;
 
-    int num_bands = sbr_compute_num_bands(dec->asc.sbr_sample_rate > 0 ? dec->asc.sbr_sample_rate : 2 * dec->sample_rate, sbr->bs_start_freq, sbr->bs_stop_freq);
+    int num_bands = sbr_compute_num_bands(dec->asc.sbr_sample_rate > 0 ? dec->asc.sbr_sample_rate : 2 * dec->core_sample_rate, sbr->bs_start_freq, sbr->bs_stop_freq);
     for (int env = 0; env < sbr->bs_num_env && env < 8; env++) {
         bool bs_df_env = bits_get(bs, 1);
         int prev_val = bs_amp_res ? 60 : 30;
@@ -444,7 +444,7 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
 
         qmf_analysis_320(sbr, pcm_in + ch * FRAME_LEN_LONG, qmf_ana_r, qmf_ana_i);
 
-        uint32_t sbr_sr = dec->asc.sbr_sample_rate > 0 ? dec->asc.sbr_sample_rate : 2 * dec->sample_rate;
+        uint32_t sbr_sr = dec->asc.sbr_sample_rate > 0 ? dec->asc.sbr_sample_rate : 2 * dec->core_sample_rate;
         int num_bands = sbr_compute_num_bands(sbr_sr, sbr->bs_start_freq, sbr->bs_stop_freq);
 
         int sr_row = (sbr_sr <= 16000) ? 0 : (sbr_sr <= 22050) ? 1 : (sbr_sr <= 24000) ? 2 : (sbr_sr <= 32000) ? 3 : (sbr_sr <= 64000) ? 4 : 5;
