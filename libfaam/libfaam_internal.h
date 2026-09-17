@@ -48,7 +48,8 @@ struct faam_demuxer {
     uint32_t sample_rate;
     uint32_t num_channels;
     uint64_t total_samples;
-    uint32_t timescale;
+    uint32_t timescale;       /* mdhd: audio track's own (media) timescale */
+    uint32_t movie_timescale; /* mvhd: movie timescale that elst segment_duration is expressed in */
 
     faam_sample *samples;
     uint32_t total_frames;

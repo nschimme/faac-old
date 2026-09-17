@@ -11,6 +11,11 @@ typedef struct {
     uint32_t sample_description_index;
 } STSCEntry;
 
+typedef struct {
+    uint32_t sample_count;
+    uint32_t sample_delta;
+} STTSEntry;
+
 static uint32_t parse_ber_length(const uint8_t *buf, long *offset, long max_offset)
 {
     uint32_t len = 0;
@@ -61,7 +66,8 @@ static bool is_audio_trak(const uint8_t *buf, long offset, long end)
 static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, struct faam_demuxer *d,
                                   uint32_t **stsz_table, uint32_t *num_stsz_samples, uint32_t *fixed_sample_size,
                                   STSCEntry **stsc_table, uint32_t *num_stsc_entries,
-                                  uint64_t **stco_table, uint32_t *num_stco_chunks)
+                                  uint64_t **stco_table, uint32_t *num_stco_chunks,
+                                  STTSEntry **stts_table, uint32_t *num_stts_entries)
 {
     long cur = offset;
     while (cur + 8 <= end) {
@@ -102,7 +108,30 @@ static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, str
             parse_boxes_recursive(buf, sub_offset, payload_end, d,
                                    stsz_table, num_stsz_samples, fixed_sample_size,
                                    stsc_table, num_stsc_entries,
-                                   stco_table, num_stco_chunks);
+                                   stco_table, num_stco_chunks,
+                                   stts_table, num_stts_entries);
+        } else if (memcmp(type, "mvhd", 4) == 0 && payload_offset + 4 <= payload_end) {
+            uint8_t version = buf[payload_offset];
+            long ts_off = payload_offset + 4 + (version == 1 ? 16 : 8);
+            if (ts_off + 4 <= payload_end) {
+                d->movie_timescale = read_u32_be(buf + ts_off);
+            }
+        } else if (memcmp(type, "mdhd", 4) == 0 && payload_offset + 4 <= payload_end) {
+            uint8_t version = buf[payload_offset];
+            long ts_off = payload_offset + 4 + (version == 1 ? 16 : 8);
+            if (ts_off + 4 <= payload_end) {
+                d->timescale = read_u32_be(buf + ts_off);
+            }
+        } else if (memcmp(type, "stts", 4) == 0 && payload_offset + 4 <= payload_end) {
+            uint32_t entries = read_u32_be(buf + payload_offset + 4);
+            if (entries > 0 && entries < 1000000) {
+                *num_stts_entries = entries;
+                *stts_table = (STTSEntry *)calloc(entries, sizeof(STTSEntry));
+                for (uint32_t e = 0; e < entries && (payload_offset + 8 + e * 8) <= payload_end - 8; e++) {
+                    (*stts_table)[e].sample_count = read_u32_be(buf + payload_offset + 8 + e * 8);
+                    (*stts_table)[e].sample_delta = read_u32_be(buf + payload_offset + 8 + e * 8 + 4);
+                }
+            }
         } else if (memcmp(type, "esds", 4) == 0) {
             long pos = payload_offset + 4;
             while (pos < payload_end - 2) {
@@ -215,14 +244,26 @@ static faam_status faam_parse_stream(struct faam_demuxer *d, const uint8_t *buf,
     uint64_t *stco_table = NULL;
     uint32_t num_stco_chunks = 0;
 
+    STTSEntry *stts_table = NULL;
+    uint32_t num_stts_entries = 0;
+
     parse_boxes_recursive(buf, 0, file_size, d,
                            &stsz_table, &num_stsz_samples, &fixed_sample_size,
                            &stsc_table, &num_stsc_entries,
-                           &stco_table, &num_stco_chunks);
+                           &stco_table, &num_stco_chunks,
+                           &stts_table, &num_stts_entries);
+
+    uint64_t total_raw_samples = 0;
 
     if (num_stsz_samples > 0) {
         d->samples = (faam_sample *)calloc(num_stsz_samples, sizeof(faam_sample));
         d->total_frames = num_stsz_samples;
+
+        /* stts is a run-length list of (sample_count, sample_delta) entries;
+         * walk it in lockstep with the chunk/size tables below so each
+         * sample gets its real duration instead of an assumed constant. */
+        uint32_t stts_entry_idx = 0;
+        uint32_t stts_run_remaining = num_stts_entries > 0 ? stts_table[0].sample_count : 0;
 
         if (stco_table && num_stco_chunks > 0 && stsc_table && num_stsc_entries > 0) {
             uint32_t sample_idx = 0;
@@ -240,9 +281,23 @@ static faam_status faam_parse_stream(struct faam_demuxer *d, const uint8_t *buf,
                 uint32_t sample_offset_in_chunk = 0;
                 for (uint32_t s = 0; s < samples_in_chunk && sample_idx < num_stsz_samples; s++) {
                     uint32_t size = (fixed_sample_size != 0) ? fixed_sample_size : (stsz_table ? stsz_table[sample_idx] : 0);
+
+                    uint32_t duration = 1024;
+                    if (stts_table) {
+                        while (stts_run_remaining == 0 && stts_entry_idx + 1 < num_stts_entries) {
+                            stts_entry_idx++;
+                            stts_run_remaining = stts_table[stts_entry_idx].sample_count;
+                        }
+                        if (stts_run_remaining > 0) {
+                            duration = stts_table[stts_entry_idx].sample_delta;
+                            stts_run_remaining--;
+                        }
+                    }
+
                     d->samples[sample_idx].offset = chunk_offset + sample_offset_in_chunk;
                     d->samples[sample_idx].size = size;
-                    d->samples[sample_idx].duration = 1024;
+                    d->samples[sample_idx].duration = duration;
+                    total_raw_samples += duration;
                     sample_offset_in_chunk += size;
                     sample_idx++;
                 }
@@ -253,6 +308,12 @@ static faam_status faam_parse_stream(struct faam_demuxer *d, const uint8_t *buf,
     if (stsz_table) free(stsz_table);
     if (stsc_table) free(stsc_table);
     if (stco_table) free(stco_table);
+    if (stts_table) free(stts_table);
+
+    if (total_raw_samples == 0) {
+        total_raw_samples = (uint64_t)d->total_frames * 1024;
+    }
+    d->total_samples = total_raw_samples;
 
     /* Fall back to the edts/elst edit list for gapless trim when no
      * iTunSMPB tag was found -- e.g. files muxed by ffmpeg, Android's own
@@ -260,9 +321,18 @@ static faam_status faam_parse_stream(struct faam_demuxer *d, const uint8_t *buf,
      * list. total_frames is only known now that stsz has been walked, since
      * edts precedes stbl within a trak. */
     if (!d->has_gapless && d->has_elst) {
-        uint64_t total_raw_samples = (uint64_t)d->total_frames * 1024;
+        /* elst's segment_duration is expressed in the *movie* (mvhd)
+         * timescale, while media_time and our own sample durations are in
+         * the *track*'s (mdhd) timescale -- ISO/IEC 14496-12 8.6.6. The two
+         * only happen to be numerically interchangeable when both
+         * timescales are equal, which faam's own muxer always arranges but
+         * a third-party file is not obliged to. */
+        uint64_t seg_dur = d->elst_segment_duration;
+        if (d->movie_timescale > 0 && d->timescale > 0 && d->movie_timescale != d->timescale) {
+            seg_dur = (seg_dur * d->timescale) / d->movie_timescale;
+        }
         d->gapless.encoder_delay = (uint32_t)d->elst_media_time;
-        uint64_t audible = d->elst_segment_duration + d->elst_media_time;
+        uint64_t audible = seg_dur + d->elst_media_time;
         d->gapless.end_padding = (uint32_t)(total_raw_samples > audible ? total_raw_samples - audible : 0);
         d->has_gapless = true;
     }
@@ -273,6 +343,9 @@ static faam_status faam_parse_stream(struct faam_demuxer *d, const uint8_t *buf,
         d->asc_info.channels = 2;
         faam_asc_build(&d->asc_info, d->asc_buf, sizeof(d->asc_buf), &d->asc_len);
     }
+
+    d->sample_rate = d->asc_info.sbr_present ? d->asc_info.sample_rate * 2 : d->asc_info.sample_rate;
+    d->num_channels = d->asc_info.channels;
 
     return FAAM_OK;
 }
