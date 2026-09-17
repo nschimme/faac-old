@@ -273,9 +273,20 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
             } else if (syntax_id == ID_FIL) {
                 uint32_t count = bits_get(&bs, 4);
                 if (count == 15) count += bits_get(&bs, 8) - 1;
+                uint32_t fill_end = bits_get_consumed(&bs) + count * 8;
                 uint32_t ext_type = bits_get(&bs, 4);
                 if (ext_type == SBR_EXTENSION_DATA || ext_type == SBR_EXTENSION_DATA_CRC) {
                     sbr_decode_extension(dec, &bs, (ch_idx > 0) ? (ch_idx - 1) : 0, syntax_id);
+                    /* libfaac's encoder (SbrWrite() in sbr_bitstream.c) pads
+                     * the SBR payload out to this fill element's declared
+                     * byte count; sbr_decode_extension() doesn't consume
+                     * that trailing padding itself, so force-align here
+                     * rather than let the outer loop misread it as the next
+                     * syntax element. */
+                    uint32_t consumed = bits_get_consumed(&bs);
+                    if (consumed < fill_end) {
+                        bits_skip(&bs, fill_end - consumed);
+                    }
                 } else {
                     bits_skip(&bs, (count - 1) * 8 + 4);
                 }
