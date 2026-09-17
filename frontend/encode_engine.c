@@ -39,7 +39,6 @@
 #include "input.h"
 #include "mp4write.h"
 #include "charset.h"
-#include "git_version.h"
 
 void init_encode_options(encode_options_t *opts)
 {
@@ -97,16 +96,6 @@ bool add_custom_tag_to_options(encode_options_t *opts, const char *name, const c
     return true;
 }
 
-/* FAAC_GIT_VERSION: short commit hash (+ "-dirty"), or "" with no .git. */
-const char *faac_version_string(char *buf, size_t buf_size, const char *lib_version)
-{
-    if (FAAC_GIT_VERSION[0])
-        snprintf(buf, buf_size, "%s (%s)", lib_version, FAAC_GIT_VERSION);
-    else
-        snprintf(buf, buf_size, "%s", lib_version);
-    return buf;
-}
-
 void free_encode_options(encode_options_t *opts)
 {
     if (!opts)
@@ -142,9 +131,6 @@ void parse_quality_or_bitrate(const char *text, bool is_bitrate_mode,
     }
     else
     {
-        /* The library clamps to its range; keep the cast from wrapping first. */
-        if (val > UINT16_MAX)
-            val = UINT16_MAX;
         opts->quant_quality = (val > 0) ? (uint16_t)val : DEFAULT_QUANT_QUALITY;
         opts->bit_rate = 0;
     }
@@ -353,11 +339,11 @@ static bool finalize_mp4(faac_encoder *hEncoder, const encode_options_t *opts,
 
     if (libinfo.version)
     {
-        char *version_string = malloc(128);
+        size_t ver_len = strlen(libinfo.version) + 6;
+        char *version_string = malloc(ver_len);
         if (version_string)
         {
-            char ver_buf[128];
-            snprintf(version_string, 128, "FAAC %s", faac_version_string(ver_buf, sizeof(ver_buf), libinfo.version));
+            snprintf(version_string, ver_len, "FAAC %s", libinfo.version);
             metadata.encoder = version_string;
             allocated_tags[num_allocated++] = version_string;
         }
@@ -543,6 +529,14 @@ int run_encoding_session_ext(const encode_options_t *opts,
         if (st != FAAC_OK)
             FAIL("Couldn't open encoder instance for %s: %s\n",
                  opts->input_filename, faac_strerror(st));
+    }
+
+    const uint8_t *asc_data = NULL;
+    uint32_t asc_size = 0;
+    if (hEncoder)
+    {
+        faac_encoder_asc(hEncoder, &asc_data, &asc_size);
+        mp4_set_decoder_config((unsigned char *)asc_data, asc_size);
     }
 
     faac_encoder_info info = { .struct_size = sizeof(info) };
