@@ -24,7 +24,6 @@ endforeach
 
 config_h.set('WORDS_BIGENDIAN', host_machine.endian() == 'big')
 
-
 libm = cc.find_library('m', required: false)
 
 cpu_family = target_machine.cpu_family()
@@ -54,10 +53,17 @@ else
     add_project_arguments('-include', meson.current_build_dir() / 'config.h', language: 'c')
 endif
 
-
 subdir('docs')
 subdir('include')
 subdir('libfaac')
+
+if get_option('muxer')
+    subdir('libfaam')
+endif
+
+if get_option('decoder')
+    subdir('libfaad')
+endif
 
 if get_option('frontend')
     subdir('frontend')
