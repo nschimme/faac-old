@@ -313,7 +313,14 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
             } else if (cb == 13) { /* PNS */
                 for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
                     if (is_first_pns) {
-                        pns_energy = (int)bits_get(bs, 9) - 256;
+                        /* libfaac's encoder (writesf() in huff2.c) starts its
+                         * PNS delta chain from `lastpns = global_gain -
+                         * SF_PNS_OFFSET` (SF_PNS_OFFSET = SF_OFFSET - SF_MIN
+                         * = 100 - 10 = 90 there) and writes the first band as
+                         * `(val - lastpns) + 256` in 9 bits -- so recovering
+                         * val needs that same `+ (global_gain - 90)` term,
+                         * not just the raw field minus 256. */
+                        pns_energy = (int)bits_get(bs, 9) - 256 + (sf - 90);
                         is_first_pns = false;
                     } else {
                         int dpns = DECODE_HUFF_SF(bs);
