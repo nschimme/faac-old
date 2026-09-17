@@ -23,10 +23,9 @@
 #include "util.h"
 #include "sbr_analysis.h"
 #include "resample.h"
-#include "bitstream.h"
+#include "asc_codec.h"
 #include "sbr_internal.h"
 #include "faac_internal.h"
-#include "channels.h"
 #include "stats.h"
 
 /* SBR master frequency band table (ISO/IEC 14496-3:2005 §4.6.18.3.2). kx/k2 are
@@ -246,33 +245,27 @@ int SbrContextGetASC(SBRContext *sbrCtx, int coreSRIdx, int channels, unsigned c
      * A mono core also carries the PS sync extension with psPresentFlag = 0:
      * without it a decoder may assume parametric stereo is implied and return
      * two channels. */
-    const int signalPS = (channels == 1);
+    const bool signalPS = (channels == 1);
     const unsigned long size = signalPS ? 7 : 5;
 
     unsigned char *buf = (unsigned char *)malloc(size);
     if (buf == NULL) return -3;
 
-    BitStream bs;
-    InitBitStream(&bs, buf, (uint32_t)size); /* zeroes the buffer, so the trailing pad bits need no write */
+    AscBuildInfo info = {0};
+    info.object_type = LOW;
+    info.sr_idx = (uint8_t)coreSRIdx;
+    info.channels = (uint8_t)channels;
+    info.sbr_present = true;
+    info.sbr_sr_idx = (uint8_t)sbrCtx->fullSampleRateIdx;
+    info.ps_signaled = signalPS;
+    info.ps_present = false;
 
-    BitAccumulator a;
-    AccumBegin(&a, &bs);
-    AccumPutBits(&a, LOW,       5); /* core object type */
-    AccumPutBits(&a, coreSRIdx, 4); /* core rate (Fs/2, dual-rate) */
-    AccumPutBits(&a, GetChannelConfig(channels), 4);
-    AccumPutBits(&a, 0,         3); /* frameLengthFlag, dependsOnCoreCoder, extensionFlag */
-    AccumPutBits(&a, 0x2b7,    11); /* syncExtensionType */
-    AccumPutBits(&a, HE_V1,     5); /* extObjectType = SBR */
-    AccumPutBits(&a, 1,         1); /* sbrPresentFlag */
-    AccumPutBits(&a, sbrCtx->fullSampleRateIdx, 4); /* SBR output rate (2*core) */
-    if (signalPS) {
-        AccumPutBits(&a, 0x548, 11); /* syncExtensionType = PS */
-        AccumPutBits(&a, 0,      1); /* psPresentFlag */
+    *pSize = asc_codec_build(&info, buf, (uint32_t)size);
+    if (*pSize == 0) {
+        free(buf);
+        return -3;
     }
-    AccumEnd(&a);
-
     *ppBuffer = buf;
-    *pSize = size;
     return 0;
 }
 
