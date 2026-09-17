@@ -46,6 +46,29 @@ int main(void)
     assert(asc_out.sample_rate == 44100);
     assert(asc_out.channels == 2);
 
+    /* Test 1b: ASC build & parse round trip with SBR/PS signaled */
+    faam_asc_info sbr_asc_in;
+    memset(&sbr_asc_in, 0, sizeof(sbr_asc_in));
+    sbr_asc_in.object_type = 2; /* Core codec is AAC-LC */
+    sbr_asc_in.sample_rate = 24000; /* Core rate; SBR runs at 48000 */
+    sbr_asc_in.channels = 2;
+    sbr_asc_in.sbr_present = true;
+    sbr_asc_in.ps_present = true;
+
+    uint8_t sbr_asc_buf[64];
+    uint32_t sbr_asc_len = 0;
+    st = faam_asc_build(&sbr_asc_in, sbr_asc_buf, sizeof(sbr_asc_buf), &sbr_asc_len);
+    assert(st == FAAM_OK);
+
+    faam_asc_info sbr_asc_out;
+    st = faam_asc_parse(sbr_asc_buf, sbr_asc_len, &sbr_asc_out);
+    assert(st == FAAM_OK);
+    assert(sbr_asc_out.object_type == 2);
+    assert(sbr_asc_out.sample_rate == 24000);
+    assert(sbr_asc_out.channels == 2);
+    assert(sbr_asc_out.sbr_present == true);
+    assert(sbr_asc_out.ps_present == true);
+
     /* Test 2: Stream Muxer file creation */
     FILE *fout = fopen("test_output.m4a", "wb");
     assert(fout != NULL);

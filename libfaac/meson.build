@@ -24,14 +24,10 @@ common_src = [
     'faac_internal.h',
     'filtbank.c',
     'filtbank.h',
-    'fft.c',
-    'fft.h',
     'frame.c',
     'frame.h',
     'huff2.c',
     'huff2.h',
-    'huffdata.c',
-    'huffdata.h',
     'quantize.c',
     'quantize.h',
     'ratecontrol.c',
@@ -40,8 +36,6 @@ common_src = [
     'sbr.h',
     'sbr_internal.h',
     'sbr_bitstream.c',
-    'sbr_tables.c',
-    'sbr_tables.h',
     'sbr_analysis.c',
     'sbr_analysis.h',
     'resample.c',
@@ -54,13 +48,31 @@ common_src = [
     'util.h',
 ]
 
+# fft.c, sbr_tables.c and huffdata.c are shared verbatim with libfaad (decoder
+# tables/transform are the same non-copyrightable ISO/IEC 14496-3 data and FFT
+# engine). Built once here, as a static-only helper, and link_with'd into both
+# libfaac and libfaad so a consumer linking both static archives into one
+# program doesn't hit duplicate-symbol errors from two independent copies of
+# these non-static globals.
+libfaac_common_static = static_library(
+    'faac_common',
+    ['fft.c', 'fft.h', 'sbr_tables.c', 'sbr_tables.h', 'huffdata.c', 'huffdata.h'],
+    include_directories: ['..', '../include'],
+    c_args: c_args,
+    dependencies: [libm],
+    gnu_symbol_visibility: 'hidden',
+    override_options: ['b_lto=false'],
+)
+
 libfaac = disabler()
+
+thread_dep = dependency('threads', required: false)
 
 common_args = {
     'include_directories' : ['..', '../include'],
     'c_args' : c_args,
-    'dependencies' : [libm],
-    'link_with' : quantize_simd_libs,
+    'dependencies' : [libm, thread_dep],
+    'link_with' : quantize_simd_libs + [libfaac_common_static],
     'install' : true,
     'gnu_symbol_visibility' : 'hidden',
 }
