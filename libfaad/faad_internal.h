@@ -171,7 +171,8 @@ struct faad_decoder {
 
     uint32_t frame_samples; /* 1024 or 2048 */
     uint32_t num_channels;
-    uint32_t sample_rate;
+    uint32_t sample_rate;      /* nominal (post-SBR) rate, for reporting */
+    uint32_t core_sample_rate; /* the rate the AAC core codec itself (window/sfb layout) actually runs at -- Fs/2 of sample_rate when SBR is present */
 
     float spec[MAX_CHANNELS][FRAME_LEN_LONG];
     float overlap[MAX_CHANNELS][FRAME_LEN_LONG];
