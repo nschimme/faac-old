@@ -311,7 +311,7 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
             if (cb == 0) {
                 continue;
             } else if (cb == 13) { /* PNS */
-                for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
+                for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->max_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
                     if (is_first_pns) {
                         /* libfaac's encoder (writesf() in huff2.c) starts its
                          * PNS delta chain from `lastpns = global_gain -
@@ -330,13 +330,13 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
                     ics->pns_used[g][sfb] = true;
                 }
             } else if (cb == 14 || cb == 15) { /* Intensity stereo */
-                for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
+                for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->max_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
                     int dis = DECODE_HUFF_SF(bs);
                     is_pos += dis - 60;
                     ics->scalefactors[g][sfb] = is_pos;
                 }
             } else {
-                for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
+                for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->max_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
                     int dsf = DECODE_HUFF_SF(bs);
                     sf += dsf - 60;
                     ics->scalefactors[g][sfb] = sf;
@@ -363,7 +363,7 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
 
             if (cb == 0 || cb == 13 || cb == 14 || cb == 15) continue;
 
-            for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
+            for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->max_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
                 int start_k = ics->sfb_offsets[sfb];
                 int end_k = ics->sfb_offsets[sfb + 1];
                 if (start_k >= FRAME_LEN_LONG) continue;
