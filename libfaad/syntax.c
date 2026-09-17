@@ -124,6 +124,15 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
 
     decode_section_data(bs, ics);
 
+    /* scale_factor_data() comes immediately after section_data(), before
+     * pulse/TNS/gain-control, per ISO/IEC 14496-3's individual_channel_stream()
+     * syntax -- and per the actual bitstream libfaac's encoder (WriteICS() in
+     * channels.c) writes. Reading it later, after pulse/TNS, desyncs the
+     * whole rest of the element on any frame where TNS actually fires (most
+     * frames escape unnoticed only because pulse/TNS/gain-control are all
+     * fixed-length flag bits when their payloads are absent). */
+    decode_scale_factor_data(bs, ics, dec->core_sample_rate);
+
     ics->pulse_data_present = bits_get(bs, 1);
     if (ics->pulse_data_present) {
         uint32_t number_pulse = bits_get(bs, 2);
@@ -168,7 +177,6 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
     if (ics->gain_control_present) {
     }
 
-    decode_scale_factor_data(bs, ics, dec->core_sample_rate);
     return decode_spectral_data(bs, ics, spec);
 }
 
