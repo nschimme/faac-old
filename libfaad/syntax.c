@@ -49,11 +49,21 @@ static void decode_section_data(BitReader *bs, ICSInfo *ics)
         int i = 0;
         while (k < ics->max_sfb && i < 64) {
             uint32_t cb = bits_get(bs, 4);
-            uint32_t len = bits_get(bs, sect_bits);
-            while (len == ((1U << sect_bits) - 1)) {
-                uint32_t esc_len = bits_get(bs, sect_bits);
-                len += esc_len;
-                if (esc_len == 0) break;
+            uint32_t max_run = (1U << sect_bits) - 1;
+            uint32_t run_field = bits_get(bs, sect_bits);
+            uint32_t len = run_field;
+            /* libfaac's encoder (writebooks() in huff2.c) keeps emitting
+             * max_run escape fields for as long as the *remaining* run is
+             * still >= max_run, then a final field with whatever's left --
+             * so a run needing two or more escape continuations (common in
+             * short blocks, where max_run is only 7) writes 3+ fields. The
+             * old `while (len == max_run)` here checked the *cumulative*
+             * total instead of the last field read, which only agrees with
+             * the encoder for a single escape continuation; longer runs
+             * left a trailing field unread, desyncing everything after. */
+            while (run_field == max_run) {
+                run_field = bits_get(bs, sect_bits);
+                len += run_field;
             }
             if (len == 0) len = 1;
             ics->sect_cb[g][i] = cb;
