@@ -346,7 +346,8 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                 uint32_t fill_end = bits_get_consumed(&bs) + count * 8;
                 uint32_t ext_type = bits_get(&bs, 4);
                 if (ext_type == SBR_EXTENSION_DATA || ext_type == SBR_EXTENSION_DATA_CRC) {
-                    sbr_decode_extension(dec, &bs, (ch_idx > 0) ? (ch_idx - 1) : 0, syntax_id);
+                    uint32_t elem_type = (ch_idx > 1) ? ID_CPE : ID_SCE;
+                    sbr_decode_extension(dec, &bs, (ch_idx > 0) ? (ch_idx - 1) : 0, elem_type);
                     /* libfaac's encoder (SbrWrite() in sbr_bitstream.c) pads
                      * the SBR payload out to this fill element's declared
                      * byte count; sbr_decode_extension() doesn't consume
@@ -373,7 +374,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
             }
         }
 #ifdef FAAD_STATS
-        if (!saw_end && bits_get_consumed(&bs) < bs.len * 8) {
+        if (!saw_end) {
             dec->stats.nonEndTermination++;
         }
 #endif
