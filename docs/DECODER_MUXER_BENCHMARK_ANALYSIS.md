@@ -93,7 +93,31 @@ Container operations measured over 30 iterations processing raw elementary AAC s
 
 ---
 
-## 5. Architectural Highlights & Optimizations
+## 5. Multichannel (5.1 / 7.1) Bitstream Compliance & Bug Findings
+
+Testing 5.1 surround sound audio (FL, FR, Center, LFE, SL, SR) across FDK-AAC, FFmpeg, and FAAC bitstreams surfaced four critical bitstream bugs that were root-caused and resolved in `libfaad`:
+
+1. **Per-Frame SBR Flag Persistence (`libfaad/decoder.c`)**:
+   - `dec->sbr_present` was not reset at the beginning of each frame. Encountering an SBR fill element in frame $N$ caused `sbr_present` to remain `true` for all subsequent frames ($N+1 \dots M$), doubling `frame_samples` from 1024 to 2048 and stretching output audio duration from 9.05s to 16.75s.
+   - **Fix**: Reset `dec->sbr_present = false` at entry in `faad_decode_frame()`, restoring exact 9.05s decoded stream duration.
+
+2. **Empty Fill-Element Over-reading (`libfaad/decoder.c`)**:
+   - When `ID_FIL` had `count == 0` (empty fill element), `decoder.c` unconditionally executed `ext_type = bits_get(&bs, 4)`, consuming 4 bits into the subsequent syntax element (`ID_CPE`, `ID_LFE`, or `ID_END`) and causing bitstream desynchronization (`non-END termination`).
+   - **Fix**: Guarded extension payload reading with `if (count > 0)`.
+
+3. **Multi-Element SBR Channel Mapping (`libfaad/decoder.c`)**:
+   - In 5.1 multichannel streams with interleaved SBR fill elements (SCE + FIL, CPE1 + FIL, CPE2 + FIL, LFE), `sbr_decode_extension()` received `ch_idx - 1` as `ch0` for CPE elements (referencing the second channel of the CPE element instead of the first).
+   - **Fix**: Tracked `last_elem_type` to calculate exact element start channel `ch0 = (last_elem_type == ID_CPE) ? (ch_idx - 2) : (ch_idx - 1)`.
+
+4. **Coupling Channel Element Syntax (`libfaad/syntax.c`)**:
+   - Added `decode_cce()` to parse `ID_CCE` (Coupling Channel Element, ID 2) syntax per ISO/IEC 14496-3 Section 4.5.2.4 without misreading `cce_scale_factor_data` as standard channel scalefactors.
+
+5. **Scalefactor & PNS Energy Bounds Clamping (`libfaad/huffman.c`)**:
+   - Clamped scalefactor deltas, PNS noise energies, and intensity stereo positions to $[0, 255]$ in `decode_scale_factor_data()` to prevent $2^{0.25 \times (sf - 100)}$ exponent overflow.
+
+---
+
+## 6. Architectural Highlights & Optimizations
 
 1. **64-bit BitReader Accumulator**: Refactored `bits_get()` and `bits_show()` in `libfaad/bits.c` with a big-endian bit-accumulator (`load_be64` / `__builtin_bswap64`), eliminating branch mispredictions during codeword parsing.
 2. **Direct Radix-4 QMF Synthesis**: Implemented Radix-4 DIF IDFT butterflies in `libfaad/sbr.c` to perform 64-subband SBR synthesis in $O(N \log N)$ operations without dynamic matrix allocations.
