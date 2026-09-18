@@ -220,10 +220,10 @@ static inline void decode_quad(BitReader *bs, int book, int *v, int *w, int *x, 
         *v -= 1; *w -= 1; *x -= 1; *y -= 1;
     } else if (book == 3 || book == 4) {
         /* Unsigned 4-tuple: read sign bit for non-zero values */
-        if (*v) if (bits_get(bs, 1)) *v = -*v;
-        if (*w) if (bits_get(bs, 1)) *w = -*w;
-        if (*x) if (bits_get(bs, 1)) *x = -*x;
-        if (*y) if (bits_get(bs, 1)) *y = -*y;
+        if (*v) if (bits_get_fast(bs, 1)) *v = -*v;
+        if (*w) if (bits_get_fast(bs, 1)) *w = -*w;
+        if (*x) if (bits_get_fast(bs, 1)) *x = -*x;
+        if (*y) if (bits_get_fast(bs, 1)) *y = -*y;
     }
 }
 
@@ -261,31 +261,31 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y
          * quieter content. */
         int abs_x = *x;
         int abs_y = *y;
-        bool neg_x = abs_x && bits_get(bs, 1);
-        bool neg_y = abs_y && bits_get(bs, 1);
+        bool neg_x = abs_x && bits_get_fast(bs, 1);
+        bool neg_y = abs_y && bits_get_fast(bs, 1);
 
         if (abs_x == 16) {
 #ifdef FAAD_STATS
             if (stats) stats->escbookMagnitudeEscapes++;
 #endif
             int prefix = 0;
-            while (bits_get(bs, 1) == 1) prefix++;
-            abs_x = (1 << (prefix + 4)) + bits_get(bs, prefix + 4);
+            while (bits_get_fast(bs, 1) == 1) prefix++;
+            abs_x = (1 << (prefix + 4)) + bits_get_fast(bs, prefix + 4);
         }
         if (abs_y == 16) {
 #ifdef FAAD_STATS
             if (stats) stats->escbookMagnitudeEscapes++;
 #endif
             int prefix = 0;
-            while (bits_get(bs, 1) == 1) prefix++;
-            abs_y = (1 << (prefix + 4)) + bits_get(bs, prefix + 4);
+            while (bits_get_fast(bs, 1) == 1) prefix++;
+            abs_y = (1 << (prefix + 4)) + bits_get_fast(bs, prefix + 4);
         }
         *x = neg_x ? -abs_x : abs_x;
         *y = neg_y ? -abs_y : abs_y;
     } else if (book == 5 || (book >= 7 && book <= 10)) {
         /* Unsigned 2-tuple: read sign bit for non-zero values */
-        if (*x) if (bits_get(bs, 1)) *x = -*x;
-        if (*y) if (bits_get(bs, 1)) *y = -*y;
+        if (*x) if (bits_get_fast(bs, 1)) *x = -*x;
+        if (*y) if (bits_get_fast(bs, 1)) *y = -*y;
     }
 }
 
