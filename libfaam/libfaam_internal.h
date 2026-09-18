@@ -12,6 +12,23 @@
 
 #include "faam.h"
 
+/* Memory management macros (overridable for embedded PSRAM / fast internal SRAM) */
+#ifndef AllocMemory
+#define AllocMemory(size) malloc(size)
+#endif
+#ifndef FreeMemory
+#define FreeMemory(block) free(block)
+#endif
+#ifndef AllocMemoryFast
+#define AllocMemoryFast(size) malloc(size)
+#endif
+#ifndef FreeMemoryFast
+#define FreeMemoryFast(block) free(block)
+#endif
+#ifndef ReallocMemory
+#define ReallocMemory(block, size) realloc(block, size)
+#endif
+
 #define FAAM_MAX_TRACKS 8
 
 typedef struct {

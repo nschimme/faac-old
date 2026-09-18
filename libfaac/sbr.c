@@ -248,7 +248,7 @@ int SbrContextGetASC(SBRContext *sbrCtx, int coreSRIdx, int channels, unsigned c
     const bool signalPS = (channels == 1);
     const unsigned long size = signalPS ? 7 : 5;
 
-    unsigned char *buf = (unsigned char *)malloc(size);
+    unsigned char *buf = (unsigned char *)AllocMemory(size);
     if (buf == NULL) return -3;
 
     AscBuildInfo info = {0};
