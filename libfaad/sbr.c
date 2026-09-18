@@ -376,7 +376,159 @@ faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32
 #endif
 }
 
-/* 32-subband QMF analysis filterbank with 320-tap prototype windowing and persistent state */
+#ifdef FAAD_LP_SBR
+static float qmf_syn_cos_lut[64][64];
+#ifdef FAAD_D_SBR
+static float qmf_syn32_cos_lut[32][32];
+#endif
+static bool qmf_syn_twiddles_init = false;
+
+static void init_qmf_syn_twiddles(void)
+{
+    if (qmf_syn_twiddles_init) return;
+    for (int n = 0; n < 64; n++) {
+        for (int k = 0; k < 64; k++) {
+            float angle = (float)M_PI * (k + 0.5f) * (n + 0.5f) / 64.0f;
+            qmf_syn_cos_lut[n][k] = cosf(angle);
+        }
+    }
+#ifdef FAAD_D_SBR
+    for (int n = 0; n < 32; n++) {
+        for (int k = 0; k < 32; k++) {
+            float angle = (float)M_PI * (k + 0.5f) * (n + 0.5f) / 32.0f;
+            qmf_syn32_cos_lut[n][k] = cosf(angle);
+        }
+    }
+#endif
+    qmf_syn_twiddles_init = true;
+}
+
+/* 32-subband Real DCT-IV QMF analysis filterbank with contiguous SIMD-ready arrays */
+static void qmf_analysis_320_real(SBRState *sbr, const float *in, float qmf_real[32][32])
+{
+    init_qmf_twiddles();
+    float *ovl = sbr ? sbr->qmf_ana_ovl : NULL;
+    float local_ovl[320];
+    if (!ovl) {
+        memset(local_ovl, 0, sizeof(local_ovl));
+        ovl = local_ovl;
+    }
+
+    for (int t = 0; t < 32; t++) {
+        memmove(&ovl[0], &ovl[32], 288 * sizeof(float));
+        for (int n = 0; n < 32; n++) {
+            ovl[288 + n] = in[t * 32 + n];
+        }
+
+        float samples[32];
+        const float * restrict win_ptr = qmf_c;
+        const float * restrict ovl_ptr = ovl;
+
+        for (int n = 0; n < 32; n++) {
+            float sample = 0.0f;
+            for (int j = 0; j < 10; j++) {
+                int idx = j * 64 + 2 * n;
+                sample += ovl_ptr[j * 32 + n] * win_ptr[idx];
+            }
+            samples[n] = sample;
+        }
+
+        for (int k = 0; k < 32; k++) {
+            float sum_r = 0.0f;
+            const float * restrict cos_row = qmf_ana_cos_lut[k];
+            const float * restrict smp_ptr = samples;
+
+            for (int n = 0; n < 32; n++) {
+                sum_r += smp_ptr[n] * cos_row[n];
+            }
+            qmf_real[t][k] = sum_r * 0.03125f;
+        }
+    }
+}
+
+#ifndef FAAD_D_SBR
+/* 64-subband Real DCT-II QMF synthesis filterbank (LP-SBR 640-sample windowing) */
+static void qmf_synthesis_640_real(SBRState *sbr, float qmf_real[32][64], float *out)
+{
+    init_qmf_syn_twiddles();
+
+    for (int t = 0; t < 32; t++) {
+        memmove(&sbr->qmf_ovl[0], &sbr->qmf_ovl[64], 576 * sizeof(float));
+
+        float * restrict ovl_dst = sbr->qmf_ovl + 576;
+        const float * restrict re_ptr = qmf_real[t];
+
+        for (int n = 0; n < 64; n++) {
+            float sum = 0.0f;
+            const float * restrict cos_row = qmf_syn_cos_lut[n];
+            for (int k = 0; k < 64; k++) {
+                sum += re_ptr[k] * cos_row[k];
+            }
+            ovl_dst[n] = sum * 0.03125f;
+        }
+
+        const float * restrict ovl_ptr = sbr->qmf_ovl;
+        const float * restrict win_ptr = qmf_c;
+        float * restrict out_ptr = out + t * 64;
+
+        for (int n = 0; n < 64; n++) {
+            float sample = ovl_ptr[n] * win_ptr[n]
+                         + ovl_ptr[64 + n] * win_ptr[64 + n]
+                         + ovl_ptr[128 + n] * win_ptr[128 + n]
+                         + ovl_ptr[192 + n] * win_ptr[192 + n]
+                         + ovl_ptr[256 + n] * win_ptr[256 + n]
+                         + ovl_ptr[320 + n] * win_ptr[320 + n]
+                         + ovl_ptr[384 + n] * win_ptr[384 + n]
+                         + ovl_ptr[448 + n] * win_ptr[448 + n]
+                         + ovl_ptr[512 + n] * win_ptr[512 + n]
+                         + ovl_ptr[576 + n] * win_ptr[576 + n];
+            out_ptr[n] = sample;
+        }
+    }
+}
+#else
+/* 32-subband Real DCT-II QMF synthesis filterbank (D-SBR half-rate 320-sample windowing) */
+static void qmf_synthesis_320_real(SBRState *sbr, float qmf_real[32][32], float *out)
+{
+    init_qmf_syn_twiddles();
+
+    for (int t = 0; t < 32; t++) {
+        memmove(&sbr->qmf_ana_ovl[0], &sbr->qmf_ana_ovl[32], 288 * sizeof(float));
+
+        float * restrict ovl_dst = sbr->qmf_ana_ovl + 288;
+        const float * restrict re_ptr = qmf_real[t];
+
+        for (int n = 0; n < 32; n++) {
+            float sum = 0.0f;
+            const float * restrict cos_row = qmf_syn32_cos_lut[n];
+            for (int k = 0; k < 32; k++) {
+                sum += re_ptr[k] * cos_row[k];
+            }
+            ovl_dst[n] = sum * 0.03125f;
+        }
+
+        const float * restrict ovl_ptr = sbr->qmf_ana_ovl;
+        const float * restrict win_ptr = qmf_c;
+        float * restrict out_ptr = out + t * 32;
+
+        for (int n = 0; n < 32; n++) {
+            float sample = ovl_ptr[n] * win_ptr[2 * n]
+                         + ovl_ptr[32 + n] * win_ptr[64 + 2 * n]
+                         + ovl_ptr[64 + n] * win_ptr[128 + 2 * n]
+                         + ovl_ptr[96 + n] * win_ptr[192 + 2 * n]
+                         + ovl_ptr[128 + n] * win_ptr[256 + 2 * n]
+                         + ovl_ptr[160 + n] * win_ptr[320 + 2 * n]
+                         + ovl_ptr[192 + n] * win_ptr[384 + 2 * n]
+                         + ovl_ptr[224 + n] * win_ptr[448 + 2 * n]
+                         + ovl_ptr[256 + n] * win_ptr[512 + 2 * n]
+                         + ovl_ptr[288 + n] * win_ptr[576 + 2 * n];
+            out_ptr[n] = sample;
+        }
+    }
+}
+#endif
+#else
+/* 32-subband High-Quality QMF analysis filterbank with 320-tap prototype windowing and persistent state */
 static void qmf_analysis_320(SBRState *sbr, const float *in, float qmf_real[32][32], float qmf_imag[32][32])
 {
     init_qmf_twiddles();
@@ -424,6 +576,9 @@ static void qmf_analysis_320(SBRState *sbr, const float *in, float qmf_real[32][
     }
 }
 
+#endif
+
+#ifndef FAAD_LP_SBR
 /* 64-subband QMF synthesis filterbank with 640-sample overlapping delay line history */
 static void qmf_synthesis_640(SBRState *sbr, float qmf_real[32][64], float qmf_imag[32][64], float *out)
 {
@@ -482,6 +637,7 @@ static void qmf_synthesis_640(SBRState *sbr, float qmf_real[32][64], float qmf_i
         }
     }
 }
+#endif
 
 void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *pcm_out)
 {
@@ -499,7 +655,143 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
         return;
     }
 
-    /* Parametric Stereo (HE-AAC v2): Synthesize stereo L/R channels from Mono baseband */
+#ifdef FAAD_LP_SBR
+    /* LP-PS (HE-AAC v2 Mono -> Stereo in Low Power mode) */
+    if (dec->ps_present && num_ch == 1) {
+        dec->num_channels = 2;
+        float qmf_ana_r[32][32];
+
+#ifdef FAAD_D_SBR
+        float qmf_left_r[32][32], qmf_right_r[32][32];
+        memset(qmf_left_r, 0, sizeof(qmf_left_r));
+        memset(qmf_right_r, 0, sizeof(qmf_right_r));
+        int syn_bands = 32;
+#else
+        float qmf_left_r[32][64], qmf_right_r[32][64];
+        memset(qmf_left_r, 0, sizeof(qmf_left_r));
+        memset(qmf_right_r, 0, sizeof(qmf_right_r));
+        int syn_bands = 64;
+#endif
+
+        qmf_analysis_320_real(&dec->sbr[0], pcm_in, qmf_ana_r);
+
+        static const float ps_allpass_a = 0.43f;
+        PSState *ps = &dec->ps;
+
+        for (int t = 0; t < 32; t++) {
+            for (int k = 0; k < syn_bands; k++) {
+                int band = (k * SBR_PS_BANDS) / syn_bands;
+                float src_r = (k < 32) ? qmf_ana_r[t][k] : qmf_ana_r[t][k - 32];
+
+                /* Fractional Subband Delay Lines for LP-PS Phase Derivation */
+                float d_r = ps->delay_r[2][k];
+                ps->delay_r[2][k] = ps->delay_r[1][k];
+                ps->delay_r[1][k] = ps->delay_r[0][k];
+                ps->delay_r[0][k] = src_r;
+
+                /* Derive phase-decorrelated component across adjacent subbands */
+                float adj_r = (k > 0 && k < syn_bands - 1) ? 0.5f * (qmf_ana_r[t][(k - 1) % 32] - qmf_ana_r[t][(k + 1) % 32]) : 0.0f;
+                float dec_r = -ps_allpass_a * src_r + d_r + 0.25f * adj_r;
+
+                /* LP-PS Spatial Matrix Mixing */
+                qmf_left_r[t][k]  = src_r * ps->h11[band] + dec_r * ps->h12[band];
+                qmf_right_r[t][k] = src_r * ps->h21[band] + dec_r * ps->h22[band];
+            }
+        }
+
+#ifdef FAAD_D_SBR
+        qmf_synthesis_320_real(&dec->sbr[0], qmf_left_r, pcm_out);
+        qmf_synthesis_320_real(&dec->sbr[1], qmf_right_r, pcm_out + 1024);
+#else
+        qmf_synthesis_640_real(&dec->sbr[0], qmf_left_r, pcm_out);
+        qmf_synthesis_640_real(&dec->sbr[1], qmf_right_r, pcm_out + 2048);
+#endif
+        return;
+    }
+
+    /* Standard LP-SBR Synthesis */
+    for (uint32_t ch = 0; ch < num_ch; ch++) {
+        SBRState *sbr = &dec->sbr[ch];
+        float qmf_ana_r[32][32];
+
+#ifdef FAAD_D_SBR
+        float qmf_syn_r[32][32];
+        memset(qmf_syn_r, 0, sizeof(qmf_syn_r));
+        int syn_bands = 32;
+#else
+        float qmf_syn_r[32][64];
+        memset(qmf_syn_r, 0, sizeof(qmf_syn_r));
+        int syn_bands = 64;
+#endif
+
+        qmf_analysis_320_real(sbr, pcm_in + ch * FRAME_LEN_LONG, qmf_ana_r);
+
+        uint32_t sbr_sr = dec->asc.sbr_sample_rate > 0 ? dec->asc.sbr_sample_rate : 2 * dec->core_sample_rate;
+        int num_bands = sbr_compute_num_bands(sbr_sr, sbr->bs_start_freq, sbr->bs_stop_freq);
+
+        int sr_row = (sbr_sr <= 16000) ? 0 : (sbr_sr <= 22050) ? 1 : (sbr_sr <= 24000) ? 2 : (sbr_sr <= 32000) ? 3 : (sbr_sr <= 64000) ? 4 : 5;
+        int temp = (sbr_sr < 32000) ? 3000 : (sbr_sr < 64000) ? 4000 : 5000;
+        int start_min = ((temp << 7) + (int)(sbr_sr >> 1)) / (int)sbr_sr;
+        int kx = sbr_clamp_int(start_min + sbr_offset[sr_row][sbr->bs_start_freq & 15], 1, 63);
+        int k2 = sbr_clamp_int(kx + num_bands, kx + 1, syn_bands);
+
+        for (int t = 0; t < 32; t++) {
+            int base_subbands = kx < 32 ? kx : 32;
+            if (base_subbands > syn_bands) base_subbands = syn_bands;
+            memcpy(qmf_syn_r[t], qmf_ana_r[t], base_subbands * sizeof(float));
+        }
+
+        int num_env = (sbr->bs_num_env > 0 && sbr->bs_num_env <= 8) ? sbr->bs_num_env : 1;
+        int step = 32 / num_env;
+
+        for (int t = 0; t < 32; t++) {
+            int env_curr = (t * num_env) / 32;
+            int env_next = (env_curr + 1 < num_env) ? env_curr + 1 : env_curr;
+            if (env_curr >= 8) env_curr = 7;
+            if (env_next >= 8) env_next = 7;
+
+            float alpha = (float)(t % step) / (float)step;
+
+            for (int k = kx; k < k2; k++) {
+                int band_idx = (k - kx) * num_bands / (k2 - kx);
+                if (band_idx >= num_bands) band_idx = num_bands - 1;
+
+                int base_k = (kx < 32) ? kx : 32;
+                if (base_k < 1) base_k = 1;
+                int src_k = (k - kx) % base_k;
+                if (src_k < 0) src_k = 0;
+                if (src_k >= 32) src_k = 31;
+
+                int e_curr = sbr->E_orig[env_curr][band_idx];
+                int e_next = sbr->E_orig[env_next][band_idx];
+
+                float g_curr = powf(2.0f, 0.25f * (e_curr - 20));
+                float g_next = powf(2.0f, 0.25f * (e_next - 20));
+                float gain = (1.0f - alpha) * g_curr + alpha * g_next;
+
+                qmf_syn_r[t][k] = qmf_ana_r[t][src_k] * gain;
+
+                /* ISO 2-tap/3-tap FIR Alias Suppression Filter */
+                if (k > kx && k < k2 - 1) {
+                    int prev_band = (k - 1 - kx) * num_bands / (k2 - kx);
+                    if (prev_band < 0) prev_band = 0;
+                    float g_prev = powf(2.0f, 0.25f * (sbr->E_orig[env_curr][prev_band] - 20));
+                    float diff = gain - g_prev;
+                    if (fabsf(diff) > 1e-4f) {
+                        qmf_syn_r[t][k] += 0.25f * diff * qmf_ana_r[t][(src_k > 0) ? src_k - 1 : 0];
+                    }
+                }
+            }
+        }
+
+#ifdef FAAD_D_SBR
+        qmf_synthesis_320_real(sbr, qmf_syn_r, pcm_out + ch * 1024);
+#else
+        qmf_synthesis_640_real(sbr, qmf_syn_r, pcm_out + ch * 2048);
+#endif
+    }
+#else
+    /* High-Quality Complex SBR Synthesis */
     if (dec->ps_present && num_ch == 1) {
         dec->num_channels = 2;
         float qmf_ana_r[32][32];
@@ -614,6 +906,7 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
 
         qmf_synthesis_640(sbr, qmf_syn_r, qmf_syn_i, pcm_out + ch * 2048);
     }
+#endif
 #else
     for (uint32_t ch = 0; ch < num_ch; ch++) {
         float prev = pcm_in[ch * FRAME_LEN_LONG];

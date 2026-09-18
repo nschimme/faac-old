@@ -123,8 +123,13 @@ FAADAPI faad_status faad_decoder_init(void *mem_buf, uint32_t mem_size,
 
         dec->num_channels = dec->asc.num_channels ? dec->asc.num_channels : 2;
         dec->core_sample_rate = dec->asc.sample_rate ? dec->asc.sample_rate : 44100;
+#ifdef FAAD_D_SBR
+        dec->sample_rate = dec->core_sample_rate;
+        dec->frame_samples = 1024;
+#else
         dec->sample_rate = dec->asc.is_sbr ? dec->asc.sbr_sample_rate : dec->core_sample_rate;
         dec->frame_samples = dec->asc.is_sbr ? 2048 : 1024;
+#endif
         dec->asc_parsed = true;
     } else {
         dec->num_channels = 2;
@@ -430,7 +435,11 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
 
     float pcm_final[MAX_CHANNELS * 2048];
     if (dec->asc.is_sbr || dec->sbr_present) {
+#ifdef FAAD_D_SBR
+        dec->frame_samples = 1024;
+#else
         dec->frame_samples = 2048;
+#endif
         sbr_apply(dec, dec->num_channels, pcm_float, pcm_final);
     } else {
         dec->frame_samples = 1024;
