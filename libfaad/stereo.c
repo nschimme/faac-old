@@ -4,7 +4,19 @@
 
 #include "faad_internal.h"
 
-void apply_ms_stereo(CPEInfo *cpe, float *spec_l, float *spec_r)
+static float is_scale_lut[256];
+static bool is_tables_init = false;
+
+static void init_is_tables(void)
+{
+    if (is_tables_init) return;
+    for (int sf = 0; sf < 256; sf++) {
+        is_scale_lut[sf] = powf(0.5f, 0.25f * (float)sf);
+    }
+    is_tables_init = true;
+}
+
+void apply_ms_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spec_r)
 {
     ICSInfo *ics = &cpe->ics[0];
 
@@ -21,17 +33,20 @@ void apply_ms_stereo(CPEInfo *cpe, float *spec_l, float *spec_r)
             if (ms_flag && !ics->pns_used[g][sfb]) {
                 int start_k = ics->sfb_offsets[sfb];
                 int end_k = ics->sfb_offsets[sfb + 1];
+                if (start_k >= FRAME_LEN_LONG) continue;
+                if (end_k > FRAME_LEN_LONG) end_k = FRAME_LEN_LONG;
+                int len = end_k - start_k;
 
                 for (int w = 0; w < ics->window_group_length[g]; w++) {
                     int win_idx = window_offset + w;
-                    float *l_ptr = spec_l + win_idx * 128 + start_k;
-                    float *r_ptr = spec_r + win_idx * 128 + start_k;
+                    float * restrict l_ptr = spec_l + win_idx * 128 + start_k;
+                    float * restrict r_ptr = spec_r + win_idx * 128 + start_k;
 
-                    for (int k = start_k; k < end_k && (start_k + (k - start_k)) < FRAME_LEN_LONG; k++) {
-                        float m = *l_ptr;
-                        float s = *r_ptr;
-                        *l_ptr++ = m + s;
-                        *r_ptr++ = m - s;
+                    for (int k = 0; k < len; k++) {
+                        float m = l_ptr[k];
+                        float s = r_ptr[k];
+                        l_ptr[k] = m + s;
+                        r_ptr[k] = m - s;
                     }
                 }
             }
@@ -40,8 +55,9 @@ void apply_ms_stereo(CPEInfo *cpe, float *spec_l, float *spec_r)
     }
 }
 
-void apply_is_stereo(CPEInfo *cpe, float *spec_l, float *spec_r)
+void apply_is_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spec_r)
 {
+    init_is_tables();
     ICSInfo *ics_r = &cpe->ics[1];
 
     int window_offset = 0;
@@ -54,19 +70,24 @@ void apply_is_stereo(CPEInfo *cpe, float *spec_l, float *spec_r)
 
                 for (int sfb = start_sfb; sfb < end_sfb && sfb < 64; sfb++) {
                     int sf = ics_r->scalefactors[g][sfb];
-                    float scale = powf(0.5f, 0.25f * sf);
+                    if (sf < 0) sf = 0;
+                    if (sf > 255) sf = 255;
+                    float scale = is_scale_lut[sf];
                     if (cb == 15) scale = -scale;
 
                     int start_k = ics_r->sfb_offsets[sfb];
                     int end_k = ics_r->sfb_offsets[sfb + 1];
+                    if (start_k >= FRAME_LEN_LONG) continue;
+                    if (end_k > FRAME_LEN_LONG) end_k = FRAME_LEN_LONG;
+                    int len = end_k - start_k;
 
                     for (int w = 0; w < ics_r->window_group_length[g]; w++) {
                         int win_idx = window_offset + w;
-                        float *l_ptr = spec_l + win_idx * 128 + start_k;
-                        float *r_ptr = spec_r + win_idx * 128 + start_k;
+                        const float * restrict l_ptr = spec_l + win_idx * 128 + start_k;
+                        float * restrict r_ptr = spec_r + win_idx * 128 + start_k;
 
-                        for (int k = start_k; k < end_k && (start_k + (k - start_k)) < FRAME_LEN_LONG; k++) {
-                            *r_ptr++ = (*l_ptr++) * scale;
+                        for (int k = 0; k < len; k++) {
+                            r_ptr[k] = l_ptr[k] * scale;
                         }
                     }
                 }
