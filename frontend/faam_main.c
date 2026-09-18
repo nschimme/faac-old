@@ -20,6 +20,7 @@
 
 #include "faam.h"
 #include "charset.h"
+#include "endian.h"
 #include "asc_codec.h"
 
 static int32_t file_read_cb(void *user_data, void *buf, uint32_t bytes) {
@@ -158,8 +159,10 @@ static int cmd_info(int argc, char **argv)
     return 0;
 }
 
-static uint32_t read_u32(const uint8_t *b) {
-    return ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) | ((uint32_t)b[2] << 8) | (uint32_t)b[3];
+static inline uint32_t read_u32(const uint8_t *b) {
+    uint32_t val;
+    memcpy(&val, b, 4);
+    return htobe32(val);
 }
 
 static void dump_atoms(const uint8_t *buf, long offset, long end, int indent)
@@ -388,13 +391,14 @@ static int cmd_mux(int argc, char **argv)
                     avcc_buf[3] = sps[3]; /* AVCLevelIndication */
                     avcc_buf[4] = 0xFF;   /* lengthSizeMinusOne = 3 (4 bytes) */
                     avcc_buf[5] = 0xE1;   /* numOfSequenceParameterSets = 1 */
-                    avcc_buf[6] = (uint8_t)(sps_len >> 8);
-                    avcc_buf[7] = (uint8_t)(sps_len & 0xFF);
+                    uint16_t sps_be = htobe16((uint16_t)sps_len);
+                    memcpy(avcc_buf + 6, &sps_be, 2);
                     memcpy(avcc_buf + 8, sps, sps_len);
                     uint32_t off = 8 + sps_len;
                     avcc_buf[off++] = 1;  /* numOfPictureParameterSets = 1 */
-                    avcc_buf[off++] = (uint8_t)(pps_len >> 8);
-                    avcc_buf[off++] = (uint8_t)(pps_len & 0xFF);
+                    uint16_t pps_be = htobe16((uint16_t)pps_len);
+                    memcpy(avcc_buf + off, &pps_be, 2);
+                    off += 2;
                     memcpy(avcc_buf + off, pps, pps_len);
                     off += pps_len;
                     avcc_len = off;
@@ -556,10 +560,9 @@ static int cmd_mux(int argc, char **argv)
                         if (is_vcl) has_slice = true;
                         if (nal_type == 5) sample_is_key = true;
 
-                        sample_mem[sample_len++] = (uint8_t)(nal_len >> 24);
-                        sample_mem[sample_len++] = (uint8_t)(nal_len >> 16);
-                        sample_mem[sample_len++] = (uint8_t)(nal_len >> 8);
-                        sample_mem[sample_len++] = (uint8_t)(nal_len & 0xFF);
+                        uint32_t nal_be = htobe32(nal_len);
+                        memcpy(sample_mem + sample_len, &nal_be, 4);
+                        sample_len += 4;
                         memcpy(sample_mem + sample_len, vbuf + nal_start, nal_len);
                         sample_len += nal_len;
 
@@ -651,12 +654,10 @@ static int cmd_demux(int argc, char **argv)
     faam_track_info ti;
     memset(&ti, 0, sizeof(ti));
 
-    uint32_t target_track_index = 0;
     if (selected_track_id > 0) {
         for (uint32_t t = 0; t < num_tracks; t++) {
             faam_track_info tmp_info;
             if (faam_demuxer_get_track_info(d, t, &tmp_info) == FAAM_OK && tmp_info.track_id == selected_track_id) {
-                target_track_index = t;
                 ti = tmp_info;
                 break;
             }
