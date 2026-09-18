@@ -100,11 +100,17 @@ static void ps_decode_payload(struct faad_decoder *dec, BitReader *bs)
 {
     PSState *ps = &dec->ps;
     dec->ps_present = true;
+#ifdef FAAD_STATS
+    dec->stats.psActiveFrames++;
+#endif
 
     ps->enable_iid = bits_get(bs, 1);
     if (ps->enable_iid) {
         bool iid_mode = bits_get(bs, 1);
         int bands = iid_mode ? 20 : 10;
+#ifdef FAAD_STATS
+        dec->stats.psIidBandsSum += bands;
+#endif
         for (int b = 0; b < bands; b++) {
             int val = bits_get(bs, 4);
             ps->iid_idx[b] = (int8_t)(val - 7);
@@ -115,6 +121,9 @@ static void ps_decode_payload(struct faad_decoder *dec, BitReader *bs)
     if (ps->enable_icc) {
         bool icc_mode = bits_get(bs, 1);
         int bands = icc_mode ? 20 : 10;
+#ifdef FAAD_STATS
+        dec->stats.psIccBandsSum += bands;
+#endif
         for (int b = 0; b < bands; b++) {
             int val = bits_get(bs, 3);
             ps->icc_idx[b] = (int8_t)val;
@@ -145,97 +154,187 @@ static void ps_decode_payload(struct faad_decoder *dec, BitReader *bs)
     }
 }
 
-faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32_t ch, uint32_t syntax_id)
+faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32_t ch0, uint32_t syntax_id)
 {
 #ifndef FAAD_DISABLE_SBR
-    (void)syntax_id;
-    if (ch >= MAX_CHANNELS) return FAAD_ERR_INVALID_ARGUMENT;
-
-    SBRState *sbr = &dec->sbr[ch];
+    int nch = (syntax_id == ID_CPE) ? 2 : 1;
+    if (ch0 + nch > MAX_CHANNELS) return FAAD_ERR_INVALID_ARGUMENT;
     dec->sbr_present = true;
 
-    bool bs_header_extra_1 = bits_get(bs, 1);
-    if (bs_header_extra_1) {
-        sbr->header_present = true;
-        sbr->bs_start_freq = bits_get(bs, 4);
-        sbr->bs_stop_freq = bits_get(bs, 4);
-        sbr->bs_xover_band = bits_get(bs, 3);
-        bits_skip(bs, 2);
-    }
-
-    /* SBR Frame Grid Decoding */
-    sbr->bs_frame_class = bits_get(bs, 2);
-    sbr->bs_num_env = bits_get(bs, 2) + 1;
-
-    /* SBR Inverse Filtering Mode */
-    for (int i = 0; i < 4; i++) {
-        bits_skip(bs, 2);
-    }
-
-    /* SBR Envelope Data (E_orig) decoding using ISO/IEC 14496-3 SBR Huffman tables */
-    bool bs_amp_res = bits_get(bs, 1);
-    const SBRHuffEntry *huff_tab = bs_amp_res ? f_huff_env_1_5dB : f_huff_env_3_0dB;
-    int huff_nsyms = bs_amp_res ? F_HUFF_ENV_1_5DB_NSYMS : F_HUFF_ENV_3_0DB_NSYMS;
-    int huff_offset = bs_amp_res ? F_HUFF_ENV_1_5DB_OFFSET : F_HUFF_ENV_3_0DB_OFFSET;
-
-    int num_bands = sbr_compute_num_bands(dec->asc.sbr_sample_rate > 0 ? dec->asc.sbr_sample_rate : 2 * dec->core_sample_rate, sbr->bs_start_freq, sbr->bs_stop_freq);
-    for (int env = 0; env < sbr->bs_num_env && env < 8; env++) {
-        bool bs_df_env = bits_get(bs, 1);
-        int prev_val = bs_amp_res ? 60 : 30;
-
-        for (int band = 0; band < num_bands; band++) {
-            if (env == 0 && !bs_df_env) {
-                /* First envelope, frequency direction: absolute value or delta */
-                if (band == 0) {
-                    prev_val = bits_get(bs, bs_amp_res ? 7 : 6);
-                } else {
-                    int delta = sbr_decode_huffman_env_delta(bs, huff_tab, huff_nsyms, huff_offset);
-                    prev_val += delta;
-                }
-            } else if (bs_df_env) {
-                /* Time direction delta coding from previous envelope */
-                int delta = sbr_decode_huffman_env_delta(bs, huff_tab, huff_nsyms, huff_offset);
-                prev_val = sbr->E_orig[env == 0 ? 0 : env - 1][band] + delta;
-            } else {
-                /* Frequency direction delta coding from previous band */
-                int delta = sbr_decode_huffman_env_delta(bs, huff_tab, huff_nsyms, huff_offset);
-                prev_val += delta;
-            }
-
-            sbr->E_orig[env][band] = (int8_t)prev_val;
+    /* ISO/IEC 14496-3 Section 4.6.18.5 sbr_extension_data(): 1-bit header_flag */
+    bool sbr_header_flag = bits_get(bs, 1);
+    if (sbr_header_flag) {
+#ifdef FAAD_STATS
+        dec->stats.sbrHeaderCount++;
+#endif
+        bool amp_res = bits_get(bs, 1);
+        uint32_t start_freq = bits_get(bs, 4);
+        uint32_t stop_freq = bits_get(bs, 4);
+        uint32_t xover_band = bits_get(bs, 3);
+        for (int c = 0; c < nch; c++) {
+            SBRState *sbr = &dec->sbr[ch0 + c];
+            sbr->header_present = true;
+            sbr->bs_amp_res = amp_res;
+            sbr->bs_start_freq = start_freq;
+            sbr->bs_stop_freq = stop_freq;
+            sbr->bs_xover_band = xover_band;
+        }
+        bits_skip(bs, 2); /* bs_reserved */
+        bool header_extra_1 = bits_get(bs, 1);
+        bool header_extra_2 = bits_get(bs, 1);
+        if (header_extra_1) {
+            bits_skip(bs, 2); /* bs_freq_scale */
+            bits_skip(bs, 1); /* bs_alter_scale */
+            bits_skip(bs, 2); /* bs_noise_bands */
+        }
+        if (header_extra_2) {
+            bits_skip(bs, 2); /* bs_limiter_bands */
+            bits_skip(bs, 2); /* bs_limiter_gains */
+            bits_skip(bs, 1); /* bs_interpol_freq */
+            bits_skip(bs, 1); /* bs_smoothing_mode */
         }
     }
 
-    /* SBR Noise Floor Data (Q_orig) */
-    sbr->bs_num_noise = (sbr->bs_num_env > 1) ? 2 : 1;
-    for (int n = 0; n < sbr->bs_num_noise && n < 8; n++) {
-        bool bs_df_noise = bits_get(bs, 1);
-        int prev_val = 30;
-        for (int band = 0; band < 5; band++) {
-            if (n == 0 && !bs_df_noise) {
-                if (band == 0) {
-                    prev_val = bits_get(bs, 5);
+    /* Lead coupling / reserved bits */
+    bits_skip(bs, (syntax_id == ID_CPE) ? 2 : 1);
+
+    /* SBR Frame Grid Decoding for each channel in element */
+    for (int c = 0; c < nch; c++) {
+        SBRState *sbr = &dec->sbr[ch0 + c];
+        sbr->bs_frame_class = bits_get(bs, 2);
+        if (sbr->bs_frame_class == 0) { /* FIXFIX */
+            sbr->bs_num_env = bits_get(bs, 2) + 1;
+            if (sbr->bs_num_env == 3) sbr->bs_num_env = 4;
+            bits_skip(bs, 1); /* bs_freq_res */
+        } else if (sbr->bs_frame_class == 1) { /* FIXVAR */
+            bits_skip(bs, 2); /* bs_var_bord_1 */
+            sbr->bs_num_env = bits_get(bs, 2) + 1;
+            for (int i = 0; i < sbr->bs_num_env - 1; i++) bits_skip(bs, 2);
+            int ptr_len = (sbr->bs_num_env > 4) ? 3 : (sbr->bs_num_env > 2) ? 2 : (sbr->bs_num_env > 1) ? 1 : 0;
+            if (ptr_len > 0) bits_skip(bs, ptr_len);
+            for (int i = 0; i < sbr->bs_num_env; i++) bits_skip(bs, 1);
+        } else if (sbr->bs_frame_class == 2) { /* VARFIX */
+            bits_skip(bs, 2); /* bs_var_bord_0 */
+            sbr->bs_num_env = bits_get(bs, 2) + 1;
+            for (int i = 0; i < sbr->bs_num_env - 1; i++) bits_skip(bs, 2);
+            int ptr_len = (sbr->bs_num_env > 4) ? 3 : (sbr->bs_num_env > 2) ? 2 : (sbr->bs_num_env > 1) ? 1 : 0;
+            if (ptr_len > 0) bits_skip(bs, ptr_len);
+            for (int i = 0; i < sbr->bs_num_env; i++) bits_skip(bs, 1);
+        } else { /* VARVAR */
+            bits_skip(bs, 2); /* bs_var_bord_0 */
+            bits_skip(bs, 2); /* bs_var_bord_1 */
+            uint32_t rel_0 = bits_get(bs, 2);
+            uint32_t rel_1 = bits_get(bs, 2);
+            sbr->bs_num_env = rel_0 + rel_1 + 1;
+            for (uint32_t i = 0; i < rel_0; i++) bits_skip(bs, 2);
+            for (uint32_t i = 0; i < rel_1; i++) bits_skip(bs, 2);
+            int ptr_len = (sbr->bs_num_env > 4) ? 3 : (sbr->bs_num_env > 2) ? 2 : (sbr->bs_num_env > 1) ? 1 : 0;
+            if (ptr_len > 0) bits_skip(bs, ptr_len);
+            for (int i = 0; i < sbr->bs_num_env; i++) bits_skip(bs, 1);
+        }
+    }
+
+    /* sbr_dtdf (delta coding direction flags) for each channel */
+    bool bs_df_env[2][8] = {{0}};
+    bool bs_df_noise[2][2] = {{0}};
+    for (int c = 0; c < nch; c++) {
+        SBRState *sbr = &dec->sbr[ch0 + c];
+        for (int env = 0; env < sbr->bs_num_env && env < 8; env++) {
+            bs_df_env[c][env] = bits_get(bs, 1);
+        }
+        int n_q = (sbr->bs_num_env > 1) ? 2 : 1;
+        for (int n = 0; n < n_q && n < 2; n++) {
+            bs_df_noise[c][n] = bits_get(bs, 1);
+        }
+    }
+
+    /* SBR Inverse Filtering Mode for each channel: 2 bits per channel */
+    for (int c = 0; c < nch; c++) {
+        bits_skip(bs, 2);
+    }
+
+    /* SBR Envelope Data (E_orig) for each channel */
+    for (int c = 0; c < nch; c++) {
+        SBRState *sbr = &dec->sbr[ch0 + c];
+#ifdef FAAD_STATS
+        if (c == 0) dec->stats.sbrEnvelopeSum += sbr->bs_num_env;
+#endif
+        bool bs_amp_res = sbr->bs_amp_res;
+        /* ISO/IEC 14496-3 Section 4.6.18.3 & libfaac encoder (sbr_bitstream.c):
+         * bs_amp_res = 0 -> 1.5 dB resolution (7 bits first val, f_huff_env_1_5dB)
+         * bs_amp_res = 1 -> 3.0 dB resolution (6 bits first val, f_huff_env_3_0dB) */
+        const SBRHuffEntry *huff_tab = bs_amp_res ? f_huff_env_3_0dB : f_huff_env_1_5dB;
+        int huff_nsyms = bs_amp_res ? F_HUFF_ENV_3_0DB_NSYMS : F_HUFF_ENV_1_5DB_NSYMS;
+        int huff_offset = bs_amp_res ? F_HUFF_ENV_3_0DB_OFFSET : F_HUFF_ENV_1_5DB_OFFSET;
+
+        int num_bands = sbr_compute_num_bands(dec->asc.sbr_sample_rate > 0 ? dec->asc.sbr_sample_rate : 2 * dec->core_sample_rate, sbr->bs_start_freq, sbr->bs_stop_freq);
+        for (int env = 0; env < sbr->bs_num_env && env < 8; env++) {
+            bool df = bs_df_env[c][env];
+            int prev_val = bs_amp_res ? 30 : 60;
+
+            for (int band = 0; band < num_bands; band++) {
+                if (!df) {
+                    if (band == 0) {
+                        prev_val = bits_get(bs, bs_amp_res ? 6 : 7);
+                    } else {
+                        int delta = sbr_decode_huffman_env_delta(bs, huff_tab, huff_nsyms, huff_offset);
+                        prev_val += delta;
+                    }
+                } else {
+                    int delta = sbr_decode_huffman_env_delta(bs, huff_tab, huff_nsyms, huff_offset);
+                    prev_val = sbr->E_orig[env == 0 ? 0 : env - 1][band] + delta;
+                }
+
+                sbr->E_orig[env][band] = (int8_t)prev_val;
+            }
+        }
+    }
+
+    /* SBR Noise Floor Data (Q_orig) for each channel per ISO/IEC 14496-3 Section 4.6.18.3 */
+    for (int c = 0; c < nch; c++) {
+        SBRState *sbr = &dec->sbr[ch0 + c];
+        sbr->bs_num_noise = (sbr->bs_num_env > 1) ? 2 : 1;
+        for (int n = 0; n < sbr->bs_num_noise && n < 8; n++) {
+            bool df = bs_df_noise[c][n];
+            int prev_val = 30;
+            for (int band = 0; band < 5; band++) {
+                if (n == 0 && !df) {
+                    if (band == 0) {
+                        prev_val = bits_get(bs, 5);
+                    } else {
+                        int delta = sbr_decode_huffman_env_delta(bs, f_huff_env_3_0dB, F_HUFF_ENV_3_0DB_NSYMS, F_HUFF_ENV_3_0DB_OFFSET);
+                        prev_val += delta;
+                    }
+                } else if (df) {
+                    int delta = sbr_decode_huffman_env_delta(bs, f_huff_env_3_0dB, F_HUFF_ENV_3_0DB_NSYMS, F_HUFF_ENV_3_0DB_OFFSET);
+                    prev_val = sbr->Q_orig[n == 0 ? 0 : n - 1][band] + delta;
                 } else {
                     int delta = sbr_decode_huffman_env_delta(bs, f_huff_env_3_0dB, F_HUFF_ENV_3_0DB_NSYMS, F_HUFF_ENV_3_0DB_OFFSET);
                     prev_val += delta;
                 }
-            } else if (bs_df_noise) {
-                int delta = sbr_decode_huffman_env_delta(bs, f_huff_env_3_0dB, F_HUFF_ENV_3_0DB_NSYMS, F_HUFF_ENV_3_0DB_OFFSET);
-                prev_val = sbr->Q_orig[n == 0 ? 0 : n - 1][band] + delta;
-            } else {
-                int delta = sbr_decode_huffman_env_delta(bs, f_huff_env_3_0dB, F_HUFF_ENV_3_0DB_NSYMS, F_HUFF_ENV_3_0DB_OFFSET);
-                prev_val += delta;
+                sbr->Q_orig[n][band] = (int8_t)prev_val;
             }
-            sbr->Q_orig[n][band] = (int8_t)prev_val;
         }
     }
 
-    /* SBR Synthetics / Harmonics */
-    bool bs_add_harmonic_flag = bits_get(bs, 1);
-    if (bs_add_harmonic_flag) {
-        for (int band = 0; band < num_bands; band++) {
-            sbr->bs_add_harmonic[band] = bits_get(bs, 1);
+    /* SBR Synthetics / Harmonics per ISO/IEC 14496-3 Section 4.6.18.3 */
+    for (int c = 0; c < nch; c++) {
+        SBRState *sbr = &dec->sbr[ch0 + c];
+        bool bs_add_harmonic_flag = bits_get(bs, 1);
+        if (bs_add_harmonic_flag) {
+            int num_bands = sbr_compute_num_bands(dec->asc.sbr_sample_rate > 0 ? dec->asc.sbr_sample_rate : 2 * dec->core_sample_rate, sbr->bs_start_freq, sbr->bs_stop_freq);
+            for (int band = 0; band < num_bands; band++) {
+                sbr->bs_add_harmonic[band] = bits_get(bs, 1);
+            }
         }
+    }
+
+    /* Extended data flag: 1 bit */
+    bool bs_extended_data = bits_get(bs, 1);
+    if (bs_extended_data) {
+        uint32_t ext_len = bits_get(bs, 4);
+        if (ext_len == 15) ext_len += bits_get(bs, 8);
+        bits_skip(bs, ext_len * 8);
     }
 
     /* Check for Parametric Stereo (PS) extension payload */
