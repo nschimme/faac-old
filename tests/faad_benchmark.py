@@ -114,10 +114,10 @@ def shutil_which(cmd):
 
 def compute_mos(ref_wav, decoded_wav):
     if not HAVE_FAAC_BENCHMARK:
-        return 4.50  # Default fallback if phase2_mos not imported
+        return 1.0  # Default fallback if phase2_mos not imported
     try:
         score = phase2_mos.compute_visqol_single(ref_wav, decoded_wav)
-        return float(score) if score is not None else 4.50
+        return float(score) if score is not None else 1.0
     except Exception:
         # Calculate SNR-based spectral MOS fallback
         try:
@@ -133,7 +133,7 @@ def compute_mos(ref_wav, decoded_wav):
                 mos = 1.0 + 3.8 / (1.0 + math.exp(-0.15 * (snr - 15.0)))
                 return round(mos, 2)
         except Exception:
-            return 4.50
+            return 1.0
 
 def benchmark_file(encoder_name, profile, filepath, ref_wav, iterations=10):
     pcm_out = os.path.join(BENCH_DIR, f"dec_{os.path.basename(filepath)}.wav")
