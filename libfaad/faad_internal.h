@@ -19,6 +19,17 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#include <stdalign.h>
+#define FAAD_ALIGN(x) alignas(x)
+#elif defined(_MSC_VER)
+#define FAAD_ALIGN(x) __declspec(align(x))
+#elif defined(__GNUC__)
+#define FAAD_ALIGN(x) __attribute__((aligned(x)))
+#else
+#define FAAD_ALIGN(x)
+#endif
+
 #include "faad.h"
 #include "huffdata.h"
 

@@ -377,9 +377,9 @@ faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32
 }
 
 #ifdef FAAD_LP_SBR
-static float qmf_syn_cos_lut[64][64];
+FAAD_ALIGN(32) static float qmf_syn_cos_lut[64][64];
 #ifdef FAAD_D_SBR
-static float qmf_syn32_cos_lut[32][32];
+FAAD_ALIGN(32) static float qmf_syn32_cos_lut[32][32];
 #endif
 static bool qmf_syn_twiddles_init = false;
 
@@ -659,15 +659,15 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
     /* LP-PS (HE-AAC v2 Mono -> Stereo in Low Power mode) */
     if (dec->ps_present && num_ch == 1) {
         dec->num_channels = 2;
-        float qmf_ana_r[32][32];
+        FAAD_ALIGN(32) float qmf_ana_r[32][32];
 
 #ifdef FAAD_D_SBR
-        float qmf_left_r[32][32], qmf_right_r[32][32];
+        FAAD_ALIGN(32) float qmf_left_r[32][32], qmf_right_r[32][32];
         memset(qmf_left_r, 0, sizeof(qmf_left_r));
         memset(qmf_right_r, 0, sizeof(qmf_right_r));
         int syn_bands = 32;
 #else
-        float qmf_left_r[32][64], qmf_right_r[32][64];
+        FAAD_ALIGN(32) float qmf_left_r[32][64], qmf_right_r[32][64];
         memset(qmf_left_r, 0, sizeof(qmf_left_r));
         memset(qmf_right_r, 0, sizeof(qmf_right_r));
         int syn_bands = 64;
@@ -712,14 +712,14 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
     /* Standard LP-SBR Synthesis */
     for (uint32_t ch = 0; ch < num_ch; ch++) {
         SBRState *sbr = &dec->sbr[ch];
-        float qmf_ana_r[32][32];
+        FAAD_ALIGN(32) float qmf_ana_r[32][32];
 
 #ifdef FAAD_D_SBR
-        float qmf_syn_r[32][32];
+        FAAD_ALIGN(32) float qmf_syn_r[32][32];
         memset(qmf_syn_r, 0, sizeof(qmf_syn_r));
         int syn_bands = 32;
 #else
-        float qmf_syn_r[32][64];
+        FAAD_ALIGN(32) float qmf_syn_r[32][64];
         memset(qmf_syn_r, 0, sizeof(qmf_syn_r));
         int syn_bands = 64;
 #endif
