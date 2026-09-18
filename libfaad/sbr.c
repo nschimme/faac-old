@@ -44,11 +44,32 @@ static float qmf_rot_sin[64];
 static float qmf_post_cos[64];
 static float qmf_post_sin[64];
 
+static float sbr_env_scale_lut[128];
+static bool sbr_env_scale_lut_init = false;
+
+static void init_sbr_env_scale_lut(void)
+{
+    if (sbr_env_scale_lut_init) return;
+    for (int e = 0; e < 128; e++) {
+        sbr_env_scale_lut[e] = powf(2.0f, 0.25f * (e - 20));
+    }
+    sbr_env_scale_lut_init = true;
+}
+
+static inline float get_sbr_env_scale(int e)
+{
+    if (e < 0) e = 0;
+    if (e > 127) e = 127;
+    return sbr_env_scale_lut[e];
+}
+
 static bool qmf_twiddles_init = false;
 
 void init_qmf_twiddles(void)
 {
     if (qmf_twiddles_init) return;
+
+    init_sbr_env_scale_lut();
 
     for (int n = 0; n < 64; n++) {
         float angle = (float)M_PI * (n - 0.25f) / 128.0f;
@@ -765,8 +786,8 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
                 int e_curr = sbr->E_orig[env_curr][band_idx];
                 int e_next = sbr->E_orig[env_next][band_idx];
 
-                float g_curr = powf(2.0f, 0.25f * (e_curr - 20));
-                float g_next = powf(2.0f, 0.25f * (e_next - 20));
+                float g_curr = get_sbr_env_scale(e_curr);
+                float g_next = get_sbr_env_scale(e_next);
                 float gain = (1.0f - alpha) * g_curr + alpha * g_next;
 
                 qmf_syn_r[t][k] = qmf_ana_r[t][src_k] * gain;
@@ -775,7 +796,7 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
                 if (k > kx && k < k2 - 1) {
                     int prev_band = (k - 1 - kx) * num_bands / (k2 - kx);
                     if (prev_band < 0) prev_band = 0;
-                    float g_prev = powf(2.0f, 0.25f * (sbr->E_orig[env_curr][prev_band] - 20));
+                    float g_prev = get_sbr_env_scale(sbr->E_orig[env_curr][prev_band]);
                     float diff = gain - g_prev;
                     if (fabsf(diff) > 1e-4f) {
                         qmf_syn_r[t][k] += 0.25f * diff * qmf_ana_r[t][(src_k > 0) ? src_k - 1 : 0];
@@ -895,8 +916,8 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
                 int e_curr = sbr->E_orig[env_curr][band_idx];
                 int e_next = sbr->E_orig[env_next][band_idx];
 
-                float g_curr = powf(2.0f, 0.25f * (e_curr - 20));
-                float g_next = powf(2.0f, 0.25f * (e_next - 20));
+                float g_curr = get_sbr_env_scale(e_curr);
+                float g_next = get_sbr_env_scale(e_next);
                 float gain = (1.0f - alpha) * g_curr + alpha * g_next;
 
                 qmf_syn_r[t][k] = qmf_ana_r[t][src_k] * gain;
