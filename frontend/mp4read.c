@@ -85,7 +85,7 @@ bool mp4_read_track_buf(const uint8_t *buf, long file_size, MP4Track *track)
 
     uint8_t asc[64];
     uint32_t asc_len = 0;
-    faam_demuxer_get_asc(d, asc, sizeof(asc), &asc_len);
+    faam_demuxer_get_codec_data(d, 1, asc, sizeof(asc), &asc_len);
     if (asc_len > 0) {
         track->asc_buf = (uint8_t *)malloc(asc_len);
         memcpy(track->asc_buf, asc, asc_len);
@@ -98,7 +98,7 @@ bool mp4_read_track_buf(const uint8_t *buf, long file_size, MP4Track *track)
     track->padding = gapless.end_padding;
 
     /* Query total frames directly from demuxer */
-    uint32_t total_frames = faam_demuxer_get_total_frames(d);
+    uint32_t total_frames = faam_demuxer_get_total_frames(d, 1);
     if (total_frames > 0) {
         track->samples = (MP4Sample *)calloc(total_frames, sizeof(MP4Sample));
         track->num_samples = total_frames;

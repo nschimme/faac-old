@@ -1,7 +1,6 @@
 # Meson build file for libfaam
 
 libfaam_sources = files(
-  'asc.c',
   'demux.c',
   'mux.c',
   'tag.c',
@@ -48,7 +47,7 @@ pkg = import('pkgconfig')
 pkg.generate(
   libfaam_shared,
   name: 'faam',
-  description: 'Freeware Advanced Audio Muxer Library',
+  description: 'Freeware Advanced Audio & Video Muxer Library',
   version: '1.0.0',
 )
 
