@@ -493,9 +493,9 @@ static void qmf_synthesis_320_real(SBRState *sbr, float qmf_real[32][32], float 
     init_qmf_syn_twiddles();
 
     for (int t = 0; t < 32; t++) {
-        memmove(&sbr->qmf_ana_ovl[0], &sbr->qmf_ana_ovl[32], 288 * sizeof(float));
+        memmove(&sbr->qmf_syn_ovl[0], &sbr->qmf_syn_ovl[32], 288 * sizeof(float));
 
-        float * restrict ovl_dst = sbr->qmf_ana_ovl + 288;
+        float * restrict ovl_dst = sbr->qmf_syn_ovl + 288;
         const float * restrict re_ptr = qmf_real[t];
 
         for (int n = 0; n < 32; n++) {
@@ -507,7 +507,7 @@ static void qmf_synthesis_320_real(SBRState *sbr, float qmf_real[32][32], float 
             ovl_dst[n] = sum * 0.03125f;
         }
 
-        const float * restrict ovl_ptr = sbr->qmf_ana_ovl;
+        const float * restrict ovl_ptr = sbr->qmf_syn_ovl;
         const float * restrict win_ptr = qmf_c;
         float * restrict out_ptr = out + t * 32;
 
