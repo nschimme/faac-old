@@ -72,9 +72,20 @@ void bits_init(BitReader *bs, const uint8_t *buffer, uint32_t len);
 
 uint32_t bits_get(BitReader *bs, uint32_t nbits);
 
+static inline uint32_t bits_get_1(BitReader *bs)
+{
+    if (bs->byte_pos < bs->len) {
+        uint32_t bit = (bs->buffer[bs->byte_pos] >> (7 - bs->bit_pos)) & 1U;
+        uint32_t next_bit = bs->bit_pos + 1;
+        bs->byte_pos += next_bit >> 3;
+        bs->bit_pos = next_bit & 7;
+        return bit;
+    }
+    return 0;
+}
+
 static inline uint32_t bits_get_fast(BitReader *bs, uint32_t nbits)
 {
-    if (nbits == 0) return 0;
     if (nbits <= 24 && bs->byte_pos + 4 <= bs->len) {
         const uint8_t *ptr = bs->buffer + bs->byte_pos;
         uint32_t word = ((uint32_t)ptr[0] << 24) | ((uint32_t)ptr[1] << 16) |
