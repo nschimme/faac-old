@@ -21,6 +21,7 @@
 
 #include "faad.h"
 #include "charset.h"
+#include "endian.h"
 
 typedef struct {
     uint64_t offset;
@@ -138,27 +139,31 @@ static void fifo_truncate_tail(PCMFifo *f, uint32_t bytes_to_remove)
 static void write_wav_header(FILE *f, uint32_t sample_rate, uint16_t num_channels, uint32_t total_pcm_bytes, uint16_t bits_per_sample, bool is_float)
 {
     fseek(f, 0, SEEK_SET);
-    uint32_t file_size = 36 + total_pcm_bytes;
+    uint32_t file_size = htole32(36 + total_pcm_bytes);
     uint16_t bytes_per_sample = bits_per_sample / 8;
-    uint32_t byte_rate = sample_rate * num_channels * bytes_per_sample;
-    uint16_t block_align = num_channels * bytes_per_sample;
+    uint32_t byte_rate = htole32(sample_rate * num_channels * bytes_per_sample);
+    uint16_t block_align = htole16(num_channels * bytes_per_sample);
+    uint32_t sr_le = htole32(sample_rate);
+    uint16_t ch_le = htole16(num_channels);
+    uint16_t bps_le = htole16(bits_per_sample);
 
     fwrite("RIFF", 1, 4, f);
     fwrite(&file_size, 4, 1, f);
     fwrite("WAVEfmt ", 1, 8, f);
 
-    uint32_t fmt_chunk_size = 16;
-    uint16_t audio_format = is_float ? 3 : 1; /* 1 = PCM, 3 = IEEE Float */
+    uint32_t fmt_chunk_size = htole32(16);
+    uint16_t audio_format = htole16(is_float ? 3 : 1); /* 1 = PCM, 3 = IEEE Float */
     fwrite(&fmt_chunk_size, 4, 1, f);
     fwrite(&audio_format, 2, 1, f);
-    fwrite(&num_channels, 2, 1, f);
-    fwrite(&sample_rate, 4, 1, f);
+    fwrite(&ch_le, 2, 1, f);
+    fwrite(&sr_le, 4, 1, f);
     fwrite(&byte_rate, 4, 1, f);
     fwrite(&block_align, 2, 1, f);
-    fwrite(&bits_per_sample, 2, 1, f);
+    fwrite(&bps_le, 2, 1, f);
 
+    uint32_t pcm_bytes_le = htole32(total_pcm_bytes);
     fwrite("data", 1, 4, f);
-    fwrite(&total_pcm_bytes, 4, 1, f);
+    fwrite(&pcm_bytes_le, 4, 1, f);
 }
 
 static void print_usage(const char *prog)
