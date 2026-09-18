@@ -36,8 +36,6 @@ static inline float pow_4_3_fast(int x)
 
 void dequantize_spectrum(ICSInfo *ics, float *spec)
 {
-    init_dequant_tables();
-
     int window_offset = 0;
     for (int g = 0; g < ics->num_window_groups && g < 8; g++) {
         for (int i = 0; i < ics->num_sections[g] && i < 64; i++) {
@@ -78,8 +76,6 @@ void dequantize_spectrum(ICSInfo *ics, float *spec)
 
 void apply_pns(ICSInfo *ics, float *spec, uint32_t *pns_seed)
 {
-    init_dequant_tables();
-
     int window_offset = 0;
     for (int g = 0; g < ics->num_window_groups && g < 8; g++) {
         for (int sfb = 0; sfb < ics->num_sfbs && (sfb + 1) <= ics->num_sfbs && (sfb + 1) < 68; sfb++) {
