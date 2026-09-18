@@ -80,6 +80,22 @@ static inline uint64_t htobe64(uint64_t x) {
 #endif
 }
 
+static inline uint16_t htole16(uint16_t x) {
+#if WORDS_BIGENDIAN
+    return bswap16(x);
+#else
+    return x;
+#endif
+}
+
+static inline uint32_t htole32(uint32_t x) {
+#if WORDS_BIGENDIAN
+    return bswap32(x);
+#else
+    return x;
+#endif
+}
+
 static inline uint16_t le16toh(uint16_t x) {
 #if WORDS_BIGENDIAN
     return bswap16(x);
