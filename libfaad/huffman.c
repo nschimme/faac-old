@@ -36,7 +36,7 @@ static const uint16_t huffbook_sizes[] = {
 /* Direct 11-bit LUT entry: bits 0..3 = len (0..11), bits 4..15 = symbol index (0..288) */
 typedef uint16_t HuffLutEntry;
 
-static HuffLutEntry huff_lut_11bit[13][2048];
+static HuffLutEntry huff_lut_11bit[12][2048];
 
 typedef struct {
     uint8_t len;
@@ -45,14 +45,10 @@ typedef struct {
 } HuffEscEntry;
 
 /* Codewords >= 12 bits fall through the direct 11-bit LUT into this table,
- * searched linearly. 64 slots silently dropped real codewords -- book09 has
- * 88 such entries and book12 (scalefactors) has 86 -- so any coefficient or
- * scalefactor delta landing on a dropped codeword made decode_huffman_symbol/
- * decode_huffman_scalefactor return 0 while consuming zero bits, desyncing
- * the rest of the element. 128 covers the real maximum (88) with headroom. */
+ * searched linearly. 128 slots covers the real maximum (88) with headroom. */
 #define HUFF_ESC_TABLE_CAP 128
-static HuffEscEntry huff_esc_table[13][HUFF_ESC_TABLE_CAP];
-static uint8_t huff_esc_count[13];
+static HuffEscEntry huff_esc_table[12][HUFF_ESC_TABLE_CAP];
+static uint8_t huff_esc_count[12];
 
 static bool huff_luts_initialized = false;
 
@@ -61,18 +57,19 @@ void init_huffman_luts(void)
     if (huff_luts_initialized) return;
 
     for (int b = 1; b <= 11; b++) {
+        int b_idx = b - 1;
         const hcode16_t *table = huffbook_tables[b];
         int size = huffbook_sizes[b];
         if (!table) continue;
 
         for (int cw = 0; cw < 2048; cw++) {
-            huff_lut_11bit[b][cw] = 0;
+            huff_lut_11bit[b_idx][cw] = 0;
 
             for (uint32_t len = 1; len <= 11; len++) {
                 uint32_t prefix = cw >> (11 - len);
                 for (int i = 0; i < size; i++) {
                     if (table[i].len == len && table[i].data == prefix) {
-                        huff_lut_11bit[b][cw] = (uint16_t)(len | ((uint32_t)i << 4));
+                        huff_lut_11bit[b_idx][cw] = (uint16_t)(len | ((uint32_t)i << 4));
                         goto found_sym;
                     }
                 }
@@ -81,26 +78,27 @@ void init_huffman_luts(void)
         }
 
         /* Build compact escape table for codewords >= 12 bits */
-        huff_esc_count[b] = 0;
+        huff_esc_count[b_idx] = 0;
         for (int i = 0; i < size; i++) {
-            if (table[i].len >= 12 && huff_esc_count[b] < HUFF_ESC_TABLE_CAP) {
-                huff_esc_table[b][huff_esc_count[b]].len = (uint8_t)table[i].len;
-                huff_esc_table[b][huff_esc_count[b]].data = table[i].data;
-                huff_esc_table[b][huff_esc_count[b]].sym = (uint16_t)i;
-                huff_esc_count[b]++;
+            if (table[i].len >= 12 && huff_esc_count[b_idx] < HUFF_ESC_TABLE_CAP) {
+                huff_esc_table[b_idx][huff_esc_count[b_idx]].len = (uint8_t)table[i].len;
+                huff_esc_table[b_idx][huff_esc_count[b_idx]].data = table[i].data;
+                huff_esc_table[b_idx][huff_esc_count[b_idx]].sym = (uint16_t)i;
+                huff_esc_count[b_idx]++;
             }
         }
     }
 
-    /* Book 12 (Scalefactors) LUT */
+    /* Book 12 (Scalefactors) LUT mapped to b_idx = 11 */
+    int b12_idx = 11;
     for (int cw = 0; cw < 2048; cw++) {
-        huff_lut_11bit[12][cw] = 0;
+        huff_lut_11bit[b12_idx][cw] = 0;
 
         for (uint32_t len = 1; len <= 11; len++) {
             uint32_t prefix = cw >> (11 - len);
             for (int i = 0; i < 121; i++) {
                 if (book12[i].len == len && book12[i].data == prefix) {
-                    huff_lut_11bit[12][cw] = (uint16_t)(len | ((uint32_t)i << 4));
+                    huff_lut_11bit[b12_idx][cw] = (uint16_t)(len | ((uint32_t)i << 4));
                     goto found_sf;
                 }
             }
@@ -108,13 +106,13 @@ void init_huffman_luts(void)
         found_sf:;
     }
 
-    huff_esc_count[12] = 0;
+    huff_esc_count[b12_idx] = 0;
     for (int i = 0; i < 121; i++) {
-        if (book12[i].len >= 12 && huff_esc_count[12] < HUFF_ESC_TABLE_CAP) {
-            huff_esc_table[12][huff_esc_count[12]].len = (uint8_t)book12[i].len;
-            huff_esc_table[12][huff_esc_count[12]].data = book12[i].data;
-            huff_esc_table[12][huff_esc_count[12]].sym = (uint16_t)i;
-            huff_esc_count[12]++;
+        if (book12[i].len >= 12 && huff_esc_count[b12_idx] < HUFF_ESC_TABLE_CAP) {
+            huff_esc_table[b12_idx][huff_esc_count[b12_idx]].len = (uint8_t)book12[i].len;
+            huff_esc_table[b12_idx][huff_esc_count[b12_idx]].data = book12[i].data;
+            huff_esc_table[b12_idx][huff_esc_count[b12_idx]].sym = (uint16_t)i;
+            huff_esc_count[b12_idx]++;
         }
     }
 
@@ -128,17 +126,18 @@ static inline int decode_huffman_symbol(BitReader *bs, int book
 )
 {
     if (book < 1 || book > 11) return 0;
+    int b_idx = book - 1;
 
     uint32_t cw11 = bits_show(bs, 11);
-    HuffLutEntry lut = huff_lut_11bit[book][cw11];
+    HuffLutEntry lut = huff_lut_11bit[b_idx][cw11];
     uint32_t len = lut & 0x0F;
     if (len > 0) {
         bits_skip(bs, len);
         return (int)(lut >> 4);
     }
 
-    int esc_cnt = huff_esc_count[book];
-    const HuffEscEntry *esc_tab = huff_esc_table[book];
+    int esc_cnt = huff_esc_count[b_idx];
+    const HuffEscEntry *esc_tab = huff_esc_table[b_idx];
     for (int i = 0; i < esc_cnt; i++) {
         uint32_t l = esc_tab[i].len;
         if (bits_show(bs, l) == esc_tab[i].data) {
@@ -161,16 +160,17 @@ static inline int decode_huffman_scalefactor(BitReader *bs
 #endif
 )
 {
+    int b12_idx = 11;
     uint32_t cw11 = bits_show(bs, 11);
-    HuffLutEntry lut = huff_lut_11bit[12][cw11];
+    HuffLutEntry lut = huff_lut_11bit[b12_idx][cw11];
     uint32_t len = lut & 0x0F;
     if (len > 0) {
         bits_skip(bs, len);
         return (int)(lut >> 4);
     }
 
-    int esc_cnt = huff_esc_count[12];
-    const HuffEscEntry *esc_tab = huff_esc_table[12];
+    int esc_cnt = huff_esc_count[b12_idx];
+    const HuffEscEntry *esc_tab = huff_esc_table[b12_idx];
     for (int i = 0; i < esc_cnt; i++) {
         uint32_t l = esc_tab[i].len;
         if (bits_show(bs, l) == esc_tab[i].data) {

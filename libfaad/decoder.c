@@ -341,7 +341,6 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                     ch_idx += 2;
                 }
             } else if (syntax_id == ID_CCE) {
-                extern faad_status decode_cce(BitReader *bs, struct faad_decoder *dec);
                 decode_cce(&bs, dec);
             } else if (syntax_id == ID_DSE) {
                 decode_dse(&bs);
