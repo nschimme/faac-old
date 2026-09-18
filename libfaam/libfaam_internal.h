@@ -12,10 +12,13 @@
 
 #include "faam.h"
 
+#define FAAM_MAX_TRACKS 8
+
 typedef struct {
     uint64_t offset;
     uint32_t size;
     uint32_t duration;
+    bool is_keyframe;
 } faam_sample;
 
 typedef struct {
@@ -23,20 +26,21 @@ typedef struct {
     uint32_t delta;
 } faam_stts_entry;
 
+typedef struct {
+    faam_track_info info;
+    uint8_t codec_data[256];
+    uint32_t codec_data_len;
+    faam_sample *samples;
+    uint32_t total_frames;
+    uint32_t current_frame;
+} faam_demuxer_track;
+
 struct faam_demuxer {
     faam_io io;
-
-    faam_asc_info asc_info;
-    uint8_t asc_buf[64];
-    uint32_t asc_len;
 
     faam_gapless_info gapless;
     bool has_gapless;
 
-    /* Raw edts/elst edit-list entry, used as a gapless fallback (see
-     * faam_parse_stream()) when no iTunSMPB tag is present -- e.g. files
-     * produced by non-Apple encoders/muxers that only write the
-     * standards-based edit list. */
     uint64_t elst_media_time;
     uint64_t elst_segment_duration;
     bool has_elst;
@@ -45,46 +49,33 @@ struct faam_demuxer {
     faam_chapter chapters[64];
     uint32_t num_chapters;
 
-    uint32_t sample_rate;
-    uint32_t num_channels;
-    uint64_t total_samples;
-    uint32_t timescale;       /* mdhd: audio track's own (media) timescale */
-    uint32_t movie_timescale; /* mvhd: movie timescale that elst segment_duration is expressed in */
-
-    faam_sample *samples;
-    uint32_t total_frames;
-    uint32_t current_frame;
+    faam_demuxer_track tracks[FAAM_MAX_TRACKS];
+    uint32_t num_tracks;
+    uint32_t movie_timescale;
 
     uint64_t mdat_start_offset;
 };
 
-struct faam_muxer {
-    faam_io io;
-
-    faam_muxer_config cfg;
-    uint8_t asc_buf[64];
-    uint32_t asc_len;
-
-    uint32_t sample_rate;
-    uint32_t num_channels;
-    uint32_t bits_per_sample;
-
-    uint32_t frame_count;
-    uint64_t sample_count;
-    uint32_t max_bitrate;
-    uint32_t avg_bitrate;
-    uint16_t max_frame_size;
-
-    uint64_t mdat_pos;
-    uint64_t mdat_size;
+typedef struct {
+    faam_track_config cfg;
+    uint8_t codec_data[256];
+    uint32_t codec_data_len;
 
     faam_sample *samples;
+    uint32_t sample_count;
     uint32_t sample_capacity;
 
     faam_stts_entry *stts_entries;
     uint32_t stts_count;
     uint32_t stts_capacity;
 
+    uint32_t *stss_entries; /* 1-based sample index of keyframes */
+    uint32_t stss_count;
+    uint32_t stss_capacity;
+
+    uint32_t max_frame_size;
+    uint32_t max_bitrate;
+    uint32_t avg_bitrate;
     struct {
         uint32_t max;
         uint32_t avg;
@@ -92,6 +83,17 @@ struct faam_muxer {
         uint64_t samples;
     } bitrate_window;
     uint32_t last_frame_samples;
+} faam_muxer_track;
+
+struct faam_muxer {
+    faam_io io;
+
+    faam_muxer_config cfg;
+    faam_muxer_track tracks[FAAM_MAX_TRACKS];
+    uint32_t num_tracks;
+
+    uint64_t mdat_pos;
+    uint64_t mdat_size;
 
     uint8_t *membuf;
     size_t mempos;

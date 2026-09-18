@@ -22,6 +22,7 @@
 static faam_muxer *g_muxer = NULL;
 static void *g_muxer_mem = NULL;
 static faam_muxer_config g_cfg;
+static faam_track_config g_track_cfg;
 static FILE *g_file = NULL;
 static faam_io g_io;
 
@@ -60,13 +61,19 @@ int mp4_open(const char *path, bool overwrite) {
     g_io.tell = file_tell_cb;
 
     faam_metadata meta_backup = g_cfg.metadata;
-    const uint8_t *asc_buf_backup = g_cfg.asc_buf;
-    uint32_t asc_len_backup = g_cfg.asc_len;
+    const uint8_t *codec_data_backup = g_track_cfg.codec_data;
+    uint32_t codec_len_backup = g_track_cfg.codec_data_len;
 
     faam_muxer_config_init(&g_cfg, sizeof(g_cfg));
     g_cfg.metadata = meta_backup;
-    g_cfg.asc_buf = asc_buf_backup;
-    g_cfg.asc_len = asc_len_backup;
+
+    memset(&g_track_cfg, 0, sizeof(g_track_cfg));
+    g_track_cfg.struct_size = sizeof(g_track_cfg);
+    g_track_cfg.track_type = FAAM_TRACK_AUDIO;
+    g_track_cfg.codec_id = FAAM_CODEC_AAC;
+    g_track_cfg.timescale = 44100;
+    g_track_cfg.codec_data = codec_data_backup;
+    g_track_cfg.codec_data_len = codec_len_backup;
     return 0;
 #else
     (void)path; (void)overwrite;
@@ -84,9 +91,10 @@ void mp4_set_creation_time(uint32_t t) {
 
 void mp4_set_format(uint32_t samplerate, uint32_t channels, uint32_t bits) {
 #ifdef HAVE_LIBFAAM
-    g_cfg.timescale = samplerate;
-    g_cfg.channels = channels;
-    g_cfg.bits_per_sample = bits;
+    g_track_cfg.timescale = samplerate;
+    g_track_cfg.sample_rate = samplerate;
+    g_track_cfg.channels = channels;
+    g_track_cfg.bits_per_sample = bits;
 #else
     (void)samplerate; (void)channels; (void)bits;
 #endif
@@ -94,7 +102,7 @@ void mp4_set_format(uint32_t samplerate, uint32_t channels, uint32_t bits) {
 
 void mp4_set_constant_rate(bool constant) {
 #ifdef HAVE_LIBFAAM
-    g_cfg.constant_rate = constant;
+    (void)constant;
 #else
     (void)constant;
 #endif
@@ -102,8 +110,8 @@ void mp4_set_constant_rate(bool constant) {
 
 void mp4_set_decoder_config(const uint8_t *asc, unsigned long size) {
 #ifdef HAVE_LIBFAAM
-    g_cfg.asc_buf = asc;
-    g_cfg.asc_len = (uint32_t)size;
+    g_track_cfg.codec_data = asc;
+    g_track_cfg.codec_data_len = (uint32_t)size;
 #else
     (void)asc; (void)size;
 #endif
@@ -216,6 +224,8 @@ int mp4_add_custom_tag(const char *name, const char *value) {
 int mp4_write_frame(const uint8_t *data, uint32_t size, uint32_t samples) {
 #ifdef HAVE_LIBFAAM
     if (!g_muxer) {
+        faam_muxer_config_add_track(&g_cfg, &g_track_cfg, NULL);
+
         uint32_t state_size = 0;
         faam_muxer_get_state_size(&g_cfg, &state_size);
         g_muxer_mem = calloc(1, state_size);
@@ -227,7 +237,7 @@ int mp4_write_frame(const uint8_t *data, uint32_t size, uint32_t samples) {
             return -1;
         }
     }
-    return faam_muxer_write_frame(g_muxer, data, size, samples) == FAAM_OK ? 0 : -1;
+    return faam_muxer_write_frame(g_muxer, 1, data, size, samples, true) == FAAM_OK ? 0 : -1;
 #else
     (void)data; (void)size; (void)samples;
     return -1;
