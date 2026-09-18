@@ -55,9 +55,9 @@ static inline bool grow_membuf(faam_muxer *m, size_t extra) {
         new_cap *= 2;
     }
     if (m->mempos + extra > new_cap) return false;
-    void *tmp = realloc(m->membuf, new_cap);
+    void *tmp = ReallocMemory(m->membuf, new_cap);
     if (!tmp) {
-        free(m->membuf);
+        FreeMemory(m->membuf);
         m->membuf = NULL;
         return false;
     }
@@ -277,13 +277,16 @@ faam_status faam_muxer_init(void *mem_buf, uint32_t mem_bytes, const faam_muxer_
         }
 
         tr->sample_capacity = 1024;
-        tr->samples = (faam_sample *)calloc(tr->sample_capacity, sizeof(faam_sample));
+        tr->samples = (faam_sample *)AllocMemory(tr->sample_capacity * sizeof(faam_sample));
+        if (tr->samples) memset(tr->samples, 0, tr->sample_capacity * sizeof(faam_sample));
 
         tr->stts_capacity = 16;
-        tr->stts_entries = (faam_stts_entry *)calloc(tr->stts_capacity, sizeof(faam_stts_entry));
+        tr->stts_entries = (faam_stts_entry *)AllocMemoryFast(tr->stts_capacity * sizeof(faam_stts_entry));
+        if (tr->stts_entries) memset(tr->stts_entries, 0, tr->stts_capacity * sizeof(faam_stts_entry));
 
         tr->stss_capacity = 16;
-        tr->stss_entries = (uint32_t *)calloc(tr->stss_capacity, sizeof(uint32_t));
+        tr->stss_entries = (uint32_t *)AllocMemoryFast(tr->stss_capacity * sizeof(uint32_t));
+        if (tr->stss_entries) memset(tr->stss_entries, 0, tr->stss_capacity * sizeof(uint32_t));
     }
 
     uint8_t ftyp[36] = {
@@ -341,7 +344,7 @@ faam_status faam_muxer_write_frame(faam_muxer *m, uint32_t track_id, const uint8
 
     if (tr->sample_count >= tr->sample_capacity) {
         uint32_t new_cap = tr->sample_capacity * 2;
-        faam_sample *tmp = (faam_sample *)realloc(tr->samples, new_cap * sizeof(faam_sample));
+        faam_sample *tmp = (faam_sample *)ReallocMemory(tr->samples, new_cap * sizeof(faam_sample));
         if (!tmp) return FAAM_ERR_INSUFFICIENT_MEM;
         tr->samples = tmp;
         tr->sample_capacity = new_cap;
@@ -356,7 +359,7 @@ faam_status faam_muxer_write_frame(faam_muxer *m, uint32_t track_id, const uint8
     if (is_keyframe && tr->cfg.track_type == FAAM_TRACK_VIDEO) {
         if (tr->stss_count >= tr->stss_capacity) {
             uint32_t new_cap = tr->stss_capacity * 2;
-            uint32_t *tmp = (uint32_t *)realloc(tr->stss_entries, new_cap * sizeof(uint32_t));
+            uint32_t *tmp = (uint32_t *)ReallocMemory(tr->stss_entries, new_cap * sizeof(uint32_t));
             if (!tmp) return FAAM_ERR_INSUFFICIENT_MEM;
             tr->stss_entries = tmp;
             tr->stss_capacity = new_cap;
@@ -371,7 +374,7 @@ faam_status faam_muxer_write_frame(faam_muxer *m, uint32_t track_id, const uint8
     } else {
         if (tr->stts_count >= tr->stts_capacity) {
             uint32_t new_cap = tr->stts_capacity * 2;
-            faam_stts_entry *tmp = (faam_stts_entry *)realloc(tr->stts_entries, new_cap * sizeof(faam_stts_entry));
+            faam_stts_entry *tmp = (faam_stts_entry *)ReallocMemory(tr->stts_entries, new_cap * sizeof(faam_stts_entry));
             if (!tmp) return FAAM_ERR_INSUFFICIENT_MEM;
             tr->stts_entries = tmp;
             tr->stts_capacity = new_cap;
@@ -402,7 +405,7 @@ faam_status faam_muxer_finalize(faam_muxer *m)
     for (uint32_t t = 0; t < m->num_tracks; t++) {
         m->memcap += (size_t)m->tracks[t].sample_count * 12;
     }
-    m->membuf = (uint8_t *)malloc(m->memcap);
+    m->membuf = (uint8_t *)AllocMemory(m->memcap);
     if (!m->membuf) return FAAM_ERR_INSUFFICIENT_MEM;
 
     uint32_t movie_timescale = 1000;
@@ -682,7 +685,7 @@ faam_status faam_muxer_finalize(faam_muxer *m)
         m->io.write(m->io.user_data, m->membuf, (uint32_t)m->mempos);
     }
 
-    free(m->membuf);
+    FreeMemory(m->membuf);
     m->membuf = NULL;
 
     return FAAM_OK;
@@ -692,11 +695,11 @@ void faam_muxer_close(faam_muxer *m)
 {
     if (!m) return;
     for (uint32_t t = 0; t < m->num_tracks; t++) {
-        if (m->tracks[t].samples) free(m->tracks[t].samples);
-        if (m->tracks[t].stts_entries) free(m->tracks[t].stts_entries);
-        if (m->tracks[t].stss_entries) free(m->tracks[t].stss_entries);
+        if (m->tracks[t].samples) FreeMemory(m->tracks[t].samples);
+        if (m->tracks[t].stts_entries) FreeMemoryFast(m->tracks[t].stts_entries);
+        if (m->tracks[t].stss_entries) FreeMemoryFast(m->tracks[t].stss_entries);
     }
-    if (m->membuf) free(m->membuf);
+    if (m->membuf) FreeMemory(m->membuf);
 }
 
 faam_status faam_muxer_get_info(const faam_muxer *m, faam_muxer_info *out_info)
