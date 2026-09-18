@@ -447,10 +447,18 @@ static void qmf_analysis_320_real(SBRState *sbr, const float *in, float qmf_real
 
         for (int n = 0; n < 32; n++) {
             float sample = 0.0f;
-            for (int j = 0; j < 10; j++) {
-                int idx = j * 64 + 2 * n;
-                sample += ovl_ptr[j * 32 + n] * win_ptr[idx];
-            }
+            const float * restrict w = win_ptr + 2 * n;
+            const float * restrict o = ovl_ptr + n;
+            sample += o[0] * w[0];
+            sample += o[32] * w[64];
+            sample += o[64] * w[128];
+            sample += o[96] * w[192];
+            sample += o[128] * w[256];
+            sample += o[160] * w[320];
+            sample += o[192] * w[384];
+            sample += o[224] * w[448];
+            sample += o[256] * w[512];
+            sample += o[288] * w[576];
             samples[n] = sample;
         }
 
@@ -459,8 +467,11 @@ static void qmf_analysis_320_real(SBRState *sbr, const float *in, float qmf_real
             const float * restrict cos_row = qmf_ana_cos_lut[k];
             const float * restrict smp_ptr = samples;
 
-            for (int n = 0; n < 32; n++) {
-                sum_r += smp_ptr[n] * cos_row[n];
+            for (int n = 0; n < 32; n += 4) {
+                sum_r += smp_ptr[n] * cos_row[n]
+                       + smp_ptr[n + 1] * cos_row[n + 1]
+                       + smp_ptr[n + 2] * cos_row[n + 2]
+                       + smp_ptr[n + 3] * cos_row[n + 3];
             }
             qmf_real[t][k] = sum_r * 0.03125f;
         }
@@ -492,17 +503,39 @@ static void qmf_synthesis_640_real(SBRState *sbr, float qmf_real[32][64], float 
         const float * restrict win_ptr = qmf_c;
         float * restrict out_ptr = out + t * 64;
 
+        const float * restrict o0 = ovl_ptr;
+        const float * restrict o1 = ovl_ptr + 64;
+        const float * restrict o2 = ovl_ptr + 128;
+        const float * restrict o3 = ovl_ptr + 192;
+        const float * restrict o4 = ovl_ptr + 256;
+        const float * restrict o5 = ovl_ptr + 320;
+        const float * restrict o6 = ovl_ptr + 384;
+        const float * restrict o7 = ovl_ptr + 448;
+        const float * restrict o8 = ovl_ptr + 512;
+        const float * restrict o9 = ovl_ptr + 576;
+
+        const float * restrict w0 = win_ptr;
+        const float * restrict w1 = win_ptr + 64;
+        const float * restrict w2 = win_ptr + 128;
+        const float * restrict w3 = win_ptr + 192;
+        const float * restrict w4 = win_ptr + 256;
+        const float * restrict w5 = win_ptr + 320;
+        const float * restrict w6 = win_ptr + 384;
+        const float * restrict w7 = win_ptr + 448;
+        const float * restrict w8 = win_ptr + 512;
+        const float * restrict w9 = win_ptr + 576;
+
         for (int n = 0; n < 64; n++) {
-            float sample = ovl_ptr[n] * win_ptr[n]
-                         + ovl_ptr[64 + n] * win_ptr[64 + n]
-                         + ovl_ptr[128 + n] * win_ptr[128 + n]
-                         + ovl_ptr[192 + n] * win_ptr[192 + n]
-                         + ovl_ptr[256 + n] * win_ptr[256 + n]
-                         + ovl_ptr[320 + n] * win_ptr[320 + n]
-                         + ovl_ptr[384 + n] * win_ptr[384 + n]
-                         + ovl_ptr[448 + n] * win_ptr[448 + n]
-                         + ovl_ptr[512 + n] * win_ptr[512 + n]
-                         + ovl_ptr[576 + n] * win_ptr[576 + n];
+            float sample = o0[n] * w0[n]
+                         + o1[n] * w1[n]
+                         + o2[n] * w2[n]
+                         + o3[n] * w3[n]
+                         + o4[n] * w4[n]
+                         + o5[n] * w5[n]
+                         + o6[n] * w6[n]
+                         + o7[n] * w7[n]
+                         + o8[n] * w8[n]
+                         + o9[n] * w9[n];
             out_ptr[n] = sample;
         }
     }
