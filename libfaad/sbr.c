@@ -195,8 +195,18 @@ faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32
         }
     }
 
-    /* Lead coupling / reserved bits */
-    bits_skip(bs, (syntax_id == ID_CPE) ? 2 : 1);
+    /* Lead coupling / reserved bits per ISO/IEC 14496-3 Section 4.6.18.5 */
+    if (syntax_id == ID_CPE) {
+        bool bs_coupling = bits_get(bs, 1);
+        if (!bs_coupling) {
+            bits_skip(bs, 1); /* bs_reserved */
+        } else {
+            /* Coupe mode handling: bs_coupling_mode (1 bit) */
+            bits_skip(bs, 1);
+        }
+    } else {
+        bits_skip(bs, 1); /* bs_reserved */
+    }
 
     /* SBR Frame Grid Decoding for each channel in element */
     for (int c = 0; c < nch; c++) {
@@ -329,26 +339,30 @@ faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32
         }
     }
 
-    /* Extended data flag: 1 bit */
+    /* Extended data flag: 1 bit per ISO/IEC 14496-3 Section 4.6.18.5 */
     bool bs_extended_data = bits_get(bs, 1);
     if (bs_extended_data) {
         uint32_t ext_len = bits_get(bs, 4);
         if (ext_len == 15) ext_len += bits_get(bs, 8);
-        bits_skip(bs, ext_len * 8);
-    }
+        uint32_t ext_start = bits_get_consumed(bs);
+        uint32_t ext_end = ext_start + ext_len * 8;
 
-    /* Check for Parametric Stereo (PS) extension payload */
+        uint32_t bs_extension_id = bits_get(bs, 2);
 #ifndef FAAD_DISABLE_PS
-    if (bits_get_consumed(bs) + 12 <= bs->len * 8) {
-        bool ps_extended = bits_get(bs, 1);
-        if (ps_extended) {
-            uint32_t sync_ext = bits_get(bs, 11);
-            if (sync_ext == 0x548) {
+        if (bs_extension_id == 2) { /* EXTENSION_ID_PS */
+            bool ps_header = bits_get(bs, 1);
+            if (ps_header) {
                 ps_decode_payload(dec, bs);
             }
         }
-    }
+#else
+        (void)bs_extension_id;
 #endif
+        uint32_t consumed = bits_get_consumed(bs);
+        if (consumed < ext_end) {
+            bits_skip(bs, ext_end - consumed);
+        }
+    }
 
     return FAAD_OK;
 #else
