@@ -313,19 +313,14 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
             } else if (cb == 13) { /* PNS */
                 for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->max_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
                     if (is_first_pns) {
-                        /* libfaac's encoder (writesf() in huff2.c) starts its
-                         * PNS delta chain from `lastpns = global_gain -
-                         * SF_PNS_OFFSET` (SF_PNS_OFFSET = SF_OFFSET - SF_MIN
-                         * = 100 - 10 = 90 there) and writes the first band as
-                         * `(val - lastpns) + 256` in 9 bits -- so recovering
-                         * val needs that same `+ (global_gain - 90)` term,
-                         * not just the raw field minus 256. */
                         pns_energy = (int)bits_get(bs, 9) - 256 + (sf - 90);
                         is_first_pns = false;
                     } else {
                         int dpns = DECODE_HUFF_SF(bs);
                         pns_energy += dpns - 60;
                     }
+                    if (pns_energy < 0) pns_energy = 0;
+                    if (pns_energy > 255) pns_energy = 255;
                     ics->scalefactors[g][sfb] = pns_energy;
                     ics->pns_used[g][sfb] = true;
                 }
@@ -333,12 +328,16 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
                 for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->max_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
                     int dis = DECODE_HUFF_SF(bs);
                     is_pos += dis - 60;
+                    if (is_pos < 0) is_pos = 0;
+                    if (is_pos > 255) is_pos = 255;
                     ics->scalefactors[g][sfb] = is_pos;
                 }
             } else {
                 for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->max_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
                     int dsf = DECODE_HUFF_SF(bs);
                     sf += dsf - 60;
+                    if (sf < 0) sf = 0;
+                    if (sf > 255) sf = 255;
                     ics->scalefactors[g][sfb] = sf;
                     ics->sfb_cb[g][sfb] = cb;
                 }

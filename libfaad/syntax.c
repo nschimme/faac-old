@@ -104,6 +104,29 @@ faad_status decode_pce(BitReader *bs, struct faad_decoder *dec)
     return FAAD_OK;
 }
 
+faad_status decode_cce(BitReader *bs, struct faad_decoder *dec)
+{
+    bits_skip(bs, 4); /* element_instance_tag */
+    bits_skip(bs, 1); /* coupling_point */
+    uint32_t num_coupled_elements = bits_get(bs, 3);
+    for (uint32_t c = 0; c <= num_coupled_elements; c++) {
+        bool is_cpe = bits_get(bs, 1);
+        bits_skip(bs, 4); /* tag_select */
+        if (is_cpe) {
+            bits_skip(bs, 1); /* cc_l */
+            bits_skip(bs, 1); /* cc_r */
+        }
+    }
+    bits_skip(bs, 1); /* cc_domain */
+    bits_skip(bs, 1); /* gain_element_sign */
+    bits_skip(bs, 2); /* gain_element_scale */
+
+    ICSInfo dummy_ics;
+    memset(&dummy_ics, 0, sizeof(dummy_ics));
+    float dummy_spec[FRAME_LEN_LONG];
+    return decode_ics(bs, dec, &dummy_ics, dummy_spec, false);
+}
+
 faad_status decode_dse(BitReader *bs)
 {
     bits_skip(bs, 4); /* element_instance_tag */
