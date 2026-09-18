@@ -26,7 +26,7 @@ static uint64_t file_tell_cb(void *user_data) {
 
 int main(void)
 {
-    /* Test 1: Stream Muxer file creation (Audio & Video tracks) */
+    /* Test 1: Stream Muxer file creation (Audio & Video tracks, chapters) */
     FILE *fout = fopen("test_output.mp4", "wb");
     assert(fout != NULL);
 
@@ -35,6 +35,16 @@ int main(void)
     faam_muxer_config cfg;
     faam_status st = faam_muxer_config_init(&cfg, sizeof(cfg));
     assert(st == FAAM_OK);
+
+    faam_chapter chaps[2];
+    chaps[0].start_ms = 0;
+    chaps[0].duration_ms = 5000;
+    strcpy(chaps[0].title, "Intro");
+    chaps[1].start_ms = 5000;
+    chaps[1].duration_ms = 10000;
+    strcpy(chaps[1].title, "Event");
+    cfg.chapters = chaps;
+    cfg.num_chapters = 2;
 
     /* Track 1: Audio */
     uint8_t dummy_asc[2] = { 0x12, 0x10 };
@@ -139,6 +149,14 @@ int main(void)
     st = faam_demuxer_get_codec_data(d, t1.track_id, read_codec_data, sizeof(read_codec_data), &read_cdata_len);
     assert(st == FAAM_OK);
     assert(read_cdata_len == sizeof(dummy_asc));
+
+    faam_chapter read_chaps[10];
+    uint32_t read_ch_count = 0;
+    st = faam_demuxer_get_chapters(d, read_chaps, 10, &read_ch_count);
+    assert(st == FAAM_OK);
+    assert(read_ch_count == 2);
+    assert(strcmp(read_chaps[0].title, "Intro") == 0);
+    assert(strcmp(read_chaps[1].title, "Event") == 0);
 
     faam_demuxer_close(d);
     free(mem_d);
