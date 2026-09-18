@@ -110,7 +110,7 @@ static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, str
             if (id_off + 4 <= payload_end) {
                 d->tracks[current_trak_idx].info.track_id = read_u32_be(buf + id_off);
             }
-            long dim_off = id_off + 4 + (version == 1 ? 32 : 20) + 24;
+            long dim_off = id_off + 4 + (version == 1 ? 32 : 20) + 44;
             if (dim_off + 8 <= payload_end) {
                 d->tracks[current_trak_idx].info.width = (uint16_t)(read_u32_be(buf + dim_off) >> 16);
                 d->tracks[current_trak_idx].info.height = (uint16_t)(read_u32_be(buf + dim_off + 4) >> 16);
@@ -518,10 +518,15 @@ faam_status faam_demuxer_next_frame_loc(faam_demuxer *d, faam_frame_loc *out_loc
 {
     if (!d || !out_loc) return FAAM_ERR_INVALID_ARG;
     faam_demuxer_track *tr = NULL;
+    uint64_t min_offset = UINT64_MAX;
+
     for (uint32_t t = 0; t < d->num_tracks; t++) {
         if (d->tracks[t].current_frame < d->tracks[t].total_frames) {
-            tr = &d->tracks[t];
-            break;
+            uint64_t off = d->tracks[t].samples[d->tracks[t].current_frame].offset;
+            if (off < min_offset) {
+                min_offset = off;
+                tr = &d->tracks[t];
+            }
         }
     }
     if (!tr) return FAAM_ERR_IO_READ;
