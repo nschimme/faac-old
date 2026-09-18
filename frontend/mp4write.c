@@ -247,6 +247,8 @@ int mp4_write_frame(const uint8_t *data, uint32_t size, uint32_t samples) {
 int mp4_finish(void) {
 #ifdef HAVE_LIBFAAM
     if (g_muxer) {
+        faam_muxer_set_metadata(g_muxer, &g_cfg.metadata);
+        faam_muxer_set_gapless(g_muxer, &g_cfg.gapless);
         faam_muxer_finalize(g_muxer);
         faam_muxer_close(g_muxer);
         g_muxer = NULL;
