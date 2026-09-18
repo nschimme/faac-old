@@ -317,7 +317,9 @@ static faam_status faam_parse_stream(struct faam_demuxer *d, const uint8_t *buf,
         uint32_t n_samples = num_stsz_samples[t];
         if (n_samples == 0) continue;
 
-        tr->samples = (faam_sample *)calloc(n_samples, sizeof(faam_sample));
+        tr->samples = (faam_sample *)AllocMemory(n_samples * sizeof(faam_sample));
+        if (!tr->samples) continue;
+        memset(tr->samples, 0, n_samples * sizeof(faam_sample));
         tr->total_frames = n_samples;
         tr->info.total_frames = n_samples;
 
@@ -381,11 +383,11 @@ static faam_status faam_parse_stream(struct faam_demuxer *d, const uint8_t *buf,
     }
 
     for (uint32_t t = 0; t < FAAM_MAX_TRACKS; t++) {
-        if (stsz_tables[t]) free(stsz_tables[t]);
-        if (stsc_tables[t]) free(stsc_tables[t]);
-        if (stco_tables[t]) free(stco_tables[t]);
-        if (stts_tables[t]) free(stts_tables[t]);
-        if (stss_tables[t]) free(stss_tables[t]);
+        if (stsz_tables[t]) FreeMemory(stsz_tables[t]);
+        if (stsc_tables[t]) FreeMemory(stsc_tables[t]);
+        if (stco_tables[t]) FreeMemory(stco_tables[t]);
+        if (stts_tables[t]) FreeMemory(stts_tables[t]);
+        if (stss_tables[t]) FreeMemory(stss_tables[t]);
     }
 
     return FAAM_OK;
@@ -414,15 +416,16 @@ faam_status faam_demuxer_init(void *mem_buf, uint32_t mem_bytes, const faam_io *
 
         size_t buf_cap = 65536;
         size_t buf_len = 0;
-        uint8_t *buf = (uint8_t *)malloc(buf_cap);
+        uint8_t *buf = (uint8_t *)AllocMemory(buf_cap);
         if (buf) {
             int32_t r = 0;
             while (1) {
                 if (buf_len >= buf_cap) {
-                    buf_cap *= 2;
-                    uint8_t *nb = (uint8_t *)realloc(buf, buf_cap);
+                    size_t new_cap = buf_cap * 2;
+                    uint8_t *nb = (uint8_t *)ReallocMemory(buf, new_cap);
                     if (!nb) break;
                     buf = nb;
+                    buf_cap = new_cap;
                 }
                 r = d->io.read(d->io.user_data, buf + buf_len, (uint32_t)(buf_cap - buf_len));
                 if (r <= 0) break;
@@ -431,7 +434,7 @@ faam_status faam_demuxer_init(void *mem_buf, uint32_t mem_bytes, const faam_io *
             if (buf_len > 32) {
                 faam_parse_stream(d, buf, (long)buf_len);
             }
-            free(buf);
+            FreeMemory(buf);
         }
     }
 
@@ -443,7 +446,7 @@ void faam_demuxer_close(faam_demuxer *d)
 {
     if (!d) return;
     for (uint32_t t = 0; t < d->num_tracks; t++) {
-        if (d->tracks[t].samples) free(d->tracks[t].samples);
+        if (d->tracks[t].samples) FreeMemory(d->tracks[t].samples);
     }
 }
 

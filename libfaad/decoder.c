@@ -152,12 +152,13 @@ FAADAPI faad_status faad_decoder_create(const faad_config *cfg,
     uint32_t state_size = 0;
     faad_get_state_size(cfg, &state_size);
 
-    void *mem = calloc(1, state_size);
+    void *mem = AllocMemory(state_size);
     if (!mem) return FAAD_ERR_INSUFFICIENT_MEM;
+    memset(mem, 0, state_size);
 
     faad_status st = faad_decoder_init(mem, state_size, cfg, asc_buf, asc_len, out_dec);
     if (st != FAAD_OK) {
-        free(mem);
+        FreeMemory(mem);
         return st;
     }
 
@@ -222,7 +223,7 @@ FAADAPI void faad_decoder_destroy(faad_decoder *dec)
     faad_print_stats(dec);
 #endif
     if (dec->is_heap_allocated) {
-        free(dec);
+        FreeMemory(dec);
     }
 }
 
@@ -270,6 +271,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
     dec->stats.totalFrames++;
 #endif
 
+    /* Zero out spectral buffers across all supported channels to handle channel transitions cleanly */
     memset(dec->spec, 0, sizeof(dec->spec));
     dec->sbr_present = false;
 
@@ -428,12 +430,12 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
         }
     }
 
-    float pcm_float[MAX_CHANNELS * FRAME_LEN_LONG];
+    float *pcm_float = dec->pcm_float;
     for (uint32_t c = 0; c < dec->num_channels; c++) {
         imdct_and_window(dec, c, &ics_list[c], dec->spec[c], pcm_float + c * FRAME_LEN_LONG);
     }
 
-    float pcm_final[MAX_CHANNELS * 2048];
+    float *pcm_final = dec->pcm_final;
     if (dec->asc.is_sbr || dec->sbr_present) {
 #ifdef FAAD_D_SBR
         dec->frame_samples = 1024;

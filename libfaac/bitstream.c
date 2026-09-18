@@ -21,7 +21,7 @@
 
 BitStream *OpenBitStream(uint32_t size, uint8_t *buffer)
 {
-    BitStream *bs = (BitStream *)AllocMemory(sizeof(BitStream));
+    BitStream *bs = (BitStream *)AllocMemoryFast(sizeof(BitStream));
     if (!bs) return NULL;
 
     InitBitStream(bs, buffer, size);
