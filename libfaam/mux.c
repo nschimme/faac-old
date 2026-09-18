@@ -570,8 +570,8 @@ faam_status faam_muxer_finalize(faam_muxer *m)
         }
 
         long stsc = start_atom(m, "stsc");
-        put_u32(m, 0); put_u32(m, 1); put_u32(m, 1);
-        put_u32(m, 1); put_u32(m, 1);
+        put_u32(m, 0); put_u32(m, 1); /* ver/flags (0), entry count (1) */
+        put_u32(m, 1); put_u32(m, 1); put_u32(m, 1); /* first_chunk(1), samples_per_chunk(1), sample_description_index(1) */
         end_atom(m, stsc);
 
         long stsz = start_atom(m, "stsz");

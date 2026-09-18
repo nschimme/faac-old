@@ -13,7 +13,7 @@ static inline void write_u32(uint8_t *b, uint32_t val) {
 
 faam_status faam_update_chapters_stream(const faam_io *io, const faam_chapter *chapters, uint32_t count)
 {
-    if (!io) return FAAM_ERR_INVALID_ARG;
+    if (!io || !chapters) return FAAM_ERR_INVALID_ARG;
     if (!io->read || !io->write || !io->seek || !io->tell) return FAAM_ERR_INVALID_ARG;
 
     io->seek(io->user_data, 0);
@@ -27,10 +27,15 @@ faam_status faam_update_chapters_stream(const faam_io *io, const faam_chapter *c
         return FAAM_ERR_BAD_CONTAINER;
     }
 
-    /* Build QuickTime chpl atom payload */
-    uint8_t chpl_buf[8192];
-    uint32_t chpl_len = 12; /* header (8) + version/flags (4) + entry count (4) -> wait, header = size(4) + 'chpl'(4) + ver/flags(4) + count(4) = 16 */
-    chpl_len = 16;
+    /* Build QuickTime chpl atom payload safely */
+    uint32_t max_chpl_cap = 16 + count * 265;
+    uint8_t *chpl_buf = (uint8_t *)malloc(max_chpl_cap);
+    if (!chpl_buf) {
+        free(buf);
+        return FAAM_ERR_INSUFFICIENT_MEM;
+    }
+
+    uint32_t chpl_len = 16;
     write_u32(chpl_buf + 8, 0); /* ver/flags */
     write_u32(chpl_buf + 12, count);
 
@@ -86,13 +91,43 @@ faam_status faam_update_chapters_stream(const faam_io *io, const faam_chapter *c
     }
 
     if (chpl_offset > 0) {
-        io->seek(io->user_data, chpl_offset);
-        io->write(io->user_data, chpl_buf, chpl_len);
+        uint32_t old_chpl_size = read_u32_be(buf + chpl_offset);
+        if (old_chpl_size >= chpl_len) {
+            uint32_t diff = old_chpl_size - chpl_len;
+            if (diff >= 8) {
+                io->seek(io->user_data, chpl_offset);
+                io->write(io->user_data, chpl_buf, chpl_len);
+                uint8_t free_box[8];
+                write_u32(free_box, diff);
+                memcpy(free_box + 4, "free", 4);
+                io->write(io->user_data, free_box, 8);
+            } else {
+                write_u32(chpl_buf, old_chpl_size);
+                io->seek(io->user_data, chpl_offset);
+                io->write(io->user_data, chpl_buf, chpl_len);
+            }
+        } else {
+            int32_t delta = (int32_t)(chpl_len - old_chpl_size);
+            io->seek(io->user_data, chpl_offset);
+            io->write(io->user_data, chpl_buf, chpl_len);
+
+            if (udta_offset > 0) {
+                uint32_t udta_sz = read_u32_be(buf + udta_offset) + delta;
+                uint8_t hdr[4]; write_u32(hdr, udta_sz);
+                io->seek(io->user_data, udta_offset); io->write(io->user_data, hdr, 4);
+            }
+            if (pos > 0) {
+                uint32_t moov_sz = read_u32_be(buf) + delta;
+                uint8_t hdr[4]; write_u32(hdr, moov_sz);
+                io->seek(io->user_data, 0); io->write(io->user_data, hdr, 4);
+            }
+        }
     } else if (udta_offset > 0) {
         io->seek(io->user_data, udta_offset + 8);
         io->write(io->user_data, chpl_buf, chpl_len);
     }
 
+    free(chpl_buf);
     free(buf);
     return FAAM_OK;
 }

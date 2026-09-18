@@ -120,15 +120,17 @@ static int cmd_info(int argc, char **argv)
             printf("  Sample Rate: %u Hz\n", ti.sample_rate);
             printf("  Channels: %u\n", ti.channels);
 
-            uint8_t cdata[256];
-            uint32_t cdata_len = 0;
-            if (faam_demuxer_get_codec_data(d, ti.track_id, cdata, sizeof(cdata), &cdata_len) == FAAM_OK && cdata_len >= 2) {
-                AscInfo asc;
-                asc_codec_parse(cdata, cdata_len, &asc);
-                printf("  AAC Object Type: %d (%s)\n", asc.object_type,
-                       asc.object_type == 2 ? "AAC-LC" : asc.object_type == 5 ? "HE-AAC v1" : "HE-AAC v2");
-                printf("  SBR Present: %s\n", asc.sbr_present ? "Yes" : "No");
-                printf("  PS Present: %s\n", asc.ps_present ? "Yes" : "No");
+            if (ti.codec_id == FAAM_CODEC_AAC) {
+                uint8_t cdata[256];
+                uint32_t cdata_len = 0;
+                if (faam_demuxer_get_codec_data(d, ti.track_id, cdata, sizeof(cdata), &cdata_len) == FAAM_OK && cdata_len >= 2) {
+                    AscInfo asc;
+                    asc_codec_parse(cdata, cdata_len, &asc);
+                    printf("  AAC Object Type: %d (%s)\n", asc.object_type,
+                           asc.object_type == 2 ? "AAC-LC" : asc.object_type == 5 ? "HE-AAC v1" : "HE-AAC v2");
+                    printf("  SBR Present: %s\n", asc.sbr_present ? "Yes" : "No");
+                    printf("  PS Present: %s\n", asc.ps_present ? "Yes" : "No");
+                }
             }
         }
         printf("  Total Frames: %u\n", ti.total_frames);
@@ -256,6 +258,7 @@ enum {
     OPT_WIDTH,
     OPT_HEIGHT,
     OPT_CODEC,
+    OPT_TRACK,
     OPT_TITLE,
     OPT_ARTIST,
     OPT_ALBUM
@@ -517,6 +520,11 @@ static int cmd_mux(int argc, char **argv)
             if (vbuf && fread(vbuf, 1, file_size, fin) == (size_t)file_size) {
                 long pos = 0;
                 uint8_t *sample_mem = (uint8_t *)malloc(file_size + 65536);
+                if (!sample_mem) {
+                    free(vbuf);
+                    faam_muxer_close(m); free(mem); fclose(fin); fclose(fout);
+                    return 1;
+                }
                 uint32_t sample_len = 0;
                 bool sample_is_key = false;
                 bool has_slice = false;
@@ -584,9 +592,11 @@ static int cmd_demux(int argc, char **argv)
     const char *input_file = NULL;
     const char *output_file = "output.raw";
     const char *export_asc = NULL;
+    uint32_t selected_track_id = 0;
 
     static struct option long_options[] = {
         {"output", required_argument, 0, 'o'},
+        {"track", required_argument, 0, 't'},
         {"export-asc", required_argument, 0, OPT_EXPORT_ASC},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
@@ -594,9 +604,10 @@ static int cmd_demux(int argc, char **argv)
 
     int opt;
     optind = 1;
-    while ((opt = getopt_long(argc, argv, "o:h", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "o:t:h", long_options, NULL)) != -1) {
         switch (opt) {
         case 'o': output_file = optarg; break;
+        case 't': selected_track_id = (uint32_t)atoi(optarg); break;
         case OPT_EXPORT_ASC: export_asc = optarg; break;
         case 'h': print_usage(); return 0;
         default: break;
@@ -606,7 +617,7 @@ static int cmd_demux(int argc, char **argv)
     if (optind < argc) input_file = argv[optind];
 
     if (!input_file) {
-        fprintf(stderr, "Error: Missing input file.\nUsage: faam demux <input.mp4> -o <out.raw>\n");
+        fprintf(stderr, "Error: Missing input file.\nUsage: faam demux <input.mp4> -o <out.raw> [--track <id>]\n");
         return 1;
     }
 
@@ -634,10 +645,30 @@ static int cmd_demux(int argc, char **argv)
         return 1;
     }
 
-    if (export_asc) {
+    uint32_t num_tracks = 0;
+    faam_demuxer_get_num_tracks(d, &num_tracks);
+
+    faam_track_info ti;
+    memset(&ti, 0, sizeof(ti));
+
+    uint32_t target_track_index = 0;
+    if (selected_track_id > 0) {
+        for (uint32_t t = 0; t < num_tracks; t++) {
+            faam_track_info tmp_info;
+            if (faam_demuxer_get_track_info(d, t, &tmp_info) == FAAM_OK && tmp_info.track_id == selected_track_id) {
+                target_track_index = t;
+                ti = tmp_info;
+                break;
+            }
+        }
+    } else {
+        if (num_tracks > 0) faam_demuxer_get_track_info(d, 0, &ti);
+    }
+
+    if (export_asc && ti.track_id > 0) {
         uint8_t cdata[256];
         uint32_t cdata_len = 0;
-        faam_demuxer_get_codec_data(d, 1, cdata, sizeof(cdata), &cdata_len);
+        faam_demuxer_get_codec_data(d, ti.track_id, cdata, sizeof(cdata), &cdata_len);
 #ifdef _WIN32
         FILE *fasc = win32_fopen_utf8(export_asc, "wb");
 #else
@@ -663,13 +694,11 @@ static int cmd_demux(int argc, char **argv)
 
     bool is_adts_out = (strstr(output_file, ".aac") != NULL || strstr(output_file, ".adts") != NULL);
 
-    faam_track_info ti;
-    memset(&ti, 0, sizeof(ti));
     uint8_t sr_idx = 4;
     uint8_t ch = 2;
     uint8_t aot = 2;
 
-    if (faam_demuxer_get_track_info(d, 0, &ti) == FAAM_OK && ti.track_type == FAAM_TRACK_AUDIO && ti.codec_id == FAAM_CODEC_AAC) {
+    if (is_adts_out && ti.track_type == FAAM_TRACK_AUDIO && ti.codec_id == FAAM_CODEC_AAC) {
         uint8_t cdata[256];
         uint32_t cdata_len = 0;
         if (faam_demuxer_get_codec_data(d, ti.track_id, cdata, sizeof(cdata), &cdata_len) == FAAM_OK && cdata_len >= 2) {
@@ -685,7 +714,16 @@ static int cmd_demux(int argc, char **argv)
     uint32_t frame_bytes = 0;
     static const uint8_t annexb_sc[4] = { 0x00, 0x00, 0x00, 0x01 };
 
-    while (faam_demuxer_read_frame(d, frame, sizeof(frame), &frame_bytes) == FAAM_OK && frame_bytes > 0) {
+    faam_frame_loc loc;
+    while (faam_demuxer_next_frame_loc(d, &loc) == FAAM_OK) {
+        if (selected_track_id > 0 && loc.track_id != selected_track_id) {
+            /* Skip frames not belonging to selected track */
+            faam_demuxer_read_frame(d, NULL, 0, &frame_bytes);
+            continue;
+        }
+
+        if (faam_demuxer_read_frame(d, frame, sizeof(frame), &frame_bytes) != FAAM_OK || frame_bytes == 0) break;
+
         if (ti.track_type == FAAM_TRACK_VIDEO) {
             /* Convert 4-byte BE length prefixed NALUs to Annex-B startcodes (00 00 00 01) */
             uint32_t pos = 0;
