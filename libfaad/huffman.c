@@ -51,7 +51,7 @@ static HuffEscEntry huff_esc_table[12][HUFF_ESC_TABLE_CAP];
 static uint8_t huff_esc_count[12];
 
 static int8_t quad_lut[81][4];
-static const int book_base[12] = { 0, 81, 81, 81, 81, 9, 9, 8, 8, 13, 13, 17 };
+static const uint8_t book_base[12] = { 0, 81, 81, 81, 81, 9, 9, 8, 8, 13, 13, 17 };
 
 static bool huff_luts_initialized = false;
 
@@ -140,9 +140,10 @@ static inline int decode_huffman_symbol(BitReader *bs, int book
 {
     if (book < 1 || book > 11) return 0;
     int b_idx = book - 1;
+    const HuffLutEntry * restrict lut_row = huff_lut_11bit[b_idx];
 
     uint32_t cw11 = bits_show(bs, 11);
-    HuffLutEntry lut = huff_lut_11bit[b_idx][cw11];
+    HuffLutEntry lut = lut_row[cw11];
     uint32_t len = lut & 0x0F;
     if (len > 0) {
         bits_skip(bs, len);
@@ -150,7 +151,7 @@ static inline int decode_huffman_symbol(BitReader *bs, int book
     }
 
     int esc_cnt = huff_esc_count[b_idx];
-    const HuffEscEntry *esc_tab = huff_esc_table[b_idx];
+    const HuffEscEntry * restrict esc_tab = huff_esc_table[b_idx];
     for (int i = 0; i < esc_cnt; i++) {
         uint32_t l = esc_tab[i].len;
         if (bits_show(bs, l) == esc_tab[i].data) {
@@ -367,25 +368,34 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
 )
 {
     int window_offset = 0;
-    for (int g = 0; g < ics->num_window_groups && g < 8; g++) {
-        for (int i = 0; i < ics->num_sections[g] && i < 64; i++) {
-            int cb = ics->sect_cb[g][i];
-            int start_sfb = ics->sect_start[g][i];
-            int end_sfb = ics->sect_end[g][i];
+    const uint16_t * restrict sfb_offsets = ics->sfb_offsets;
+    int max_sfb = ics->max_sfb < ics->num_sfbs ? ics->max_sfb : ics->num_sfbs;
+    if (max_sfb > 64) max_sfb = 64;
 
+    for (int g = 0; g < ics->num_window_groups && g < 8; g++) {
+        int win_group_len = ics->window_group_length[g];
+        int num_sects = ics->num_sections[g];
+        if (num_sects > 64) num_sects = 64;
+
+        for (int i = 0; i < num_sects; i++) {
+            int cb = ics->sect_cb[g][i];
             if (cb == 0 || cb == 13 || cb == 14 || cb == 15) continue;
 
-            for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->max_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
-                int start_k = ics->sfb_offsets[sfb];
-                int end_k = ics->sfb_offsets[sfb + 1];
+            int start_sfb = ics->sect_start[g][i];
+            int end_sfb = ics->sect_end[g][i];
+            if (end_sfb > max_sfb) end_sfb = max_sfb;
+
+            for (int sfb = start_sfb; sfb < end_sfb; sfb++) {
+                int start_k = sfb_offsets[sfb];
+                int end_k = sfb_offsets[sfb + 1];
                 if (start_k >= FRAME_LEN_LONG) continue;
                 if (end_k > FRAME_LEN_LONG) end_k = FRAME_LEN_LONG;
 
-                for (int w = 0; w < ics->window_group_length[g]; w++) {
-                    float *ptr = spec + (window_offset + w) * 128 + start_k;
+                for (int w = 0; w < win_group_len; w++) {
+                    float * restrict ptr = spec + (window_offset + w) * 128 + start_k;
                     int k = start_k;
-                    while (k < end_k) {
-                        if (cb <= 4) {
+                    if (cb <= 4) {
+                        while (k < end_k) {
                             int v, w_val, x, y;
                             decode_quad(bs, cb, &v, &w_val, &x, &y
 #ifdef FAAD_STATS
@@ -398,7 +408,9 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
                             ptr[3] = (float)y;
                             ptr += 4;
                             k += 4;
-                        } else {
+                        }
+                    } else {
+                        while (k < end_k) {
                             int x, y;
                             decode_pair(bs, cb, &x, &y
 #ifdef FAAD_STATS
@@ -414,7 +426,7 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
                 }
             }
         }
-        window_offset += ics->window_group_length[g];
+        window_offset += win_group_len;
     }
     return FAAD_OK;
 }
