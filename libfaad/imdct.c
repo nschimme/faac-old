@@ -106,8 +106,7 @@ static void fast_imdct(const float *in, float *out, int n)
 {
     int n2 = n / 2;
     int n4 = n / 4;
-    int logm = 0;
-    while ((1 << logm) < n2) logm++;
+    int logm = (n == 2048) ? 9 : 6;
 
     float xr[1024], xi[1024];
 
@@ -126,7 +125,7 @@ static void fast_imdct(const float *in, float *out, int n)
         xi[k] = im * c - re * s;
     }
 
-    fft(&fft_tbl, xr, xi, logm - 1);
+    fft(&fft_tbl, xr, xi, logm);
 
     /* Fast table-driven Post-twiddle and mirror with 2.0 / n scaling */
     float scale = 2.0f / (float)n;
@@ -145,8 +144,6 @@ static void fast_imdct(const float *in, float *out, int n)
 
 void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, float * restrict spec, float * restrict out_pcm)
 {
-    init_windows();
-
     float imdct_out[FRAME_LEN_LONG * 2];
     memset(imdct_out, 0, sizeof(imdct_out));
 

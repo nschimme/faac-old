@@ -15,7 +15,6 @@ void bits_init(BitReader *bs, const uint8_t *buffer, uint32_t len)
 uint32_t bits_get(BitReader *bs, uint32_t nbits)
 {
     if (nbits == 0) return 0;
-    if (nbits > 32) nbits = 32;
 
     /* Fast single-word 32-bit shift-accumulator path */
     if (nbits <= 24 && bs->byte_pos + 4 <= bs->len) {
@@ -28,6 +27,8 @@ uint32_t bits_get(BitReader *bs, uint32_t nbits)
         bs->bit_pos = total_bits & 7;
         return val;
     }
+
+    if (nbits > 32) nbits = 32;
 
     /* Fallback byte-by-byte loop near buffer boundary */
     uint32_t val = 0;
