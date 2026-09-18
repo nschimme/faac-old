@@ -19,6 +19,12 @@ endif
 if not get_option('decoder-ps')
     faad_c_args += ['-DFAAD_DISABLE_PS']
 endif
+if get_option('decoder-lp-sbr')
+    faad_c_args += ['-DFAAD_LP_SBR']
+endif
+if get_option('decoder-downsampled-sbr')
+    faad_c_args += ['-DFAAD_D_SBR']
+endif
 
 thread_dep = dependency('threads', required: false)
 

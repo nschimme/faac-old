@@ -13,6 +13,16 @@ option('decoder-ps',
     type: 'boolean',
     value: true)
 
+option('decoder-lp-sbr',
+    description: 'Enable Low Power SBR (LP-SBR) real DCT mode in libfaad (default: true)',
+    type: 'boolean',
+    value: true)
+
+option('decoder-downsampled-sbr',
+    description: 'Enable Downsampled SBR (D-SBR) half-rate synthesis mode in libfaad (default: false)',
+    type: 'boolean',
+    value: false)
+
 option('decoder',
     description: 'Build the FAAD decoder library and frontend executable',
     type: 'boolean',
