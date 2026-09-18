@@ -50,11 +50,24 @@ typedef struct {
 static HuffEscEntry huff_esc_table[12][HUFF_ESC_TABLE_CAP];
 static uint8_t huff_esc_count[12];
 
+static int8_t quad_lut[81][4];
+static const int book_base[12] = { 0, 81, 81, 81, 81, 9, 9, 8, 8, 13, 13, 17 };
+
 static bool huff_luts_initialized = false;
 
 void init_huffman_luts(void)
 {
     if (huff_luts_initialized) return;
+
+    for (int i = 0; i < 81; i++) {
+        int idx = i;
+        quad_lut[i][0] = (int8_t)(idx / 27);
+        idx %= 27;
+        quad_lut[i][1] = (int8_t)(idx / 9);
+        idx %= 9;
+        quad_lut[i][2] = (int8_t)(idx / 3);
+        quad_lut[i][3] = (int8_t)(idx % 3);
+    }
 
     for (int b = 1; b <= 11; b++) {
         int b_idx = b - 1;
@@ -208,22 +221,25 @@ static inline void decode_quad(BitReader *bs, int book, int *v, int *w, int *x, 
         , stats
 #endif
     );
-    *v = idx / 27;
-    idx %= 27;
-    *w = idx / 9;
-    idx %= 9;
-    *x = idx / 3;
-    *y = idx % 3;
+    if (idx < 0) idx = 0;
+    if (idx > 80) idx = 80;
 
-    if (book == 1 || book == 2) {
+    const int8_t *q = quad_lut[idx];
+    int v_val = q[0];
+    int w_val = q[1];
+    int x_val = q[2];
+    int y_val = q[3];
+
+    if (book <= 2) {
         /* Signed 4-tuple: values in {-1, 0, 1} */
-        *v -= 1; *w -= 1; *x -= 1; *y -= 1;
-    } else if (book == 3 || book == 4) {
+        *v = v_val - 1; *w = w_val - 1; *x = x_val - 1; *y = y_val - 1;
+    } else {
         /* Unsigned 4-tuple: read sign bit for non-zero values */
-        if (*v) if (bits_get_fast(bs, 1)) *v = -*v;
-        if (*w) if (bits_get_fast(bs, 1)) *w = -*w;
-        if (*x) if (bits_get_fast(bs, 1)) *x = -*x;
-        if (*y) if (bits_get_fast(bs, 1)) *y = -*y;
+        if (v_val) if (bits_get_1(bs)) v_val = -v_val;
+        if (w_val) if (bits_get_1(bs)) w_val = -w_val;
+        if (x_val) if (bits_get_1(bs)) x_val = -x_val;
+        if (y_val) if (bits_get_1(bs)) y_val = -y_val;
+        *v = v_val; *w = w_val; *x = x_val; *y = y_val;
     }
 }
 
@@ -238,10 +254,7 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y
         , stats
 #endif
     );
-    int base = 17;
-    if (book == 5 || book == 6) base = 9;
-    else if (book == 7 || book == 8) base = 8;
-    else if (book == 9 || book == 10) base = 13;
+    int base = (book >= 1 && book <= 11) ? book_base[book] : 17;
 
     *x = idx / base;
     *y = idx % base;
@@ -261,15 +274,15 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y
          * quieter content. */
         int abs_x = *x;
         int abs_y = *y;
-        bool neg_x = abs_x && bits_get_fast(bs, 1);
-        bool neg_y = abs_y && bits_get_fast(bs, 1);
+        bool neg_x = abs_x && bits_get_1(bs);
+        bool neg_y = abs_y && bits_get_1(bs);
 
         if (abs_x == 16) {
 #ifdef FAAD_STATS
             if (stats) stats->escbookMagnitudeEscapes++;
 #endif
             int prefix = 0;
-            while (bits_get_fast(bs, 1) == 1) prefix++;
+            while (bits_get_1(bs) == 1) prefix++;
             abs_x = (1 << (prefix + 4)) + bits_get_fast(bs, prefix + 4);
         }
         if (abs_y == 16) {
@@ -277,15 +290,15 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y
             if (stats) stats->escbookMagnitudeEscapes++;
 #endif
             int prefix = 0;
-            while (bits_get_fast(bs, 1) == 1) prefix++;
+            while (bits_get_1(bs) == 1) prefix++;
             abs_y = (1 << (prefix + 4)) + bits_get_fast(bs, prefix + 4);
         }
         *x = neg_x ? -abs_x : abs_x;
         *y = neg_y ? -abs_y : abs_y;
     } else if (book == 5 || (book >= 7 && book <= 10)) {
         /* Unsigned 2-tuple: read sign bit for non-zero values */
-        if (*x) if (bits_get_fast(bs, 1)) *x = -*x;
-        if (*y) if (bits_get_fast(bs, 1)) *y = -*y;
+        if (*x) if (bits_get_1(bs)) *x = -*x;
+        if (*y) if (bits_get_1(bs)) *y = -*y;
     }
 }
 
