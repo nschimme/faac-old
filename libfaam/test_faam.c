@@ -26,60 +26,51 @@ static uint64_t file_tell_cb(void *user_data) {
 
 int main(void)
 {
-    /* Test 1: ASC build & parse */
-    faam_asc_info asc_in;
-    memset(&asc_in, 0, sizeof(asc_in));
-    asc_in.object_type = 2; /* AAC-LC */
-    asc_in.sample_rate = 44100;
-    asc_in.channels = 2;
-
-    uint8_t asc_buf[64];
-    uint32_t asc_len = 0;
-    faam_status st = faam_asc_build(&asc_in, asc_buf, sizeof(asc_buf), &asc_len);
-    assert(st == FAAM_OK);
-    assert(asc_len == 2);
-
-    faam_asc_info asc_out;
-    st = faam_asc_parse(asc_buf, asc_len, &asc_out);
-    assert(st == FAAM_OK);
-    assert(asc_out.object_type == 2);
-    assert(asc_out.sample_rate == 44100);
-    assert(asc_out.channels == 2);
-
-    /* Test 1b: ASC build & parse round trip with SBR/PS signaled */
-    faam_asc_info sbr_asc_in;
-    memset(&sbr_asc_in, 0, sizeof(sbr_asc_in));
-    sbr_asc_in.object_type = 2; /* Core codec is AAC-LC */
-    sbr_asc_in.sample_rate = 24000; /* Core rate; SBR runs at 48000 */
-    sbr_asc_in.channels = 2;
-    sbr_asc_in.sbr_present = true;
-    sbr_asc_in.ps_present = true;
-
-    uint8_t sbr_asc_buf[64];
-    uint32_t sbr_asc_len = 0;
-    st = faam_asc_build(&sbr_asc_in, sbr_asc_buf, sizeof(sbr_asc_buf), &sbr_asc_len);
-    assert(st == FAAM_OK);
-
-    faam_asc_info sbr_asc_out;
-    st = faam_asc_parse(sbr_asc_buf, sbr_asc_len, &sbr_asc_out);
-    assert(st == FAAM_OK);
-    assert(sbr_asc_out.object_type == 2);
-    assert(sbr_asc_out.sample_rate == 24000);
-    assert(sbr_asc_out.channels == 2);
-    assert(sbr_asc_out.sbr_present == true);
-    assert(sbr_asc_out.ps_present == true);
-
-    /* Test 2: Stream Muxer file creation */
-    FILE *fout = fopen("test_output.m4a", "wb");
+    /* Test 1: Stream Muxer file creation (Audio & Video tracks) */
+    FILE *fout = fopen("test_output.mp4", "wb");
     assert(fout != NULL);
 
     faam_io io_out = { fout, file_read_cb, file_write_cb, file_seek_cb, file_tell_cb };
 
     faam_muxer_config cfg;
-    st = faam_muxer_config_init(&cfg, sizeof(cfg));
+    faam_status st = faam_muxer_config_init(&cfg, sizeof(cfg));
     assert(st == FAAM_OK);
-    cfg.asc_buf = asc_buf;
-    cfg.asc_len = asc_len;
+
+    /* Track 1: Audio */
+    uint8_t dummy_asc[2] = { 0x12, 0x10 };
+    faam_track_config a_tr;
+    memset(&a_tr, 0, sizeof(a_tr));
+    a_tr.struct_size = sizeof(a_tr);
+    a_tr.track_type = FAAM_TRACK_AUDIO;
+    a_tr.codec_id = FAAM_CODEC_AAC;
+    a_tr.timescale = 44100;
+    a_tr.sample_rate = 44100;
+    a_tr.channels = 2;
+    a_tr.codec_data = dummy_asc;
+    a_tr.codec_data_len = sizeof(dummy_asc);
+
+    uint32_t a_track_id = 0;
+    st = faam_muxer_config_add_track(&cfg, &a_tr, &a_track_id);
+    assert(st == FAAM_OK);
+    assert(a_track_id == 1);
+
+    /* Track 2: Video (H.264 Security Camera) */
+    uint8_t dummy_avcc[10] = { 0x01, 0x64, 0x00, 0x1F, 0xFF, 0xE1, 0x00, 0x02, 0x67, 0x64 };
+    faam_track_config v_tr;
+    memset(&v_tr, 0, sizeof(v_tr));
+    v_tr.struct_size = sizeof(v_tr);
+    v_tr.track_type = FAAM_TRACK_VIDEO;
+    v_tr.codec_id = FAAM_CODEC_H264;
+    v_tr.timescale = 90000;
+    v_tr.width = 1920;
+    v_tr.height = 1080;
+    v_tr.codec_data = dummy_avcc;
+    v_tr.codec_data_len = sizeof(dummy_avcc);
+
+    uint32_t v_track_id = 0;
+    st = faam_muxer_config_add_track(&cfg, &v_tr, &v_track_id);
+    assert(st == FAAM_OK);
+    assert(v_track_id == 2);
 
     uint32_t muxer_size = 0;
     st = faam_muxer_get_state_size(&cfg, &muxer_size);
@@ -97,7 +88,9 @@ int main(void)
     uint8_t dummy_frame[512];
     memset(dummy_frame, 0xAB, sizeof(dummy_frame));
     for (int i = 0; i < 10; i++) {
-        st = faam_muxer_write_frame(m, dummy_frame, sizeof(dummy_frame), 1024);
+        st = faam_muxer_write_frame(m, a_track_id, dummy_frame, sizeof(dummy_frame), 1024, true);
+        assert(st == FAAM_OK);
+        st = faam_muxer_write_frame(m, v_track_id, dummy_frame, sizeof(dummy_frame), 3000, (i % 5 == 0));
         assert(st == FAAM_OK);
     }
 
@@ -107,8 +100,8 @@ int main(void)
     free(mem_m);
     fclose(fout);
 
-    /* Test 3: Stream Demuxer file reading */
-    FILE *fin = fopen("test_output.m4a", "rb");
+    /* Test 2: Stream Demuxer file reading */
+    FILE *fin = fopen("test_output.mp4", "rb");
     assert(fin != NULL);
 
     faam_io io_in = { fin, file_read_cb, file_write_cb, file_seek_cb, file_tell_cb };
@@ -126,21 +119,32 @@ int main(void)
     assert(st == FAAM_OK);
     assert(d != NULL);
 
-    uint8_t read_asc[64];
-    uint32_t read_asc_len = 0;
-    st = faam_demuxer_get_asc(d, read_asc, sizeof(read_asc), &read_asc_len);
+    uint32_t num_tracks = 0;
+    st = faam_demuxer_get_num_tracks(d, &num_tracks);
     assert(st == FAAM_OK);
-    assert(read_asc_len > 0);
+    assert(num_tracks == 2);
 
-    faam_gapless_info gapless;
-    st = faam_demuxer_get_gapless(d, &gapless);
+    faam_track_info t1, t2;
+    st = faam_demuxer_get_track_info(d, 0, &t1);
     assert(st == FAAM_OK);
+    assert(t1.track_type == FAAM_TRACK_AUDIO);
+
+    st = faam_demuxer_get_track_info(d, 1, &t2);
+    assert(st == FAAM_OK);
+    assert(t2.track_type == FAAM_TRACK_VIDEO);
+    assert(t2.width == 1920 && t2.height == 1080);
+
+    uint8_t read_codec_data[64];
+    uint32_t read_cdata_len = 0;
+    st = faam_demuxer_get_codec_data(d, t1.track_id, read_codec_data, sizeof(read_codec_data), &read_cdata_len);
+    assert(st == FAAM_OK);
+    assert(read_cdata_len == sizeof(dummy_asc));
 
     faam_demuxer_close(d);
     free(mem_d);
     fclose(fin);
 
-    remove("test_output.m4a");
+    remove("test_output.mp4");
 
     printf("libfaam stream unit tests passed successfully.\n");
     return 0;

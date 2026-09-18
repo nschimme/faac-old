@@ -44,7 +44,7 @@ faac = executable('faac',
 if get_option('muxer')
     faam = executable('faam',
         ['faam_main.c', 'charset.c'],
-        include_directories: ['..', '../include'],
+        include_directories: ['..', '../include', '../libfaac'],
         link_with: [libfaam_shared],
         dependencies: [libshell32, libiconv],
         install: true
