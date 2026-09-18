@@ -200,6 +200,7 @@ typedef struct {
     float qmf_delay[2][32][64];
     float qmf_ovl[640];
     float qmf_ana_ovl[320];
+    float qmf_syn_ovl[320];
 } SBRState;
 
 struct faad_decoder {
