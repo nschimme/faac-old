@@ -149,6 +149,11 @@ typedef struct FaadDecStats {
     unsigned int tnsActiveFrames;
     unsigned int shortBlockIcsCount;
     unsigned int sbrActiveFrames;
+    unsigned int sbrHeaderCount;
+    unsigned int sbrEnvelopeSum;
+    unsigned int psActiveFrames;
+    unsigned int psIidBandsSum;
+    unsigned int psIccBandsSum;
 
     unsigned int huffEscapeHits[13]; /* 1..11 spectral books, 12 = scalefactor book */
     unsigned int huffEscapeMisses;
@@ -187,6 +192,7 @@ typedef struct {
     int8_t  E_orig[8][64];
     int8_t  Q_orig[8][64];
     bool header_present;
+    bool bs_amp_res;
     uint8_t bs_start_freq;
     uint8_t bs_stop_freq;
     uint8_t bs_xover_band;

@@ -373,7 +373,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
             }
         }
 #ifdef FAAD_STATS
-        if (!saw_end) {
+        if (!saw_end && bits_get_consumed(&bs) < bs.len * 8) {
             dec->stats.nonEndTermination++;
         }
 #endif
