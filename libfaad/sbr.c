@@ -159,18 +159,19 @@ faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32
 #ifndef FAAD_DISABLE_SBR
     int nch = (syntax_id == ID_CPE) ? 2 : 1;
     if (ch0 + nch > MAX_CHANNELS) return FAAD_ERR_INVALID_ARGUMENT;
-    dec->sbr_present = true;
-
     /* ISO/IEC 14496-3 Section 4.6.18.5 sbr_extension_data(): 1-bit header_flag */
     bool sbr_header_flag = bits_get(bs, 1);
     if (sbr_header_flag) {
-#ifdef FAAD_STATS
-        dec->stats.sbrHeaderCount++;
-#endif
         bool amp_res = bits_get(bs, 1);
         uint32_t start_freq = bits_get(bs, 4);
         uint32_t stop_freq = bits_get(bs, 4);
         uint32_t xover_band = bits_get(bs, 3);
+        if (start_freq <= 15 && stop_freq <= 15) {
+            dec->sbr_present = true;
+        }
+#ifdef FAAD_STATS
+        dec->stats.sbrHeaderCount++;
+#endif
         for (int c = 0; c < nch; c++) {
             SBRState *sbr = &dec->sbr[ch0 + c];
             sbr->header_present = true;
@@ -258,9 +259,13 @@ faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32
         }
     }
 
-    /* SBR Inverse Filtering Mode for each channel: 2 bits per channel */
+    /* SBR Inverse Filtering Mode for each channel: 2 bits per noise band */
     for (int c = 0; c < nch; c++) {
-        bits_skip(bs, 2);
+        SBRState *sbr = &dec->sbr[ch0 + c];
+        int n_q = (sbr->bs_num_env > 1) ? 2 : 1;
+        for (int k = 0; k < n_q; k++) {
+            bits_skip(bs, 2);
+        }
     }
 
     /* SBR Envelope Data (E_orig) for each channel */

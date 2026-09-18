@@ -266,6 +266,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
 #endif
 
     memset(dec->spec, 0, sizeof(dec->spec));
+    dec->sbr_present = false;
 
     BitReader bs;
     bits_init(&bs, in_buf, in_bytes);
@@ -289,6 +290,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
     }
 
     uint32_t ch_idx = 0;
+    uint32_t last_elem_type = ID_SCE;
     ICSInfo ics_list[MAX_CHANNELS];
     memset(ics_list, 0, sizeof(ics_list));
 
@@ -307,6 +309,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
 #endif
                 break;
             } else if (syntax_id == ID_SCE || syntax_id == ID_LFE) {
+                last_elem_type = syntax_id;
                 decode_sce(&bs, dec, &ics_list[ch_idx], ch_idx);
                 dequantize_spectrum(&ics_list[ch_idx], dec->spec[ch_idx]);
                 apply_pns(&ics_list[ch_idx], dec->spec[ch_idx], &dec->pns_seed);
@@ -314,6 +317,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                 ch_idx += 1;
             } else if (syntax_id == ID_CPE) {
                 if (ch_idx + 1 >= MAX_CHANNELS) break;
+                last_elem_type = ID_CPE;
                 CPEInfo cpe;
                 memset(&cpe, 0, sizeof(cpe));
                 decode_cpe(&bs, dec, &cpe, ch_idx);
@@ -336,6 +340,9 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                 } else {
                     ch_idx += 2;
                 }
+            } else if (syntax_id == ID_CCE) {
+                extern faad_status decode_cce(BitReader *bs, struct faad_decoder *dec);
+                decode_cce(&bs, dec);
             } else if (syntax_id == ID_DSE) {
                 decode_dse(&bs);
             } else if (syntax_id == ID_PCE) {
@@ -343,33 +350,34 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
             } else if (syntax_id == ID_FIL) {
                 uint32_t count = bits_get(&bs, 4);
                 if (count == 15) count += bits_get(&bs, 8) - 1;
-                uint32_t fill_end = bits_get_consumed(&bs) + count * 8;
-                uint32_t ext_type = bits_get(&bs, 4);
-                if (ext_type == SBR_EXTENSION_DATA || ext_type == SBR_EXTENSION_DATA_CRC) {
-                    uint32_t elem_type = (ch_idx > 1) ? ID_CPE : ID_SCE;
-                    sbr_decode_extension(dec, &bs, (ch_idx > 0) ? (ch_idx - 1) : 0, elem_type);
-                    /* libfaac's encoder (SbrWrite() in sbr_bitstream.c) pads
-                     * the SBR payload out to this fill element's declared
-                     * byte count; sbr_decode_extension() doesn't consume
-                     * that trailing padding itself, so force-align here
-                     * rather than let the outer loop misread it as the next
-                     * syntax element. */
-                    uint32_t consumed = bits_get_consumed(&bs);
-#ifdef FAAD_STATS
-                    dec->stats.fillElementCount++;
-#endif
-                    if (consumed < fill_end) {
-                        uint32_t pad = fill_end - consumed;
-                        bits_skip(&bs, pad);
-#ifdef FAAD_STATS
-                        dec->stats.fillElementPadBitsSum += pad;
-                        if (pad > dec->stats.fillElementMaxPad) {
-                            dec->stats.fillElementMaxPad = pad;
+                if (count > 0) {
+                    uint32_t fill_end = bits_get_consumed(&bs) + count * 8;
+                    uint32_t ext_type = bits_get(&bs, 4);
+                    if (ext_type == SBR_EXTENSION_DATA || ext_type == SBR_EXTENSION_DATA_CRC) {
+                        uint32_t ch0 = 0;
+                        if (last_elem_type == ID_CPE) {
+                            ch0 = (ch_idx >= 2) ? (ch_idx - 2) : 0;
+                        } else {
+                            ch0 = (ch_idx >= 1) ? (ch_idx - 1) : 0;
                         }
+                        sbr_decode_extension(dec, &bs, ch0, last_elem_type);
+                        uint32_t consumed = bits_get_consumed(&bs);
+#ifdef FAAD_STATS
+                        dec->stats.fillElementCount++;
 #endif
+                        if (consumed < fill_end) {
+                            uint32_t pad = fill_end - consumed;
+                            bits_skip(&bs, pad);
+#ifdef FAAD_STATS
+                            dec->stats.fillElementPadBitsSum += pad;
+                            if (pad > dec->stats.fillElementMaxPad) {
+                                dec->stats.fillElementMaxPad = pad;
+                            }
+#endif
+                        }
+                    } else {
+                        bits_skip(&bs, (count - 1) * 8 + 4);
                     }
-                } else {
-                    bits_skip(&bs, (count - 1) * 8 + 4);
                 }
             }
         }
