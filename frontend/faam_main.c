@@ -337,12 +337,72 @@ static int cmd_mux(int argc, char **argv)
     faam_track_config tc;
     memset(&tc, 0, sizeof(tc));
 
+    static uint8_t asc_buf[16];
+    uint32_t asc_len = 0;
+
+    static uint8_t avcc_buf[128];
+    uint32_t avcc_len = 0;
+
     if (strcmp(codec_str, "h264") == 0 || strcmp(codec_str, "avc") == 0) {
         tc.track_type = FAAM_TRACK_VIDEO;
         tc.codec_id = FAAM_CODEC_H264;
         tc.timescale = 90000;
         tc.width = width;
         tc.height = height;
+
+        /* Scan Annex-B file for SPS/PPS NALUs to build avcC */
+        fseek(fin, 0, SEEK_END);
+        long vlen = ftell(fin);
+        fseek(fin, 0, SEEK_SET);
+        if (vlen > 0) {
+            uint8_t *vdata = (uint8_t *)malloc(vlen);
+            if (vdata && fread(vdata, 1, vlen, fin) == (size_t)vlen) {
+                uint8_t *sps = NULL; uint32_t sps_len = 0;
+                uint8_t *pps = NULL; uint32_t pps_len = 0;
+                long pos = 0;
+                while (pos + 4 < vlen) {
+                    if (vdata[pos] == 0 && vdata[pos+1] == 0 && (vdata[pos+2] == 1 || (vdata[pos+2] == 0 && vdata[pos+3] == 1))) {
+                        uint32_t sc_len = (vdata[pos+2] == 1) ? 3 : 4;
+                        long nal_start = pos + sc_len;
+                        long next_pos = nal_start;
+                        while (next_pos + 3 < vlen) {
+                            if (vdata[next_pos] == 0 && vdata[next_pos+1] == 0 && (vdata[next_pos+2] == 1 || (vdata[next_pos+2] == 0 && vdata[next_pos+3] == 1))) break;
+                            next_pos++;
+                        }
+                        if (next_pos + 3 >= vlen) next_pos = vlen;
+                        uint32_t nal_size = (uint32_t)(next_pos - nal_start);
+                        uint8_t nal_type = vdata[nal_start] & 0x1F;
+                        if (nal_type == 7 && !sps) { sps = vdata + nal_start; sps_len = nal_size; }
+                        else if (nal_type == 8 && !pps) { pps = vdata + nal_start; pps_len = nal_size; }
+                        pos = next_pos;
+                    } else pos++;
+                }
+
+                if (sps && pps && sps_len >= 4) {
+                    avcc_buf[0] = 1; /* configurationVersion */
+                    avcc_buf[1] = sps[1]; /* AVCProfileIndication */
+                    avcc_buf[2] = sps[2]; /* profile_compatibility */
+                    avcc_buf[3] = sps[3]; /* AVCLevelIndication */
+                    avcc_buf[4] = 0xFF;   /* lengthSizeMinusOne = 3 (4 bytes) */
+                    avcc_buf[5] = 0xE1;   /* numOfSequenceParameterSets = 1 */
+                    avcc_buf[6] = (uint8_t)(sps_len >> 8);
+                    avcc_buf[7] = (uint8_t)(sps_len & 0xFF);
+                    memcpy(avcc_buf + 8, sps, sps_len);
+                    uint32_t off = 8 + sps_len;
+                    avcc_buf[off++] = 1;  /* numOfPictureParameterSets = 1 */
+                    avcc_buf[off++] = (uint8_t)(pps_len >> 8);
+                    avcc_buf[off++] = (uint8_t)(pps_len & 0xFF);
+                    memcpy(avcc_buf + off, pps, pps_len);
+                    off += pps_len;
+                    avcc_len = off;
+                }
+            }
+            if (vdata) free(vdata);
+            fseek(fin, 0, SEEK_SET);
+        }
+
+        tc.codec_data = avcc_buf;
+        tc.codec_data_len = avcc_len;
     } else if (strcmp(codec_str, "h265") == 0 || strcmp(codec_str, "hevc") == 0) {
         tc.track_type = FAAM_TRACK_VIDEO;
         tc.codec_id = FAAM_CODEC_H265;
@@ -357,13 +417,35 @@ static int cmd_mux(int argc, char **argv)
         tc.channels = 2;
         tc.bits_per_sample = 16;
 
-        /* Build default AAC-LC AudioSpecificConfig */
-        static uint8_t asc_buf[16];
-        AscBuildInfo build = {0};
-        build.object_type = 2; /* AAC-LC */
-        build.sr_idx = asc_codec_sr_idx(44100);
-        build.channels = 2;
-        uint32_t asc_len = asc_codec_build(&build, asc_buf, sizeof(asc_buf));
+        /* Inspect first ADTS header to determine real sample rate & channels */
+        uint8_t probe_hdr[7];
+        long current_pos = ftell(fin);
+        if (fread(probe_hdr, 1, 7, fin) == 7) {
+            if (probe_hdr[0] == 0xFF && (probe_hdr[1] & 0xF0) == 0xF0) {
+                uint8_t aot = ((probe_hdr[2] & 0xC0) >> 6) + 1;
+                uint8_t sr_idx = (probe_hdr[2] & 0x3C) >> 2;
+                uint8_t ch = ((probe_hdr[2] & 0x01) << 2) | ((probe_hdr[3] & 0xC0) >> 6);
+
+                AscBuildInfo build = {0};
+                build.object_type = aot;
+                build.sr_idx = sr_idx;
+                build.channels = ch;
+                asc_len = asc_codec_build(&build, asc_buf, sizeof(asc_buf));
+
+                if (sr_idx < 13) tc.sample_rate = asc_codec_sample_rates[sr_idx];
+                tc.timescale = tc.sample_rate;
+                tc.channels = ch;
+            }
+        }
+        fseek(fin, current_pos, SEEK_SET);
+
+        if (asc_len == 0) {
+            AscBuildInfo build = {0};
+            build.object_type = 2; /* AAC-LC */
+            build.sr_idx = asc_codec_sr_idx(44100);
+            build.channels = 2;
+            asc_len = asc_codec_build(&build, asc_buf, sizeof(asc_buf));
+        }
 
         tc.codec_data = asc_buf;
         tc.codec_data_len = asc_len;
@@ -386,7 +468,7 @@ static int cmd_mux(int argc, char **argv)
         return 1;
     }
 
-    uint8_t buf[8192];
+    uint8_t buf[65536];
     size_t buf_len = 0;
     size_t bytes_read = 0;
 
@@ -425,31 +507,65 @@ static int cmd_mux(int argc, char **argv)
             if (bytes_read == 0) break;
         }
     } else {
-        /* Simple H.264/H.265 Annex-B NALU packetizer */
-        while ((bytes_read = fread(buf + buf_len, 1, sizeof(buf) - buf_len, fin)) > 0 || buf_len > 0) {
-            buf_len += bytes_read;
-            size_t offset = 0;
-            while (offset + 4 < buf_len) {
-                if (buf[offset] == 0 && buf[offset+1] == 0 && buf[offset+2] == 0 && buf[offset+3] == 1) {
-                    size_t next = offset + 4;
-                    while (next + 4 < buf_len) {
-                        if (buf[next] == 0 && buf[next+1] == 0 && buf[next+2] == 0 && buf[next+3] == 1) break;
-                        next++;
-                    }
-                    if (next + 4 < buf_len || bytes_read == 0) {
-                        size_t nal_len = (next + 4 < buf_len) ? (next - offset) : (buf_len - offset);
-                        uint8_t nal_type = buf[offset + 4] & 0x1F;
-                        bool is_key = (nal_type == 5 || nal_type == 7 || nal_type == 19);
-                        faam_muxer_write_frame(m, track_id, buf + offset, (uint32_t)nal_len, 3000, is_key);
-                        offset += nal_len;
-                    } else break;
-                } else offset++;
+        /* Robust Annex-B Access-Unit MP4 Packetizer */
+        fseek(fin, 0, SEEK_END);
+        long file_size = ftell(fin);
+        fseek(fin, 0, SEEK_SET);
+
+        if (file_size > 0) {
+            uint8_t *vbuf = (uint8_t *)malloc(file_size);
+            if (vbuf && fread(vbuf, 1, file_size, fin) == (size_t)file_size) {
+                long pos = 0;
+                uint8_t *sample_mem = (uint8_t *)malloc(file_size + 65536);
+                uint32_t sample_len = 0;
+                bool sample_is_key = false;
+                bool has_slice = false;
+
+                while (pos + 4 < file_size) {
+                    if (vbuf[pos] == 0 && vbuf[pos+1] == 0 && (vbuf[pos+2] == 1 || (vbuf[pos+2] == 0 && vbuf[pos+3] == 1))) {
+                        uint32_t sc_len = (vbuf[pos+2] == 1) ? 3 : 4;
+                        long nal_start = pos + sc_len;
+                        long next_pos = nal_start;
+
+                        while (next_pos + 3 < file_size) {
+                            if (vbuf[next_pos] == 0 && vbuf[next_pos+1] == 0 && (vbuf[next_pos+2] == 1 || (vbuf[next_pos+2] == 0 && vbuf[next_pos+3] == 1))) break;
+                            next_pos++;
+                        }
+                        if (next_pos + 3 >= file_size) next_pos = file_size;
+
+                        uint32_t nal_len = (uint32_t)(next_pos - nal_start);
+                        uint8_t nal_type = vbuf[nal_start] & 0x1F;
+                        bool is_vcl = (nal_type >= 1 && nal_type <= 5);
+
+                        /* If a new VCL slice or AUD starts after we already have a slice, emit current access unit frame */
+                        if ((is_vcl && has_slice) || (nal_type == 9 && sample_len > 0)) {
+                            faam_muxer_write_frame(m, track_id, sample_mem, sample_len, 3000, sample_is_key);
+                            sample_len = 0;
+                            sample_is_key = false;
+                            has_slice = false;
+                        }
+
+                        if (is_vcl) has_slice = true;
+                        if (nal_type == 5) sample_is_key = true;
+
+                        sample_mem[sample_len++] = (uint8_t)(nal_len >> 24);
+                        sample_mem[sample_len++] = (uint8_t)(nal_len >> 16);
+                        sample_mem[sample_len++] = (uint8_t)(nal_len >> 8);
+                        sample_mem[sample_len++] = (uint8_t)(nal_len & 0xFF);
+                        memcpy(sample_mem + sample_len, vbuf + nal_start, nal_len);
+                        sample_len += nal_len;
+
+                        pos = next_pos;
+                    } else pos++;
+                }
+
+                if (sample_len > 0) {
+                    faam_muxer_write_frame(m, track_id, sample_mem, sample_len, 3000, sample_is_key);
+                }
+
+                if (sample_mem) free(sample_mem);
             }
-            if (offset < buf_len) {
-                memmove(buf, buf + offset, buf_len - offset);
-                buf_len -= offset;
-            } else buf_len = 0;
-            if (bytes_read == 0) break;
+            if (vbuf) free(vbuf);
         }
     }
 
@@ -545,10 +661,58 @@ static int cmd_demux(int argc, char **argv)
         return 1;
     }
 
-    uint8_t frame[8192];
+    bool is_adts_out = (strstr(output_file, ".aac") != NULL || strstr(output_file, ".adts") != NULL);
+
+    faam_track_info ti;
+    memset(&ti, 0, sizeof(ti));
+    uint8_t sr_idx = 4;
+    uint8_t ch = 2;
+    uint8_t aot = 2;
+
+    if (faam_demuxer_get_track_info(d, 0, &ti) == FAAM_OK && ti.track_type == FAAM_TRACK_AUDIO && ti.codec_id == FAAM_CODEC_AAC) {
+        uint8_t cdata[256];
+        uint32_t cdata_len = 0;
+        if (faam_demuxer_get_codec_data(d, ti.track_id, cdata, sizeof(cdata), &cdata_len) == FAAM_OK && cdata_len >= 2) {
+            AscInfo asc;
+            asc_codec_parse(cdata, cdata_len, &asc);
+            sr_idx = asc_codec_sr_idx(asc.sample_rate);
+            ch = asc.num_channels;
+            aot = asc.object_type;
+        }
+    }
+
+    uint8_t frame[65536];
     uint32_t frame_bytes = 0;
+    static const uint8_t annexb_sc[4] = { 0x00, 0x00, 0x00, 0x01 };
+
     while (faam_demuxer_read_frame(d, frame, sizeof(frame), &frame_bytes) == FAAM_OK && frame_bytes > 0) {
-        fwrite(frame, 1, frame_bytes, fout);
+        if (ti.track_type == FAAM_TRACK_VIDEO) {
+            /* Convert 4-byte BE length prefixed NALUs to Annex-B startcodes (00 00 00 01) */
+            uint32_t pos = 0;
+            while (pos + 4 <= frame_bytes) {
+                uint32_t nal_len = ((uint32_t)frame[pos] << 24) | ((uint32_t)frame[pos+1] << 16) | ((uint32_t)frame[pos+2] << 8) | (uint32_t)frame[pos+3];
+                pos += 4;
+                if (pos + nal_len <= frame_bytes) {
+                    fwrite(annexb_sc, 1, 4, fout);
+                    fwrite(frame + pos, 1, nal_len, fout);
+                    pos += nal_len;
+                } else break;
+            }
+        } else {
+            if (is_adts_out && ti.codec_id == FAAM_CODEC_AAC) {
+                uint32_t flen = frame_bytes + 7;
+                uint8_t adts[7];
+                adts[0] = 0xFF;
+                adts[1] = 0xF1;
+                adts[2] = (uint8_t)(((aot - 1) << 6) | (sr_idx << 2) | ((ch >> 2) & 1));
+                adts[3] = (uint8_t)(((ch & 3) << 6) | ((flen >> 11) & 0x03));
+                adts[4] = (uint8_t)((flen >> 3) & 0xFF);
+                adts[5] = (uint8_t)(((flen & 7) << 5) | 0x1F);
+                adts[6] = 0xFC;
+                fwrite(adts, 1, 7, fout);
+            }
+            fwrite(frame, 1, frame_bytes, fout);
+        }
     }
 
     fclose(fout);
