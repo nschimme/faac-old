@@ -19,6 +19,23 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+/* Memory management macros (overridable for embedded PSRAM / fast internal SRAM) */
+#ifndef AllocMemory
+#define AllocMemory(size) malloc(size)
+#endif
+#ifndef FreeMemory
+#define FreeMemory(block) free(block)
+#endif
+#ifndef AllocMemoryFast
+#define AllocMemoryFast(size) malloc(size)
+#endif
+#ifndef FreeMemoryFast
+#define FreeMemoryFast(block) free(block)
+#endif
+#ifndef ReallocMemory
+#define ReallocMemory(block, size) realloc(block, size)
+#endif
+
 
 #include "faad.h"
 #include "huffdata.h"
@@ -255,6 +272,10 @@ struct faad_decoder {
     uint32_t pns_seed;
     uint32_t consecutive_errors;
     float prev_spec[MAX_CHANNELS][FRAME_LEN_LONG];
+
+    /* Frame decode scratch buffers moved from C call stack to reduce stack depth (<1 KB) */
+    float pcm_float[MAX_CHANNELS * FRAME_LEN_LONG];
+    float pcm_final[MAX_CHANNELS * 2048];
 
 #ifdef FAAD_STATS
     FaadDecStats stats;
