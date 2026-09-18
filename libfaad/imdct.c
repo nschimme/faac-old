@@ -126,7 +126,7 @@ static void fast_imdct(const float *in, float *out, int n)
         xi[k] = im * c - re * s;
     }
 
-    fft(&fft_tbl, xr, xi, logm);
+    fft(&fft_tbl, xr, xi, logm - 1);
 
     /* Fast table-driven Post-twiddle and mirror with 2.0 / n scaling */
     float scale = 2.0f / (float)n;
