@@ -571,7 +571,7 @@ faam_status faam_muxer_finalize(faam_muxer *m)
 
         long stsc = start_atom(m, "stsc");
         put_u32(m, 0); put_u32(m, 1); put_u32(m, 1);
-        put_u32(m, tr->sample_count); put_u32(m, 1);
+        put_u32(m, 1); put_u32(m, 1);
         end_atom(m, stsc);
 
         long stsz = start_atom(m, "stsz");
@@ -581,13 +581,27 @@ faam_status faam_muxer_finalize(faam_muxer *m)
         }
         end_atom(m, stsz);
 
-        if (m->mdat_pos + m->mdat_size <= 0xFFFFFFFFULL) {
+        bool use64_stco = false;
+        for (uint32_t i = 0; i < tr->sample_count; i++) {
+            if (tr->samples[i].offset > 0xFFFFFFFFULL) {
+                use64_stco = true;
+                break;
+            }
+        }
+
+        if (!use64_stco) {
             long stco = start_atom(m, "stco");
-            put_u32(m, 0); put_u32(m, 1); put_u32(m, (uint32_t)m->mdat_pos);
+            put_u32(m, 0); put_u32(m, tr->sample_count);
+            for (uint32_t i = 0; i < tr->sample_count; i++) {
+                put_u32(m, (uint32_t)tr->samples[i].offset);
+            }
             end_atom(m, stco);
         } else {
             long co64 = start_atom(m, "co64");
-            put_u32(m, 0); put_u32(m, 1); put_u64(m, m->mdat_pos);
+            put_u32(m, 0); put_u32(m, tr->sample_count);
+            for (uint32_t i = 0; i < tr->sample_count; i++) {
+                put_u64(m, tr->samples[i].offset);
+            }
             end_atom(m, co64);
         }
 
@@ -598,6 +612,21 @@ faam_status faam_muxer_finalize(faam_muxer *m)
     }
 
     long udta = start_atom(m, "udta");
+
+    if (m->cfg.chapters && m->cfg.num_chapters > 0) {
+        long chpl = start_atom(m, "chpl");
+        put_u32(m, 0);
+        put_u32(m, m->cfg.num_chapters);
+        for (uint32_t c = 0; c < m->cfg.num_chapters; c++) {
+            put_u64(m, m->cfg.chapters[c].start_ms * 10000ULL);
+            size_t tlen = strlen(m->cfg.chapters[c].title);
+            if (tlen > 255) tlen = 255;
+            put_u8(m, (uint8_t)tlen);
+            put_data(m, m->cfg.chapters[c].title, tlen);
+        }
+        end_atom(m, chpl);
+    }
+
     long meta = start_atom(m, "meta");
     put_u32(m, 0);
     long hdlr2 = start_atom(m, "hdlr");
