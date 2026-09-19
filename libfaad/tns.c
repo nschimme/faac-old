@@ -9,26 +9,28 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-static void tns_ar_filter(float *spec, int length, int dir, const float *lpc, int order)
+static void tns_ar_filter(float * restrict spec, int length, int dir, const float * restrict lpc, int order)
 {
-    int start = 0;
-    int stop = length;
-    int inc = 1;
-    if (dir) {
-        start = length - 1;
-        stop = -1;
-        inc = -1;
-    }
+    if (length <= 0 || order <= 0) return;
 
-    for (int i = start; i != stop; i += inc) {
-        float sum = spec[i];
-        for (int j = 1; j <= order; j++) {
-            int idx = i - j * inc;
-            if (idx >= 0 && idx < length) {
-                sum -= lpc[j - 1] * spec[idx];
+    if (!dir) {
+        for (int i = 0; i < length; i++) {
+            float sum = spec[i];
+            int limit = (i < order) ? i : order;
+            for (int j = 1; j <= limit; j++) {
+                sum -= lpc[j - 1] * spec[i - j];
             }
+            spec[i] = sum;
         }
-        spec[i] = sum;
+    } else {
+        for (int i = length - 1; i >= 0; i--) {
+            float sum = spec[i];
+            int limit = (length - 1 - i < order) ? (length - 1 - i) : order;
+            for (int j = 1; j <= limit; j++) {
+                sum -= lpc[j - 1] * spec[i + j];
+            }
+            spec[i] = sum;
+        }
     }
 }
 
