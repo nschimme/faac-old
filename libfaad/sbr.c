@@ -425,7 +425,7 @@ static void init_qmf_syn_twiddles(void)
 }
 
 /* 32-subband Real DCT-IV QMF analysis filterbank with contiguous SIMD-ready arrays */
-static void qmf_analysis_320_real(SBRState *sbr, const float *in, float qmf_real[32][32])
+static void qmf_analysis_320_real(SBRState *sbr, const float *in, float * restrict qmf_real)
 {
     init_qmf_twiddles();
     float *ovl = sbr ? sbr->qmf_ana_ovl : NULL;
@@ -470,14 +470,14 @@ static void qmf_analysis_320_real(SBRState *sbr, const float *in, float qmf_real
                        + smp_ptr[n + 2] * cos_row[n + 2]
                        + smp_ptr[n + 3] * cos_row[n + 3];
             }
-            qmf_real[t][k] = sum_r * 0.03125f;
+            qmf_real[t * 32 + k] = sum_r * 0.03125f;
         }
     }
 }
 
 #ifndef FAAD_D_SBR
 /* 64-subband Real DCT-II QMF synthesis filterbank (LP-SBR 640-sample windowing) */
-static void qmf_synthesis_640_real(SBRState *sbr, float qmf_real[32][64], float *out)
+static void qmf_synthesis_640_real(SBRState *sbr, const float * restrict qmf_real, float *out)
 {
     init_qmf_syn_twiddles();
 
@@ -485,7 +485,7 @@ static void qmf_synthesis_640_real(SBRState *sbr, float qmf_real[32][64], float 
         memmove(&sbr->qmf_ovl[0], &sbr->qmf_ovl[64], 576 * sizeof(float));
 
         float * restrict ovl_dst = sbr->qmf_ovl + 576;
-        const float * restrict re_ptr = qmf_real[t];
+        const float * restrict re_ptr = qmf_real + t * 64;
 
         for (int n = 0; n < 64; n++) {
             float sum = 0.0f;
@@ -542,7 +542,7 @@ static void qmf_synthesis_640_real(SBRState *sbr, float qmf_real[32][64], float 
 }
 #else
 /* 32-subband Real DCT-II QMF synthesis filterbank (D-SBR half-rate 320-sample windowing) */
-static void qmf_synthesis_320_real(SBRState *sbr, float qmf_real[32][32], float *out)
+static void qmf_synthesis_320_real(SBRState *sbr, const float * restrict qmf_real, float *out)
 {
     init_qmf_syn_twiddles();
 
@@ -550,7 +550,7 @@ static void qmf_synthesis_320_real(SBRState *sbr, float qmf_real[32][32], float 
         memmove(&sbr->qmf_syn_ovl[0], &sbr->qmf_syn_ovl[32], 288 * sizeof(float));
 
         float * restrict ovl_dst = sbr->qmf_syn_ovl + 288;
-        const float * restrict re_ptr = qmf_real[t];
+        const float * restrict re_ptr = qmf_real + t * 32;
 
         for (int n = 0; n < 32; n++) {
             float sum = 0.0f;
@@ -713,15 +713,15 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
     /* LP-PS (HE-AAC v2 Mono -> Stereo in Low Power mode) */
     if (dec->ps_present && num_ch == 1) {
         dec->num_channels = 2;
-        float qmf_ana_r[32][32];
+        float qmf_ana_r[1024];
 
 #ifdef FAAD_D_SBR
-        float qmf_left_r[32][32], qmf_right_r[32][32];
+        float qmf_left_r[1024], qmf_right_r[1024];
         memset(qmf_left_r, 0, sizeof(qmf_left_r));
         memset(qmf_right_r, 0, sizeof(qmf_right_r));
         int syn_bands = 32;
 #else
-        float qmf_left_r[32][64], qmf_right_r[32][64];
+        float qmf_left_r[2048], qmf_right_r[2048];
         memset(qmf_left_r, 0, sizeof(qmf_left_r));
         memset(qmf_right_r, 0, sizeof(qmf_right_r));
         int syn_bands = 64;
@@ -735,21 +735,21 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
         for (int t = 0; t < 32; t++) {
             for (int k = 0; k < syn_bands; k++) {
                 int band = (k * SBR_PS_BANDS) / syn_bands;
-                float src_r = (k < 32) ? qmf_ana_r[t][k] : qmf_ana_r[t][k - 32];
+                float src_r = (k < 32) ? qmf_ana_r[t * 32 + k] : qmf_ana_r[t * 32 + k - 32];
 
                 /* Fractional Subband Delay Lines for LP-PS Phase Derivation */
-                float d_r = ps->delay_r[2][k];
-                ps->delay_r[2][k] = ps->delay_r[1][k];
-                ps->delay_r[1][k] = ps->delay_r[0][k];
-                ps->delay_r[0][k] = src_r;
+                float d_r = ps->delay_r[128 + k];
+                ps->delay_r[128 + k] = ps->delay_r[64 + k];
+                ps->delay_r[64 + k]  = ps->delay_r[k];
+                ps->delay_r[k]       = src_r;
 
                 /* Derive phase-decorrelated component across adjacent subbands */
-                float adj_r = (k > 0 && k < syn_bands - 1) ? 0.5f * (qmf_ana_r[t][(k - 1) % 32] - qmf_ana_r[t][(k + 1) % 32]) : 0.0f;
+                float adj_r = (k > 0 && k < syn_bands - 1) ? 0.5f * (qmf_ana_r[t * 32 + (k - 1) % 32] - qmf_ana_r[t * 32 + (k + 1) % 32]) : 0.0f;
                 float dec_r = -ps_allpass_a * src_r + d_r + 0.25f * adj_r;
 
                 /* LP-PS Spatial Matrix Mixing */
-                qmf_left_r[t][k]  = src_r * ps->h11[band] + dec_r * ps->h12[band];
-                qmf_right_r[t][k] = src_r * ps->h21[band] + dec_r * ps->h22[band];
+                qmf_left_r[t * syn_bands + k]  = src_r * ps->h11[band] + dec_r * ps->h12[band];
+                qmf_right_r[t * syn_bands + k] = src_r * ps->h21[band] + dec_r * ps->h22[band];
             }
         }
 
@@ -766,14 +766,14 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
     /* Standard LP-SBR Synthesis */
     for (uint32_t ch = 0; ch < num_ch; ch++) {
         SBRState *sbr = &dec->sbr[ch];
-        float qmf_ana_r[32][32];
+        float qmf_ana_r[1024];
 
 #ifdef FAAD_D_SBR
-        float qmf_syn_r[32][32];
+        float qmf_syn_r[1024];
         memset(qmf_syn_r, 0, sizeof(qmf_syn_r));
         int syn_bands = 32;
 #else
-        float qmf_syn_r[32][64];
+        float qmf_syn_r[2048];
         memset(qmf_syn_r, 0, sizeof(qmf_syn_r));
         int syn_bands = 64;
 #endif
@@ -792,7 +792,7 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
         for (int t = 0; t < 32; t++) {
             int base_subbands = kx < 32 ? kx : 32;
             if (base_subbands > syn_bands) base_subbands = syn_bands;
-            memcpy(qmf_syn_r[t], qmf_ana_r[t], base_subbands * sizeof(float));
+            memcpy(qmf_syn_r + t * syn_bands, qmf_ana_r + t * 32, base_subbands * sizeof(float));
         }
 
         int num_env = (sbr->bs_num_env > 0 && sbr->bs_num_env <= 8) ? sbr->bs_num_env : 1;
@@ -823,7 +823,7 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
                 float g_next = get_sbr_env_scale(e_next);
                 float gain = (1.0f - alpha) * g_curr + alpha * g_next;
 
-                qmf_syn_r[t][k] = qmf_ana_r[t][src_k] * gain;
+                qmf_syn_r[t * syn_bands + k] = qmf_ana_r[t * 32 + src_k] * gain;
 
                 /* ISO 2-tap/3-tap FIR Alias Suppression Filter */
                 if (k > kx && k < k2 - 1) {
@@ -832,7 +832,7 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
                     float g_prev = get_sbr_env_scale(sbr->E_orig[env_curr][prev_band]);
                     float diff = gain - g_prev;
                     if (fabsf(diff) > 1e-4f) {
-                        qmf_syn_r[t][k] += 0.25f * diff * qmf_ana_r[t][(src_k > 0) ? src_k - 1 : 0];
+                        qmf_syn_r[t * syn_bands + k] += 0.25f * diff * qmf_ana_r[t * 32 + ((src_k > 0) ? src_k - 1 : 0)];
                     }
                 }
             }
@@ -870,14 +870,14 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
                 float src_i = (k < 32) ? qmf_ana_i[t][k] : qmf_ana_i[t][k - 32];
 
                 /* PS All-Pass QMF Decorrelation Filterbank */
-                float d_r = ps->delay_r[2][k];
-                float d_i = ps->delay_i[2][k];
-                ps->delay_r[2][k] = ps->delay_r[1][k];
-                ps->delay_i[2][k] = ps->delay_i[1][k];
-                ps->delay_r[1][k] = ps->delay_r[0][k];
-                ps->delay_i[1][k] = ps->delay_i[0][k];
-                ps->delay_r[0][k] = src_r;
-                ps->delay_i[0][k] = src_i;
+                float d_r = ps->delay_r[128 + k];
+                float d_i = ps->delay_i[128 + k];
+                ps->delay_r[128 + k] = ps->delay_r[64 + k];
+                ps->delay_i[128 + k] = ps->delay_i[64 + k];
+                ps->delay_r[64 + k]  = ps->delay_r[k];
+                ps->delay_i[64 + k]  = ps->delay_i[k];
+                ps->delay_r[k]       = src_r;
+                ps->delay_i[k]       = src_i;
 
                 float dec_r = -ps_allpass_a * src_r + d_r;
                 float dec_i = -ps_allpass_a * src_i + d_i;
