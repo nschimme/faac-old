@@ -190,7 +190,7 @@ static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, str
             uint32_t entries = read_u32_be(buf + payload_offset + 4);
             if (entries > 0 && entries < 1000000) {
                 num_stts_entries[current_trak_idx] = entries;
-                stts_tables[current_trak_idx] = (STTSEntry *)calloc(entries, sizeof(STTSEntry));
+                stts_tables[current_trak_idx] = (STTSEntry *)AllocMemory(entries * sizeof(STTSEntry));
                 for (uint32_t e = 0; e < entries && (payload_offset + 8 + e * 8) <= payload_end - 8; e++) {
                     stts_tables[current_trak_idx][e].sample_count = read_u32_be(buf + payload_offset + 8 + e * 8);
                     stts_tables[current_trak_idx][e].sample_delta = read_u32_be(buf + payload_offset + 8 + e * 8 + 4);
@@ -200,7 +200,7 @@ static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, str
             uint32_t entries = read_u32_be(buf + payload_offset + 4);
             if (entries > 0 && entries < 1000000) {
                 num_stss_entries[current_trak_idx] = entries;
-                stss_tables[current_trak_idx] = (uint32_t *)calloc(entries, sizeof(uint32_t));
+                stss_tables[current_trak_idx] = (uint32_t *)AllocMemory(entries * sizeof(uint32_t));
                 for (uint32_t e = 0; e < entries && (payload_offset + 8 + e * 4) <= payload_end - 4; e++) {
                     stss_tables[current_trak_idx][e] = read_u32_be(buf + payload_offset + 8 + e * 4);
                 }
@@ -246,9 +246,11 @@ static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, str
             if (sample_count > 0 && sample_count < 1000000) {
                 num_stsz_samples[current_trak_idx] = sample_count;
                 if (fixed_sample_sizes[current_trak_idx] == 0) {
-                    stsz_tables[current_trak_idx] = (uint32_t *)calloc(sample_count, sizeof(uint32_t));
-                    for (uint32_t s = 0; s < sample_count && (payload_offset + 12 + s * 4) <= payload_end - 4; s++) {
-                        stsz_tables[current_trak_idx][s] = read_u32_be(buf + payload_offset + 12 + s * 4);
+                    stsz_tables[current_trak_idx] = (uint32_t *)AllocMemory(sample_count * sizeof(uint32_t));
+                    if (stsz_tables[current_trak_idx]) {
+                        for (uint32_t s = 0; s < sample_count && (payload_offset + 12 + s * 4) <= payload_end - 4; s++) {
+                            stsz_tables[current_trak_idx][s] = read_u32_be(buf + payload_offset + 12 + s * 4);
+                        }
                     }
                 }
             }
@@ -256,7 +258,7 @@ static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, str
             uint32_t entries = read_u32_be(buf + payload_offset + 4);
             if (entries > 0 && entries < 100000) {
                 num_stsc_entries[current_trak_idx] = entries;
-                stsc_tables[current_trak_idx] = (STSCEntry *)calloc(entries, sizeof(STSCEntry));
+                stsc_tables[current_trak_idx] = (STSCEntry *)AllocMemory(entries * sizeof(STSCEntry));
                 for (uint32_t e = 0; e < entries && (payload_offset + 8 + e * 12) <= payload_end - 12; e++) {
                     stsc_tables[current_trak_idx][e].first_chunk = read_u32_be(buf + payload_offset + 8 + e * 12);
                     stsc_tables[current_trak_idx][e].samples_per_chunk = read_u32_be(buf + payload_offset + 8 + e * 12 + 4);
@@ -267,18 +269,22 @@ static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, str
             uint32_t chunks = read_u32_be(buf + payload_offset + 4);
             if (chunks > 0 && chunks < 1000000) {
                 num_stco_chunks[current_trak_idx] = chunks;
-                stco_tables[current_trak_idx] = (uint64_t *)calloc(chunks, sizeof(uint64_t));
-                for (uint32_t c = 0; c < chunks && (payload_offset + 8 + c * 4) <= payload_end - 4; c++) {
-                    stco_tables[current_trak_idx][c] = read_u32_be(buf + payload_offset + 8 + c * 4);
+                stco_tables[current_trak_idx] = (uint64_t *)AllocMemory(chunks * sizeof(uint64_t));
+                if (stco_tables[current_trak_idx]) {
+                    for (uint32_t c = 0; c < chunks && (payload_offset + 8 + c * 4) <= payload_end - 4; c++) {
+                        stco_tables[current_trak_idx][c] = read_u32_be(buf + payload_offset + 8 + c * 4);
+                    }
                 }
             }
         } else if (memcmp(type, "co64", 4) == 0 && current_trak_idx >= 0 && payload_offset + 8 <= payload_end) {
             uint32_t chunks = read_u32_be(buf + payload_offset + 4);
             if (chunks > 0 && chunks < 1000000) {
                 num_stco_chunks[current_trak_idx] = chunks;
-                stco_tables[current_trak_idx] = (uint64_t *)calloc(chunks, sizeof(uint64_t));
-                for (uint32_t c = 0; c < chunks && (payload_offset + 8 + c * 8) <= payload_end - 8; c++) {
-                    stco_tables[current_trak_idx][c] = read_u64_be(buf + payload_offset + 8 + c * 8);
+                stco_tables[current_trak_idx] = (uint64_t *)AllocMemory(chunks * sizeof(uint64_t));
+                if (stco_tables[current_trak_idx]) {
+                    for (uint32_t c = 0; c < chunks && (payload_offset + 8 + c * 8) <= payload_end - 8; c++) {
+                        stco_tables[current_trak_idx][c] = read_u64_be(buf + payload_offset + 8 + c * 8);
+                    }
                 }
             }
         }
