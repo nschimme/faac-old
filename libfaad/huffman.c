@@ -9,6 +9,7 @@ void setup_sfb_offsets(ICSInfo *ics, uint32_t sample_rate)
 {
     memset(ics->sfb_offsets, 0, sizeof(ics->sfb_offsets));
     int sr_idx = get_sr_index(sample_rate);
+    ics->sample_rate_index = (int8_t)sr_idx;
     if (ics->window_sequence == EIGHT_SHORT_SEQUENCE) {
         ics->num_sfbs = num_sfbs_128[sr_idx];
         const uint16_t *offsets = sfb_offsets_128[sr_idx];
@@ -39,8 +40,8 @@ typedef uint16_t HuffLutEntry;
 static HuffLutEntry huff_lut_11bit[12][2048];
 
 typedef struct {
+    uint32_t data; /* book12 codewords reach 19 bits */
     uint8_t len;
-    uint16_t data;
     uint16_t sym;
 } HuffEscEntry;
 
@@ -115,7 +116,7 @@ void init_huffman_luts(void)
             }
         } else if (huff_esc_count[b12_idx] < HUFF_ESC_TABLE_CAP) {
             huff_esc_table[b12_idx][huff_esc_count[b12_idx]].len = (uint8_t)len;
-            huff_esc_table[b12_idx][huff_esc_count[b12_idx]].data = (uint16_t)book12[i].data;
+            huff_esc_table[b12_idx][huff_esc_count[b12_idx]].data = book12[i].data;
             huff_esc_table[b12_idx][huff_esc_count[b12_idx]].sym = (uint16_t)i;
             huff_esc_count[b12_idx]++;
         }
@@ -252,8 +253,8 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y
     *x = idx / base;
     *y = idx % base;
 
-    if (book == 6) {
-        /* Codebook 6: Signed 2-tuple in [-4, 4] directly encoded via offset +4 */
+    if (book == 5 || book == 6) {
+        /* Signed 2-tuples in [-4, 4], index = 9(x+4) + (y+4); no sign bits. */
         *x -= 4;
         *y -= 4;
     } else if (book == 11) {
@@ -288,7 +289,7 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y
         }
         *x = neg_x ? -abs_x : abs_x;
         *y = neg_y ? -abs_y : abs_y;
-    } else if (book == 5 || (book >= 7 && book <= 10)) {
+    } else if (book >= 7 && book <= 10) {
         /* Unsigned 2-tuple: read sign bit for non-zero values */
         if (*x) if (bits_get_1(bs)) *x = -*x;
         if (*y) if (bits_get_1(bs)) *y = -*y;
@@ -305,7 +306,7 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
 
     int sf = ics->global_gain;
     int is_pos = 0;
-    int pns_energy = sf - 60;
+    int pns_energy = ics->global_gain - 90; /* §4.6.13.3: noise_nrg starts from global_gain, not the running sf */
     bool is_first_pns = true;
 
     for (int g = 0; g < ics->num_window_groups && g < 8; g++) {
@@ -319,24 +320,20 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
             } else if (cb == 13) { /* PNS */
                 for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->max_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
                     if (is_first_pns) {
-                        pns_energy = (int)bits_get(bs, 9) - 256 + (sf - 90);
+                        pns_energy += (int)bits_get(bs, 9) - 256;
                         is_first_pns = false;
                     } else {
                         int dpns = DECODE_HUFF_SF(bs);
                         pns_energy += dpns - 60;
                     }
-                    if (pns_energy < 0) pns_energy = 0;
-                    if (pns_energy > 255) pns_energy = 255;
                     ics->scalefactors[g][sfb] = pns_energy;
                     ics->pns_used[g][sfb] = true;
                 }
             } else if (cb == 14 || cb == 15) { /* Intensity stereo */
                 for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->max_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
                     int dis = DECODE_HUFF_SF(bs);
-                    is_pos += dis - 60;
-                    if (is_pos < 0) is_pos = 0;
-                    if (is_pos > 255) is_pos = 255;
-                    ics->scalefactors[g][sfb] = is_pos;
+                    is_pos += dis - 60; /* signed: negative positions boost the right channel */
+                    ics->scalefactors[g][sfb] = (int16_t)is_pos;
                 }
             } else {
                 for (int sfb = start_sfb; sfb < end_sfb && sfb < ics->max_sfb && sfb < ics->num_sfbs && sfb < 64; sfb++) {
