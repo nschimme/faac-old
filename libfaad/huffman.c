@@ -75,26 +75,22 @@ void init_huffman_luts(void)
         int size = huffbook_sizes[b];
         if (!table) continue;
 
-        for (int cw = 0; cw < 2048; cw++) {
-            huff_lut_11bit[b_idx][cw] = 0;
-
-            for (uint32_t len = 1; len <= 11; len++) {
-                uint32_t prefix = cw >> (11 - len);
-                for (int i = 0; i < size; i++) {
-                    if (table[i].len == len && table[i].data == prefix) {
-                        huff_lut_11bit[b_idx][cw] = (uint16_t)(len | ((uint32_t)i << 4));
-                        goto found_sym;
-                    }
-                }
-            }
-            found_sym:;
-        }
-
-        /* Build compact escape table for codewords >= 12 bits */
+        memset(huff_lut_11bit[b_idx], 0, sizeof(huff_lut_11bit[b_idx]));
         huff_esc_count[b_idx] = 0;
+
         for (int i = 0; i < size; i++) {
-            if (table[i].len >= 12 && huff_esc_count[b_idx] < HUFF_ESC_TABLE_CAP) {
-                huff_esc_table[b_idx][huff_esc_count[b_idx]].len = (uint8_t)table[i].len;
+            uint32_t len = table[i].len;
+            if (len == 0) continue;
+
+            if (len <= 11) {
+                uint32_t start = (uint32_t)table[i].data << (11 - len);
+                uint32_t count = 1U << (11 - len);
+                HuffLutEntry val = (HuffLutEntry)(len | ((uint32_t)i << 4));
+                for (uint32_t k = 0; k < count; k++) {
+                    huff_lut_11bit[b_idx][start + k] = val;
+                }
+            } else if (huff_esc_count[b_idx] < HUFF_ESC_TABLE_CAP) {
+                huff_esc_table[b_idx][huff_esc_count[b_idx]].len = (uint8_t)len;
                 huff_esc_table[b_idx][huff_esc_count[b_idx]].data = table[i].data;
                 huff_esc_table[b_idx][huff_esc_count[b_idx]].sym = (uint16_t)i;
                 huff_esc_count[b_idx]++;
@@ -102,28 +98,24 @@ void init_huffman_luts(void)
         }
     }
 
-    /* Book 12 (Scalefactors) LUT mapped to b_idx = 11 */
+    /* Scalefactors book12 */
     int b12_idx = 11;
-    for (int cw = 0; cw < 2048; cw++) {
-        huff_lut_11bit[b12_idx][cw] = 0;
-
-        for (uint32_t len = 1; len <= 11; len++) {
-            uint32_t prefix = cw >> (11 - len);
-            for (int i = 0; i < 121; i++) {
-                if (book12[i].len == len && book12[i].data == prefix) {
-                    huff_lut_11bit[b12_idx][cw] = (uint16_t)(len | ((uint32_t)i << 4));
-                    goto found_sf;
-                }
-            }
-        }
-        found_sf:;
-    }
-
+    memset(huff_lut_11bit[b12_idx], 0, sizeof(huff_lut_11bit[b12_idx]));
     huff_esc_count[b12_idx] = 0;
     for (int i = 0; i < 121; i++) {
-        if (book12[i].len >= 12 && huff_esc_count[b12_idx] < HUFF_ESC_TABLE_CAP) {
-            huff_esc_table[b12_idx][huff_esc_count[b12_idx]].len = (uint8_t)book12[i].len;
-            huff_esc_table[b12_idx][huff_esc_count[b12_idx]].data = book12[i].data;
+        uint32_t len = book12[i].len;
+        if (len == 0) continue;
+
+        if (len <= 11) {
+            uint32_t start = (uint32_t)book12[i].data << (11 - len);
+            uint32_t count = 1U << (11 - len);
+            HuffLutEntry val = (HuffLutEntry)(len | ((uint32_t)i << 4));
+            for (uint32_t k = 0; k < count; k++) {
+                huff_lut_11bit[b12_idx][start + k] = val;
+            }
+        } else if (huff_esc_count[b12_idx] < HUFF_ESC_TABLE_CAP) {
+            huff_esc_table[b12_idx][huff_esc_count[b12_idx]].len = (uint8_t)len;
+            huff_esc_table[b12_idx][huff_esc_count[b12_idx]].data = (uint16_t)book12[i].data;
             huff_esc_table[b12_idx][huff_esc_count[b12_idx]].sym = (uint16_t)i;
             huff_esc_count[b12_idx]++;
         }
