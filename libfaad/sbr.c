@@ -446,19 +446,16 @@ static void qmf_analysis_320_real(SBRState *sbr, const float *in, float qmf_real
         const float * restrict ovl_ptr = ovl;
 
         for (int n = 0; n < 32; n++) {
-            float sample = 0.0f;
-            const float * restrict w = win_ptr + 2 * n;
-            const float * restrict o = ovl_ptr + n;
-            sample += o[0] * w[0];
-            sample += o[32] * w[64];
-            sample += o[64] * w[128];
-            sample += o[96] * w[192];
-            sample += o[128] * w[256];
-            sample += o[160] * w[320];
-            sample += o[192] * w[384];
-            sample += o[224] * w[448];
-            sample += o[256] * w[512];
-            sample += o[288] * w[576];
+            float sample = ovl_ptr[n]       * win_ptr[2 * n]
+                         + ovl_ptr[32 + n]  * win_ptr[64 + 2 * n]
+                         + ovl_ptr[64 + n]  * win_ptr[128 + 2 * n]
+                         + ovl_ptr[96 + n]  * win_ptr[192 + 2 * n]
+                         + ovl_ptr[128 + n] * win_ptr[256 + 2 * n]
+                         + ovl_ptr[160 + n] * win_ptr[320 + 2 * n]
+                         + ovl_ptr[192 + n] * win_ptr[384 + 2 * n]
+                         + ovl_ptr[224 + n] * win_ptr[448 + 2 * n]
+                         + ovl_ptr[256 + n] * win_ptr[512 + 2 * n]
+                         + ovl_ptr[288 + n] * win_ptr[576 + 2 * n];
             samples[n] = sample;
         }
 
