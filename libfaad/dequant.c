@@ -77,6 +77,8 @@ void dequantize_spectrum(ICSInfo *ics, float *spec)
 void apply_pns(ICSInfo *ics, float *spec, uint32_t *pns_seed)
 {
     int window_offset = 0;
+    uint32_t seed = *pns_seed;
+
     for (int g = 0; g < ics->num_window_groups && g < 8; g++) {
         for (int sfb = 0; sfb < ics->num_sfbs && (sfb + 1) <= ics->num_sfbs && (sfb + 1) < 68; sfb++) {
             if (ics->pns_used[g][sfb]) {
@@ -90,26 +92,22 @@ void apply_pns(ICSInfo *ics, float *spec, uint32_t *pns_seed)
                 int len = end_k - start_k;
 
                 for (int w = 0; w < ics->window_group_length[g]; w++) {
-                    int win_idx = window_offset + w;
+                    int win_offset_k = (window_offset + w) * 128 + start_k;
+                    if (win_offset_k < 0 || win_offset_k + len > FRAME_LEN_LONG) continue;
+                    float * restrict ptr = spec + win_offset_k;
                     float energy = 0.0f;
 
                     for (int k = 0; k < len; k++) {
-                        int idx = win_idx * 128 + start_k + k;
-                        if (idx >= 0 && idx < FRAME_LEN_LONG) {
-                            *pns_seed = (*pns_seed * 1664525U) + 1013904223U;
-                            float noise = ((float)(int32_t)*pns_seed) / 2147483648.0f;
-                            spec[idx] = noise;
-                            energy += noise * noise;
-                        }
+                        seed = (seed * 1664525U) + 1013904223U;
+                        float noise = ((float)(int32_t)seed) * (1.0f / 2147483648.0f);
+                        ptr[k] = noise;
+                        energy += noise * noise;
                     }
 
                     if (energy > 0.0f) {
                         float norm = scale / sqrtf(energy);
                         for (int k = 0; k < len; k++) {
-                            int idx = win_idx * 128 + start_k + k;
-                            if (idx >= 0 && idx < FRAME_LEN_LONG) {
-                                spec[idx] *= norm;
-                            }
+                            ptr[k] *= norm;
                         }
                     }
                 }
@@ -117,4 +115,5 @@ void apply_pns(ICSInfo *ics, float *spec, uint32_t *pns_seed)
         }
         window_offset += ics->window_group_length[g];
     }
+    *pns_seed = seed;
 }

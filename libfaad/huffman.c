@@ -134,7 +134,7 @@ static inline int decode_huffman_symbol(BitReader *bs, int book
     int b_idx = book - 1;
     const HuffLutEntry * restrict lut_row = huff_lut_11bit[b_idx];
 
-    uint32_t cw11 = bits_show(bs, 11);
+    uint32_t cw11 = bits_show_fast(bs, 11);
     HuffLutEntry lut = lut_row[cw11];
     uint32_t len = lut & 0x0F;
     if (len > 0) {
