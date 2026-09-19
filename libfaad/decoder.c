@@ -3,6 +3,7 @@
  */
 
 #include "faad_internal.h"
+#include <stdio.h>
 
 #ifdef FAAD_STATS
 #include <stdio.h>
@@ -314,6 +315,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
 #ifdef FAAD_STATS
             dec->stats.elementCounts[syntax_id]++;
 #endif
+            if (getenv("FAAD_DBG")) fprintf(stderr,"DBG elem %u at bit %u of %u\n", syntax_id, bits_get_consumed(&bs), bs.len*8);
             if (syntax_id == ID_END) {
 #ifdef FAAD_STATS
                 saw_end = true;
@@ -468,8 +470,8 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
             const float * restrict pcm_l = pcm_final;
             const float * restrict pcm_r = pcm_final + frame_samples;
             for (uint32_t i = 0; i < frame_samples; i++) {
-                float val_l = pcm_l[i] * 32768.0f;
-                float val_r = pcm_r[i] * 32768.0f;
+                float val_l = pcm_l[i];
+                float val_r = pcm_r[i];
                 if (val_l > 32767.0f) val_l = 32767.0f;
                 if (val_l < -32768.0f) val_l = -32768.0f;
                 if (val_r > 32767.0f) val_r = 32767.0f;
@@ -480,7 +482,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
         } else if (num_chs == 1) {
             const float * restrict pcm_l = pcm_final;
             for (uint32_t i = 0; i < frame_samples; i++) {
-                float val = pcm_l[i] * 32768.0f;
+                float val = pcm_l[i];
                 if (val > 32767.0f) val = 32767.0f;
                 if (val < -32768.0f) val = -32768.0f;
                 out_int16[i] = (int16_t)val;
@@ -488,7 +490,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
         } else {
             for (uint32_t i = 0; i < frame_samples; i++) {
                 for (uint32_t c = 0; c < num_chs; c++) {
-                    float val = pcm_final[c * frame_samples + i] * 32768.0f;
+                    float val = pcm_final[c * frame_samples + i];
                     if (val > 32767.0f) val = 32767.0f;
                     if (val < -32768.0f) val = -32768.0f;
                     out_int16[i * num_chs + c] = (int16_t)val;
@@ -496,18 +498,20 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
             }
         }
     } else {
+        /* The core reconstructs at 16-bit full scale; float output is unity full scale. */
+        const float norm = 1.0f / 32768.0f;
         float * restrict out_f32 = (float *)out_pcm;
         if (num_chs == 2) {
             const float * restrict pcm_l = pcm_final;
             const float * restrict pcm_r = pcm_final + frame_samples;
             for (uint32_t i = 0; i < frame_samples; i++) {
-                out_f32[2 * i]     = pcm_l[i];
-                out_f32[2 * i + 1] = pcm_r[i];
+                out_f32[2 * i]     = pcm_l[i] * norm;
+                out_f32[2 * i + 1] = pcm_r[i] * norm;
             }
         } else {
             for (uint32_t i = 0; i < frame_samples; i++) {
                 for (uint32_t c = 0; c < num_chs; c++) {
-                    out_f32[i * num_chs + c] = pcm_final[c * frame_samples + i];
+                    out_f32[i * num_chs + c] = pcm_final[c * frame_samples + i] * norm;
                 }
             }
         }

@@ -157,6 +157,7 @@ typedef struct {
     uint8_t sect_start[8][64];
     uint8_t sect_end[8][64];
     uint8_t num_sections[8];
+    int8_t sample_rate_index; /* core rate index, for TNS_MAX_BANDS */
     int16_t sfb_cb[8][64];
     int16_t scalefactors[8][64];
     uint8_t global_gain;
@@ -271,6 +272,7 @@ struct faad_decoder {
 
     float spec[MAX_CHANNELS][FRAME_LEN_LONG];
     float overlap[MAX_CHANNELS][FRAME_LEN_LONG];
+    uint8_t prev_window_shape[MAX_CHANNELS]; /* the left window half follows the previous block's shape */
 
     SBRState sbr[MAX_CHANNELS];
     bool sbr_present;
