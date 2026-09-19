@@ -18,20 +18,20 @@ faam_status faam_update_chapters_stream(const faam_io *io, const faam_chapter *c
 
     io->seek(io->user_data, 0);
     uint32_t cap = 65536;
-    uint8_t *buf = (uint8_t *)malloc(cap);
+    uint8_t *buf = (uint8_t *)AllocMemory(cap);
     if (!buf) return FAAM_ERR_INSUFFICIENT_MEM;
 
     int32_t bytes = io->read(io->user_data, buf, cap);
     if (bytes < 32) {
-        free(buf);
+        FreeMemory(buf);
         return FAAM_ERR_BAD_CONTAINER;
     }
 
     /* Build QuickTime chpl atom payload safely */
     uint32_t max_chpl_cap = 16 + count * 265;
-    uint8_t *chpl_buf = (uint8_t *)malloc(max_chpl_cap);
+    uint8_t *chpl_buf = (uint8_t *)AllocMemory(max_chpl_cap);
     if (!chpl_buf) {
-        free(buf);
+        FreeMemory(buf);
         return FAAM_ERR_INSUFFICIENT_MEM;
     }
 
@@ -127,7 +127,7 @@ faam_status faam_update_chapters_stream(const faam_io *io, const faam_chapter *c
         io->write(io->user_data, chpl_buf, chpl_len);
     }
 
-    free(chpl_buf);
-    free(buf);
+    FreeMemory(chpl_buf);
+    FreeMemory(buf);
     return FAAM_OK;
 }

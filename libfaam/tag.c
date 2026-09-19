@@ -41,12 +41,12 @@ faam_status faam_update_tags_stream(const faam_io *io, const faam_metadata *meta
 
     io->seek(io->user_data, 0);
     uint32_t cap = 65536;
-    uint8_t *buf = (uint8_t *)malloc(cap);
+    uint8_t *buf = (uint8_t *)AllocMemory(cap);
     if (!buf) return FAAM_ERR_INSUFFICIENT_MEM;
 
     int32_t bytes = io->read(io->user_data, buf, cap);
     if (bytes < 32) {
-        free(buf);
+        FreeMemory(buf);
         return FAAM_ERR_BAD_CONTAINER;
     }
 
@@ -167,6 +167,6 @@ faam_status faam_update_tags_stream(const faam_io *io, const faam_metadata *meta
         io->write(io->user_data, meta_wrap, meta_len);
     }
 
-    free(buf);
+    FreeMemory(buf);
     return FAAM_OK;
 }
