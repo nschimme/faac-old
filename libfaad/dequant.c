@@ -62,10 +62,11 @@ void dequantize_spectrum(ICSInfo *ics, float *spec)
                     int len = end_k - start_k;
                     for (int k = 0; k < len; k++) {
                         float quant = ptr[k];
-                        if (quant == 0.0f) continue;
-                        int abs_val = (int)fabsf(quant);
-                        float dequant_val = (abs_val < 128) ? pow_4_3_lut[abs_val] : powf((float)abs_val, 4.0f / 3.0f);
-                        ptr[k] = (quant < 0.0f ? -dequant_val : dequant_val) * scale;
+                        if (quant != 0.0f) {
+                            int abs_val = (int)fabsf(quant);
+                            float dequant_val = (abs_val < 128) ? pow_4_3_lut[abs_val] : powf((float)abs_val, 4.0f / 3.0f);
+                            ptr[k] = (quant < 0.0f ? -dequant_val : dequant_val) * scale;
+                        }
                     }
                 }
             }
