@@ -234,8 +234,8 @@ typedef struct {
     float h22[SBR_PS_BANDS];
     float h12[SBR_PS_BANDS];
     float h21[SBR_PS_BANDS];
-    float delay_r[3][64];
-    float delay_i[3][64];
+    float delay_r[192];
+    float delay_i[192];
 } PSState;
 
 typedef struct {
@@ -253,7 +253,6 @@ typedef struct {
     uint8_t bs_start_freq;
     uint8_t bs_stop_freq;
     uint8_t bs_xover_band;
-    float qmf_delay[2][32][64];
     float qmf_ovl[640];
     float qmf_ana_ovl[320];
     float qmf_syn_ovl[320];
