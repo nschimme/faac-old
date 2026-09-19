@@ -3,6 +3,7 @@
  */
 
 #include "faad_internal.h"
+#include <stdio.h>
 
 static void decode_ics_info(BitReader *bs, ICSInfo *ics)
 {
@@ -170,6 +171,7 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
 #endif
     );
 
+    if (getenv("FAAD_DBG")) { fprintf(stderr,"DBG ics gg=%u ws=%u shape=%u max_sfb=%u groups=%u sects:", ics->global_gain, ics->window_sequence, ics->window_shape, ics->max_sfb, ics->num_window_groups); for (int g=0;g<ics->num_window_groups;g++) for (int i=0;i<ics->num_sections[g];i++) fprintf(stderr," g%d[%u-%u]cb%u", g, ics->sect_start[g][i], ics->sect_end[g][i], ics->sect_cb[g][i]); fprintf(stderr,"\n  sf:"); for (int g=0;g<ics->num_window_groups;g++) for (int sfb=0;sfb<ics->max_sfb;sfb++) fprintf(stderr," %d", ics->scalefactors[g][sfb]); fprintf(stderr,"  bitpos=%u\n", bits_get_consumed(bs)); }
     ics->pulse_data_present = bits_get(bs, 1);
     if (ics->pulse_data_present) {
         uint32_t number_pulse = bits_get(bs, 2);
@@ -200,8 +202,8 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
                     ics->tns_order[w][f] = bits_get(bs, (ics->window_sequence == EIGHT_SHORT_SEQUENCE) ? 3 : 5);
                     if (ics->tns_order[w][f]) {
                         ics->tns_direction[w][f] = bits_get(bs, 1);
-                        bits_skip(bs, 1);
-                        int bits_per_coef = coef_res ? 4 : 3;
+                        uint32_t coef_compress = bits_get(bs, 1);
+                        int bits_per_coef = (coef_res ? 4 : 3) - (int)coef_compress;
                         for (int c = 0; c < ics->tns_order[w][f] && c < 32; c++) {
                             uint32_t val = bits_get(bs, bits_per_coef);
                             int32_t sval = (int32_t)val;
@@ -216,6 +218,7 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
         }
     }
 
+    if (getenv("FAAD_DBG")) fprintf(stderr,"DBG pulse=%u tns=%u bitpos=%u\n", ics->pulse_data_present, ics->tns_data_present, bits_get_consumed(bs));
     ics->gain_control_present = bits_get(bs, 1);
     if (ics->gain_control_present) {
     }
