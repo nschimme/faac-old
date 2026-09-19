@@ -271,8 +271,10 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
     dec->stats.totalFrames++;
 #endif
 
-    /* Zero out spectral buffers across all supported channels to handle channel transitions cleanly */
-    memset(dec->spec, 0, sizeof(dec->spec));
+    /* Zero out spectral buffers only up to active/previous max channels to avoid clearing all 32 KB on every frame */
+    uint32_t active_chs = dec->num_channels ? dec->num_channels : 2;
+    if (active_chs > MAX_CHANNELS) active_chs = MAX_CHANNELS;
+    memset(dec->spec, 0, sizeof(float) * active_chs * FRAME_LEN_LONG);
     dec->sbr_present = false;
 
     BitReader bs;
