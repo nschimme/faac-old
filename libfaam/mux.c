@@ -57,8 +57,6 @@ static inline bool grow_membuf(faam_muxer *m, size_t extra) {
     if (m->mempos + extra > new_cap) return false;
     void *tmp = ReallocMemory(m->membuf, new_cap);
     if (!tmp) {
-        FreeMemory(m->membuf);
-        m->membuf = NULL;
         return false;
     }
     m->membuf = (uint8_t *)tmp;
@@ -77,37 +75,21 @@ static inline void mem_write(faam_muxer *m, const void *data, size_t size) {
 }
 
 static inline void put_u32(faam_muxer *m, uint32_t val) {
-#ifndef WORDS_BIGENDIAN
-    val = BSWAP32(val);
-#endif
-    mem_write(m, &val, 4);
+    uint8_t buf[4];
+    write_u32_be(buf, val);
+    mem_write(m, buf, 4);
 }
 
 static inline void put_u16(faam_muxer *m, uint16_t val) {
-#ifndef WORDS_BIGENDIAN
-    val = BSWAP16(val);
-#endif
-    mem_write(m, &val, 2);
+    uint8_t buf[2];
+    write_u16_be(buf, val);
+    mem_write(m, buf, 2);
 }
 
 static inline void put_u64(faam_muxer *m, uint64_t val) {
-#ifndef WORDS_BIGENDIAN
-#if defined(MP4_HAVE_BSWAP_BUILTINS)
-    val = __builtin_bswap64(val);
-#elif defined(_MSC_VER)
-    val = _byteswap_uint64(val);
-#else
-    val = ((val >> 56) & 0x00000000000000FFULL) |
-          ((val >> 40) & 0x000000000000FF00ULL) |
-          ((val >> 24) & 0x0000000000FF0000ULL) |
-          ((val >> 8)  & 0x00000000FF000000ULL) |
-          ((val << 8)  & 0x000000FF00000000ULL) |
-          ((val << 24) & 0x0000FF0000000000ULL) |
-          ((val << 40) & 0x00FF000000000000ULL) |
-          ((val << 56) & 0xFF00000000000000ULL);
-#endif
-#endif
-    mem_write(m, &val, 8);
+    uint8_t buf[8];
+    write_u64_be(buf, val);
+    mem_write(m, buf, 8);
 }
 
 static inline void put_time(faam_muxer *m, uint64_t val, bool use64) {
@@ -278,15 +260,27 @@ faam_status faam_muxer_init(void *mem_buf, uint32_t mem_bytes, const faam_muxer_
 
         tr->sample_capacity = 1024;
         tr->samples = (faam_sample *)AllocMemory(tr->sample_capacity * sizeof(faam_sample));
-        if (tr->samples) memset(tr->samples, 0, tr->sample_capacity * sizeof(faam_sample));
+        if (!tr->samples) {
+            faam_muxer_close(m);
+            return FAAM_ERR_INSUFFICIENT_MEM;
+        }
+        memset(tr->samples, 0, tr->sample_capacity * sizeof(faam_sample));
 
         tr->stts_capacity = 16;
         tr->stts_entries = (faam_stts_entry *)AllocMemoryFast(tr->stts_capacity * sizeof(faam_stts_entry));
-        if (tr->stts_entries) memset(tr->stts_entries, 0, tr->stts_capacity * sizeof(faam_stts_entry));
+        if (!tr->stts_entries) {
+            faam_muxer_close(m);
+            return FAAM_ERR_INSUFFICIENT_MEM;
+        }
+        memset(tr->stts_entries, 0, tr->stts_capacity * sizeof(faam_stts_entry));
 
         tr->stss_capacity = 16;
         tr->stss_entries = (uint32_t *)AllocMemoryFast(tr->stss_capacity * sizeof(uint32_t));
-        if (tr->stss_entries) memset(tr->stss_entries, 0, tr->stss_capacity * sizeof(uint32_t));
+        if (!tr->stss_entries) {
+            faam_muxer_close(m);
+            return FAAM_ERR_INSUFFICIENT_MEM;
+        }
+        memset(tr->stss_entries, 0, tr->stss_capacity * sizeof(uint32_t));
     }
 
     uint8_t ftyp[36] = {
