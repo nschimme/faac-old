@@ -14,13 +14,6 @@ static float sine_window_2048[1024];
 static float kbd_window_256[128];
 static float sine_window_256[128];
 
-static inline float get_win_2048(const float *win, int i) {
-    return (i < 1024) ? win[i] : win[2047 - i];
-}
-
-static inline float get_win_256(const float *win, int i) {
-    return (i < 128) ? win[i] : win[255 - i];
-}
 
 /* Precomputed twiddle tables for fast IMDCT */
 static float imdct_cos_2048[512];
@@ -146,18 +139,19 @@ static void fast_imdct(const float *in, float *out, int n)
 void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, float * restrict spec, float * restrict out_pcm)
 {
     float imdct_out[FRAME_LEN_LONG * 2];
-    memset(imdct_out, 0, sizeof(imdct_out));
 
     const float * restrict win_long = (ics->window_shape == KBD_WINDOW) ? kbd_window_2048 : sine_window_2048;
     const float * restrict win_short = (ics->window_shape == KBD_WINDOW) ? kbd_window_256 : sine_window_256;
     float * restrict overlap_ch = dec->overlap[ch];
 
     if (ics->window_sequence == EIGHT_SHORT_SEQUENCE) {
+        memset(imdct_out, 0, sizeof(imdct_out));
         float short_out[256];
         for (int w = 0; w < 8; w++) {
             fast_imdct(spec + w * 128, short_out, 256);
-            for (int i = 0; i < 256; i++) {
-                short_out[i] *= get_win_256(win_short, i);
+            for (int i = 0; i < 128; i++) {
+                short_out[i] *= win_short[i];
+                short_out[255 - i] *= win_short[i];
             }
             int offset = 448 + w * 128;
             for (int i = 0; i < 256; i++) {
@@ -167,16 +161,18 @@ void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, float
     } else {
         fast_imdct(spec, imdct_out, 2048);
         if (ics->window_sequence == ONLY_LONG_SEQUENCE) {
-            for (int i = 0; i < 2048; i++) {
-                imdct_out[i] *= get_win_2048(win_long, i);
+            for (int i = 0; i < 1024; i++) {
+                float w = win_long[i];
+                imdct_out[i] *= w;
+                imdct_out[2047 - i] *= w;
             }
         } else if (ics->window_sequence == LONG_START_SEQUENCE) {
             for (int i = 0; i < 1024; i++) {
-                imdct_out[i] *= get_win_2048(win_long, i);
+                imdct_out[i] *= win_long[i];
             }
             /* 1024..1447: flat 1.0 */
             for (int i = 1448; i < 1576; i++) {
-                imdct_out[i] *= get_win_256(win_short, i - 1448 + 128); /* falling half of short window */
+                imdct_out[i] *= win_short[127 - (i - 1448)]; /* falling half of short window */
             }
             for (int i = 1576; i < 2048; i++) {
                 imdct_out[i] = 0.0f;
@@ -186,11 +182,11 @@ void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, float
                 imdct_out[i] = 0.0f;
             }
             for (int i = 448; i < 576; i++) {
-                imdct_out[i] *= get_win_256(win_short, i - 448); /* rising half of short window */
+                imdct_out[i] *= win_short[i - 448]; /* rising half of short window */
             }
             /* 576..1023: flat 1.0 */
             for (int i = 1024; i < 2048; i++) {
-                imdct_out[i] *= get_win_2048(win_long, i);
+                imdct_out[i] *= win_long[2047 - i];
             }
         }
     }
