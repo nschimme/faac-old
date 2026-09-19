@@ -459,21 +459,56 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
         return FAAD_ERR_OUTPUT_TOO_SMALL;
     }
 
+    uint32_t frame_samples = dec->frame_samples;
+    uint32_t num_chs = dec->num_channels;
+
     if (dec->config.output_format == FAAD_OUTPUT_16BIT) {
-        int16_t *out_int16 = (int16_t *)out_pcm;
-        for (uint32_t i = 0; i < dec->frame_samples; i++) {
-            for (uint32_t c = 0; c < dec->num_channels; c++) {
-                float val = pcm_final[c * dec->frame_samples + i] * 32768.0f;
+        int16_t * restrict out_int16 = (int16_t *)out_pcm;
+        if (num_chs == 2) {
+            const float * restrict pcm_l = pcm_final;
+            const float * restrict pcm_r = pcm_final + frame_samples;
+            for (uint32_t i = 0; i < frame_samples; i++) {
+                float val_l = pcm_l[i] * 32768.0f;
+                float val_r = pcm_r[i] * 32768.0f;
+                if (val_l > 32767.0f) val_l = 32767.0f;
+                if (val_l < -32768.0f) val_l = -32768.0f;
+                if (val_r > 32767.0f) val_r = 32767.0f;
+                if (val_r < -32768.0f) val_r = -32768.0f;
+                out_int16[2 * i]     = (int16_t)val_l;
+                out_int16[2 * i + 1] = (int16_t)val_r;
+            }
+        } else if (num_chs == 1) {
+            const float * restrict pcm_l = pcm_final;
+            for (uint32_t i = 0; i < frame_samples; i++) {
+                float val = pcm_l[i] * 32768.0f;
                 if (val > 32767.0f) val = 32767.0f;
                 if (val < -32768.0f) val = -32768.0f;
-                out_int16[i * dec->num_channels + c] = (int16_t)val;
+                out_int16[i] = (int16_t)val;
+            }
+        } else {
+            for (uint32_t i = 0; i < frame_samples; i++) {
+                for (uint32_t c = 0; c < num_chs; c++) {
+                    float val = pcm_final[c * frame_samples + i] * 32768.0f;
+                    if (val > 32767.0f) val = 32767.0f;
+                    if (val < -32768.0f) val = -32768.0f;
+                    out_int16[i * num_chs + c] = (int16_t)val;
+                }
             }
         }
     } else {
-        float *out_f32 = (float *)out_pcm;
-        for (uint32_t i = 0; i < dec->frame_samples; i++) {
-            for (uint32_t c = 0; c < dec->num_channels; c++) {
-                out_f32[i * dec->num_channels + c] = pcm_final[c * dec->frame_samples + i];
+        float * restrict out_f32 = (float *)out_pcm;
+        if (num_chs == 2) {
+            const float * restrict pcm_l = pcm_final;
+            const float * restrict pcm_r = pcm_final + frame_samples;
+            for (uint32_t i = 0; i < frame_samples; i++) {
+                out_f32[2 * i]     = pcm_l[i];
+                out_f32[2 * i + 1] = pcm_r[i];
+            }
+        } else {
+            for (uint32_t i = 0; i < frame_samples; i++) {
+                for (uint32_t c = 0; c < num_chs; c++) {
+                    out_f32[i * num_chs + c] = pcm_final[c * frame_samples + i];
+                }
             }
         }
     }
