@@ -38,9 +38,10 @@ void apply_ms_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spe
                 int len = end_k - start_k;
 
                 for (int w = 0; w < ics->window_group_length[g]; w++) {
-                    int win_idx = window_offset + w;
-                    float * restrict l_ptr = spec_l + win_idx * 128 + start_k;
-                    float * restrict r_ptr = spec_r + win_idx * 128 + start_k;
+                    int win_offset_k = (window_offset + w) * 128 + start_k;
+                    if (win_offset_k < 0 || win_offset_k + len > FRAME_LEN_LONG) continue;
+                    float * restrict l_ptr = spec_l + win_offset_k;
+                    float * restrict r_ptr = spec_r + win_offset_k;
 
                     for (int k = 0; k < len; k++) {
                         float m = l_ptr[k];
