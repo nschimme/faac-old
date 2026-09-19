@@ -50,8 +50,12 @@ faam_status faam_update_tags_stream(const faam_io *io, const faam_metadata *meta
         return FAAM_ERR_BAD_CONTAINER;
     }
 
-    /* Build new ilst atom payload */
-    uint8_t ilst_buf[16384];
+    /* Build new ilst atom payload dynamically on heap to save stack space */
+    uint8_t *ilst_buf = (uint8_t *)AllocMemory(16384);
+    if (!ilst_buf) {
+        FreeMemory(buf);
+        return FAAM_ERR_INSUFFICIENT_MEM;
+    }
     uint32_t ilst_len = 8; /* reserve 8 bytes for ilst size and type */
 
     if (meta->title[0]) ilst_len += append_data_box(ilst_buf + ilst_len, "\251nam", ITUNES_DATA_TEXT, meta->title, strlen(meta->title));
@@ -156,17 +160,21 @@ faam_status faam_update_tags_stream(const faam_io *io, const faam_metadata *meta
         io->seek(io->user_data, meta_offset + 12);
         io->write(io->user_data, ilst_buf, ilst_len);
     } else if (udta_offset > 0) {
-        uint8_t meta_wrap[16384 + 12];
-        uint32_t meta_len = 12 + ilst_len;
-        write_u32(meta_wrap, meta_len);
-        memcpy(meta_wrap + 4, "meta", 4);
-        write_u32(meta_wrap + 8, 0); /* flags */
-        memcpy(meta_wrap + 12, ilst_buf, ilst_len);
+        uint8_t *meta_wrap = (uint8_t *)AllocMemory(16384 + 12);
+        if (meta_wrap) {
+            uint32_t meta_len = 12 + ilst_len;
+            write_u32(meta_wrap, meta_len);
+            memcpy(meta_wrap + 4, "meta", 4);
+            write_u32(meta_wrap + 8, 0); /* flags */
+            memcpy(meta_wrap + 12, ilst_buf, ilst_len);
 
-        io->seek(io->user_data, udta_offset + 8);
-        io->write(io->user_data, meta_wrap, meta_len);
+            io->seek(io->user_data, udta_offset + 8);
+            io->write(io->user_data, meta_wrap, meta_len);
+            FreeMemory(meta_wrap);
+        }
     }
 
+    FreeMemory(ilst_buf);
     FreeMemory(buf);
     return FAAM_OK;
 }
