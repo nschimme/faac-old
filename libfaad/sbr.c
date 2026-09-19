@@ -493,8 +493,11 @@ static void qmf_synthesis_640_real(SBRState *sbr, float qmf_real[32][64], float 
         for (int n = 0; n < 64; n++) {
             float sum = 0.0f;
             const float * restrict cos_row = qmf_syn_cos_lut[n];
-            for (int k = 0; k < 64; k++) {
-                sum += re_ptr[k] * cos_row[k];
+            for (int k = 0; k < 64; k += 4) {
+                sum += re_ptr[k] * cos_row[k]
+                     + re_ptr[k + 1] * cos_row[k + 1]
+                     + re_ptr[k + 2] * cos_row[k + 2]
+                     + re_ptr[k + 3] * cos_row[k + 3];
             }
             ovl_dst[n] = sum * 0.03125f;
         }
