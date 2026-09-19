@@ -88,6 +88,7 @@ typedef struct {
 void bits_init(BitReader *bs, const uint8_t *buffer, uint32_t len);
 
 uint32_t bits_get(BitReader *bs, uint32_t nbits);
+uint32_t bits_show(BitReader *bs, uint32_t nbits);
 
 static inline uint32_t bits_get_1(BitReader *bs)
 {
@@ -116,7 +117,16 @@ static inline uint32_t bits_get_fast(BitReader *bs, uint32_t nbits)
     return bits_get(bs, nbits);
 }
 
-uint32_t bits_show(BitReader *bs, uint32_t nbits);
+static inline uint32_t bits_show_fast(BitReader *bs, uint32_t nbits)
+{
+    if (nbits <= 24 && bs->byte_pos + 4 <= bs->len) {
+        const uint8_t *ptr = bs->buffer + bs->byte_pos;
+        uint32_t word = ((uint32_t)ptr[0] << 24) | ((uint32_t)ptr[1] << 16) |
+                        ((uint32_t)ptr[2] << 8)  | (uint32_t)ptr[3];
+        return (word >> (32 - bs->bit_pos - nbits)) & ((1U << nbits) - 1U);
+    }
+    return bits_show(bs, nbits);
+}
 void bits_skip(BitReader *bs, uint32_t nbits);
 void bits_byte_align(BitReader *bs);
 uint32_t bits_get_consumed(BitReader *bs);
