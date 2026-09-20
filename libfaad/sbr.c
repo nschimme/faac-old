@@ -614,8 +614,6 @@ static void sbr_read_noise(BitReader *bs, const SBRElement *el, SBRChannel *ch, 
     }
 }
 
-static void ps_decode_payload(struct faad_decoder *dec, BitReader *bs);
-
 faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32_t ch0, uint32_t syntax_id, bool crc)
 {
 #ifndef FAAD_DISABLE_SBR
@@ -732,7 +730,8 @@ faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32
             uint32_t id = bits_get(bs, 2);
 #ifndef FAAD_DISABLE_PS
             if (id == PS_EXTENSION_DATA) {
-                if (bits_get(bs, 1)) ps_decode_payload(dec, bs);
+                uint32_t here = bits_get_consumed(bs);
+                ps_read_data(dec, bs, end > here ? end - here : 0);
                 break;
             }
 #endif
@@ -1064,14 +1063,15 @@ static void sbr_analyse(SBRChannel *ch, SBRScratch *sc, const float *pcm)
 /* Assemble X for the 32 output slots from the low band and the adjusted HF,
  * honouring the previous frame's band split where its last envelope reaches
  * into this frame (§4.6.18.7.6 / 4.6.18.8.1). */
-static void sbr_assemble(const SBRElement *el, SBRChannel *ch, SBRScratch *sc, bool have_hf)
+static void sbr_assemble(const SBRElement *el, SBRChannel *ch, SBRScratch *sc, bool have_hf, int nslots)
 {
     int i_temp = have_hf ? (int)ch->t_E_end_prev - SBR_SLOTS : 0;
     if (i_temp < 0) i_temp = 0;
-    for (int i = 0; i < SBR_SLOTS; i++) {
+    for (int i = 0; i < nslots; i++) {
         int n = i + SBR_T_HFADJ;
         int kx = have_hf ? ((i < i_temp) ? ch->kx_prev : el->kx) : 32;
         int kend = have_hf ? ((i < i_temp) ? ch->kx_prev + ch->M_prev : el->kx + el->M) : 32;
+        if (i >= SBR_SLOTS) kend = kx; /* look-ahead slots: low band only */
         for (int k = 0; k < kx && k < 32; k++) {
             sc->x[i][k][0] = sc->x_low[k][n][0];
             sc->x[i][k][1] = sc->x_low[k][n][1];
@@ -1085,7 +1085,7 @@ static void sbr_assemble(const SBRElement *el, SBRChannel *ch, SBRScratch *sc, b
 }
 
 static void sbr_process_channel(const SBRElement *el, SBRChannel *ch, SBRScratch *sc, const float *pcm,
-                                float E[SBR_MAX_ENV][SBR_MAX_BANDS], float Q[2][SBR_MAX_NQ], bool have_hf)
+                                float E[SBR_MAX_ENV][SBR_MAX_BANDS], float Q[2][SBR_MAX_NQ], bool have_hf, int nslots)
 {
     sbr_analyse(ch, sc, pcm);
 
@@ -1101,7 +1101,7 @@ static void sbr_process_channel(const SBRElement *el, SBRChannel *ch, SBRScratch
         sbr_hf_adjust(el, ch, sc, E, Q);
     }
 
-    sbr_assemble(el, ch, sc, have_hf);
+    sbr_assemble(el, ch, sc, have_hf, nslots);
 
     for (int k = 0; k < SBR_MAX_BANDS; k++)
         memcpy(ch->y_tail[k], &sc->y[k][SBR_SLOTS], sizeof(ch->y_tail[k]));
@@ -1120,83 +1120,6 @@ static void sbr_process_channel(const SBRElement *el, SBRChannel *ch, SBRScratch
         ch->M_prev = el->M;
     }
 }
-
-/* ------------------------------------------------------------------------ */
-/* Parametric stereo (approximate mixer, retained)                            */
-/* ------------------------------------------------------------------------ */
-
-#ifndef FAAD_DISABLE_PS
-static const float ps_iid_scale_lut[15] = {
-    0.05623413f, 0.12589254f, 0.19952623f, 0.31622777f, 0.44668359f, 0.63095734f, 0.79432823f,
-    1.0f, 1.25892541f, 1.58489319f, 2.23872114f, 3.16227766f, 5.01187234f, 7.94328235f, 17.7827941f
-};
-static const float ps_icc_scale_lut[8] = { 1.0f, 0.937f, 0.84118f, 0.60092f, 0.36764f, 0.0f, -0.589f, -1.0f };
-
-static void ps_decode_payload(struct faad_decoder *dec, BitReader *bs)
-{
-    PSState *ps = &dec->ps;
-    dec->ps_present = true;
-#ifdef FAAD_STATS
-    dec->stats.psActiveFrames++;
-#endif
-    ps->enable_iid = bits_get(bs, 1);
-    if (ps->enable_iid) {
-        bool iid_mode = bits_get(bs, 1);
-        int bands = iid_mode ? 20 : 10;
-#ifdef FAAD_STATS
-        dec->stats.psIidBandsSum += bands;
-#endif
-        for (int b = 0; b < bands; b++) ps->iid_idx[b] = (int8_t)((int)bits_get(bs, 4) - 7);
-    }
-    ps->enable_icc = bits_get(bs, 1);
-    if (ps->enable_icc) {
-        bool icc_mode = bits_get(bs, 1);
-        int bands = icc_mode ? 20 : 10;
-#ifdef FAAD_STATS
-        dec->stats.psIccBandsSum += bands;
-#endif
-        for (int b = 0; b < bands; b++) ps->icc_idx[b] = (int8_t)bits_get(bs, 3);
-    }
-    for (int b = 0; b < SBR_PS_BANDS; b++) {
-        int iid = ps->iid_idx[b] + 7;
-        if (iid < 0) iid = 0;
-        if (iid > 14) iid = 14;
-        int icc = ps->icc_idx[b];
-        if (icc < 0) icc = 0;
-        if (icc > 7) icc = 7;
-        float c = ps_iid_scale_lut[iid];
-        float rho = ps_icc_scale_lut[icc];
-        float cos_alpha = sqrtf(2.0f / (1.0f + c * c));
-        float sin_alpha = c * cos_alpha;
-        float gamma = 0.5f * acosf(rho);
-        ps->h11[b] = cos_alpha * cosf(gamma);
-        ps->h22[b] = sin_alpha * cosf(gamma);
-        ps->h12[b] = -sin_alpha * sinf(gamma);
-        ps->h21[b] = cos_alpha * sinf(gamma);
-    }
-}
-
-/* Mix the mono X into left/right through the all-pass decorrelator. */
-static void ps_mix(struct faad_decoder *dec, SBRScratch *sc, float left[64][2], float right[64][2], int slot)
-{
-    static const float ps_allpass_a = 0.43f;
-    PSState *ps = &dec->ps;
-    for (int k = 0; k < 64; k++) {
-        int band = (k * SBR_PS_BANDS) / 64;
-        float src_r = sc->x[slot][k][0], src_i = sc->x[slot][k][1];
-        float d_r = ps->delay_r[128 + k], d_i = ps->delay_i[128 + k];
-        ps->delay_r[128 + k] = ps->delay_r[64 + k]; ps->delay_i[128 + k] = ps->delay_i[64 + k];
-        ps->delay_r[64 + k] = ps->delay_r[k];       ps->delay_i[64 + k] = ps->delay_i[k];
-        ps->delay_r[k] = src_r;                     ps->delay_i[k] = src_i;
-        float dec_r = -ps_allpass_a * src_r + d_r;
-        float dec_i = -ps_allpass_a * src_i + d_i;
-        left[k][0]  = src_r * ps->h11[band] + dec_r * ps->h12[band];
-        left[k][1]  = src_i * ps->h11[band] + dec_i * ps->h12[band];
-        right[k][0] = src_r * ps->h21[band] + dec_r * ps->h22[band];
-        right[k][1] = src_i * ps->h21[band] + dec_i * ps->h22[band];
-    }
-}
-#endif
 
 /* ------------------------------------------------------------------------ */
 /* Entry point                                                               */
@@ -1219,17 +1142,22 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
 
 #ifndef FAAD_DISABLE_PS
         if (dec->ps_present && num_ch == 1) {
-            sbr_process_channel(el, &dec->sbr[0], sc, pcm_in, E0, Q0, have_hf);
+            sbr_process_channel(el, &dec->sbr[0], sc, pcm_in, E0, Q0, have_hf, PS_IN_SLOTS);
             dec->num_channels = 2;
-            float left[64][2], right[64][2];
+            float (*L)[64][2] = sc->ps_out[0], (*R)[64][2] = sc->ps_out[1];
+            if (dec->ps.start) {
+                ps_apply(dec, sc->x, L, R, have_hf ? el->kx + el->M : 32);
+            } else {
+                memcpy(L, sc->x, sizeof(sc->ps_out[0]));
+                memcpy(R, sc->x, sizeof(sc->ps_out[0]));
+            }
             for (int t = 0; t < SBR_SLOTS; t++) {
-                ps_mix(dec, sc, left, right, t);
 #ifdef FAAD_D_SBR
-                qmf_synthesis_slot_ds(&dec->sbr[0], left, pcm_out + t * 32);
-                qmf_synthesis_slot_ds(&dec->sbr[1], right, pcm_out + 1024 + t * 32);
+                qmf_synthesis_slot_ds(&dec->sbr[0], L[t], pcm_out + t * 32);
+                qmf_synthesis_slot_ds(&dec->sbr[1], R[t], pcm_out + 1024 + t * 32);
 #else
-                qmf_synthesis_slot(&dec->sbr[0], left, pcm_out + t * 64);
-                qmf_synthesis_slot(&dec->sbr[1], right, pcm_out + 2048 + t * 64);
+                qmf_synthesis_slot(&dec->sbr[0], L[t], pcm_out + t * 64);
+                qmf_synthesis_slot(&dec->sbr[1], R[t], pcm_out + 2048 + t * 64);
 #endif
             }
             return;
@@ -1237,7 +1165,7 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
 #endif
         for (int c = 0; c < nch; c++) {
             SBRChannel *sch = &dec->sbr[ch + c];
-            sbr_process_channel(el, sch, sc, pcm_in + (ch + c) * FRAME_LEN_LONG, c ? E1 : E0, c ? Q1 : Q0, have_hf);
+            sbr_process_channel(el, sch, sc, pcm_in + (ch + c) * FRAME_LEN_LONG, c ? E1 : E0, c ? Q1 : Q0, have_hf, SBR_SLOTS);
 #ifdef FAAD_D_SBR
             for (int t = 0; t < SBR_SLOTS; t++)
                 qmf_synthesis_slot_ds(sch, sc->x[t], pcm_out + (ch + c) * 1024 + t * 32);
