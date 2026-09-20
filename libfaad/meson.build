@@ -9,6 +9,7 @@ faad_src = [
     'tns.c',
     'imdct.c',
     'sbr.c',
+    'ps.c',
     'sfb_tables.c',
 ]
 
