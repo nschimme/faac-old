@@ -3,7 +3,6 @@
  */
 
 #include "faad_internal.h"
-#include <stdio.h>
 
 #ifdef FAAD_STATS
 #include <stdio.h>
@@ -246,6 +245,7 @@ FAADAPI faad_status faad_decoder_flush(faad_decoder *dec)
 
     memset(dec->overlap, 0, sizeof(dec->overlap));
     memset(dec->sbr, 0, sizeof(dec->sbr));
+    memset(dec->sbr_el, 0, sizeof(dec->sbr_el));
     memset(&dec->ps, 0, sizeof(dec->ps));
     dec->sbr_present = false;
     dec->ps_present = false;
@@ -315,7 +315,6 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
 #ifdef FAAD_STATS
             dec->stats.elementCounts[syntax_id]++;
 #endif
-            if (getenv("FAAD_DBG")) fprintf(stderr,"DBG elem %u at bit %u of %u\n", syntax_id, bits_get_consumed(&bs), bs.len*8);
             if (syntax_id == ID_END) {
 #ifdef FAAD_STATS
                 saw_end = true;
@@ -372,7 +371,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                         } else {
                             ch0 = (ch_idx >= 1) ? (ch_idx - 1) : 0;
                         }
-                        sbr_decode_extension(dec, &bs, ch0, last_elem_type);
+                        sbr_decode_extension(dec, &bs, ch0, last_elem_type, ext_type == SBR_EXTENSION_DATA_CRC);
                         uint32_t consumed = bits_get_consumed(&bs);
 #ifdef FAAD_STATS
                         dec->stats.fillElementCount++;
@@ -528,7 +527,11 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
 #endif
 
     if (frame_info) {
-        frame_info->sample_rate = dec->sample_rate;
+#ifdef FAAD_D_SBR
+        frame_info->sample_rate = dec->core_sample_rate;
+#else
+        frame_info->sample_rate = sbr_active ? 2 * dec->core_sample_rate : dec->core_sample_rate;
+#endif
         frame_info->samples_per_ch = dec->frame_samples;
         frame_info->channels = (uint8_t)dec->num_channels;
         frame_info->sbr_active = sbr_active;

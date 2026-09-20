@@ -52,7 +52,7 @@ common_src = [
 # Shared ISO tables/FFT engine static helper for libfaad and internal targets.
 libfaac_common_static = static_library(
     'faac_common',
-    ['fft.c', 'fft.h', 'sbr_tables.c', 'sbr_tables.h', 'huffdata.c', 'huffdata.h'],
+    ['fft.c', 'fft.h', 'sbr_tables.c', 'sbr_dec_tables.c', 'sbr_tables.h', 'huffdata.c', 'huffdata.h'],
     include_directories: ['..', '../include'],
     c_args: c_args,
     gnu_symbol_visibility: 'hidden',

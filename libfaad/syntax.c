@@ -3,7 +3,6 @@
  */
 
 #include "faad_internal.h"
-#include <stdio.h>
 
 static void decode_ics_info(BitReader *bs, ICSInfo *ics)
 {
@@ -171,7 +170,6 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
 #endif
     );
 
-    if (getenv("FAAD_DBG")) { fprintf(stderr,"DBG ics gg=%u ws=%u shape=%u max_sfb=%u groups=%u sects:", ics->global_gain, ics->window_sequence, ics->window_shape, ics->max_sfb, ics->num_window_groups); for (int g=0;g<ics->num_window_groups;g++) for (int i=0;i<ics->num_sections[g];i++) fprintf(stderr," g%d[%u-%u]cb%u", g, ics->sect_start[g][i], ics->sect_end[g][i], ics->sect_cb[g][i]); fprintf(stderr,"\n  sf:"); for (int g=0;g<ics->num_window_groups;g++) for (int sfb=0;sfb<ics->max_sfb;sfb++) fprintf(stderr," %d", ics->scalefactors[g][sfb]); fprintf(stderr,"  bitpos=%u\n", bits_get_consumed(bs)); }
     ics->pulse_data_present = bits_get(bs, 1);
     if (ics->pulse_data_present) {
         uint32_t number_pulse = bits_get(bs, 2);
@@ -218,7 +216,6 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
         }
     }
 
-    if (getenv("FAAD_DBG")) fprintf(stderr,"DBG pulse=%u tns=%u bitpos=%u\n", ics->pulse_data_present, ics->tns_data_present, bits_get_consumed(bs));
     ics->gain_control_present = bits_get(bs, 1);
     if (ics->gain_control_present) {
     }

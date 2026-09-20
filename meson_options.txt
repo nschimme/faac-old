@@ -13,13 +13,8 @@ option('decoder-ps',
     type: 'boolean',
     value: true)
 
-option('decoder-lp-sbr',
-    description: 'Enable Low Power SBR (LP-SBR) real DCT mode in libfaad (default: true)',
-    type: 'boolean',
-    value: true)
-
 option('decoder-downsampled-sbr',
-    description: 'Enable Downsampled SBR (D-SBR) half-rate synthesis mode in libfaad (default: false)',
+    description: 'Downsampled SBR: synthesise HE-AAC at the core rate (32-band bank, half the output samples)',
     type: 'boolean',
     value: false)
 
