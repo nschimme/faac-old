@@ -244,9 +244,13 @@ FAADAPI faad_status faad_decoder_flush(faad_decoder *dec)
     if (!dec) return FAAD_ERR_INVALID_ARGUMENT;
 
     memset(dec->overlap, 0, sizeof(dec->overlap));
+#ifndef FAAD_DISABLE_SBR
     memset(dec->sbr, 0, sizeof(dec->sbr));
     memset(dec->sbr_el, 0, sizeof(dec->sbr_el));
+#endif
+#ifndef FAAD_DISABLE_PS
     memset(&dec->ps, 0, sizeof(dec->ps));
+#endif
     dec->sbr_present = false;
     dec->ps_present = false;
 
@@ -310,7 +314,9 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
     bool saw_end = false;
 #endif
     if (decode_success) {
-        while (bits_get_consumed(&bs) + 3 <= bs.len * 8 && ch_idx < MAX_CHANNELS) {
+        /* Fill elements (SBR) follow the last channel element, so the loop
+         * runs to END even once every channel slot is taken. */
+        while (bits_get_consumed(&bs) + 3 <= bs.len * 8) {
             uint32_t syntax_id = bits_get(&bs, 3);
 #ifdef FAAD_STATS
             dec->stats.elementCounts[syntax_id]++;
@@ -321,6 +327,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
 #endif
                 break;
             } else if (syntax_id == ID_SCE || syntax_id == ID_LFE) {
+                if (ch_idx >= MAX_CHANNELS) break;
                 last_elem_type = syntax_id;
                 decode_sce(&bs, dec, &ics_list[ch_idx], ch_idx);
                 dequantize_spectrum(&ics_list[ch_idx], dec->spec[ch_idx]);

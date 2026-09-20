@@ -40,7 +40,14 @@
 #include "faad.h"
 #include "huffdata.h"
 
+/* Channel capacity: the build's -Dmax-channels (config.h) when present. Every
+ * per-channel buffer, including the SBR and PS state, scales with it. */
+#ifndef MAX_CHANNELS
 #define MAX_CHANNELS 8
+#endif
+#if (MAX_CHANNELS < 2 || defined(FAAD_DISABLE_SBR)) && !defined(FAAD_DISABLE_PS)
+#define FAAD_DISABLE_PS /* parametric stereo needs SBR's QMF domain and two output channels */
+#endif
 #define FRAME_LEN_LONG 1024
 #define FRAME_LEN_SHORT 128
 #define NUM_WINDOWS 8
@@ -346,12 +353,16 @@ struct faad_decoder {
     float overlap[MAX_CHANNELS][FRAME_LEN_LONG];
     uint8_t prev_window_shape[MAX_CHANNELS]; /* the left window half follows the previous block's shape */
 
+#ifndef FAAD_DISABLE_SBR
     SBRChannel sbr[MAX_CHANNELS];
     SBRElement sbr_el[MAX_CHANNELS];
     SBRScratch sbr_scratch;
+#endif
     bool sbr_present;
 
+#ifndef FAAD_DISABLE_PS
     PSState ps;
+#endif
     bool ps_present;
 
     uint32_t pns_seed;
