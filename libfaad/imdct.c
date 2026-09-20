@@ -26,17 +26,30 @@ static FFT_Tables fft_tbl;
 
 static bool tables_init = false;
 
-/* Kaiser-Bessel-derived window, first half (ISO/IEC 14496-3 §4.6.11.3.2). */
+/* Zeroth-order modified Bessel function, power series. */
+static double bessel_i0(double x)
+{
+    double sum = 1.0, term = 1.0, q = x * x / 4.0;
+    for (int k = 1; k < 60; k++) {
+        term *= q / ((double)k * k);
+        sum += term;
+        if (term < sum * 1e-17) break;
+    }
+    return sum;
+}
+
+/* Kaiser-Bessel-derived window, first half (ISO/IEC 14496-3 §4.6.11.3.2):
+ * the cumulative Kaiser kernel, normalised, under a square root. */
 static void kbd_window(float *w, int n, double alpha)
 {
     double sum = 0.0, run = 0.0;
     for (int i = 0; i <= n; i++) {
         double v = (2.0 * i / n) - 1.0;
-        sum += cosh(M_PI * alpha * sqrt(1.0 - v * v));
+        sum += bessel_i0(M_PI * alpha * sqrt(1.0 - v * v));
     }
     for (int i = 0; i < n; i++) {
         double v = (2.0 * i / n) - 1.0;
-        run += cosh(M_PI * alpha * sqrt(1.0 - v * v));
+        run += bessel_i0(M_PI * alpha * sqrt(1.0 - v * v));
         w[i] = (float)sqrt(run / sum);
     }
 }

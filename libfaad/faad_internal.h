@@ -183,7 +183,7 @@ typedef struct {
 
 typedef struct {
     bool common_window;
-    bool ms_mask_present;
+    uint8_t ms_mask_present; /* 0 none, 1 per band, 2 all bands */
     uint8_t ms_used[8][64];
     ICSInfo ics[2];
 } CPEInfo;
@@ -239,25 +239,75 @@ typedef struct {
     float delay_i[192];
 } PSState;
 
+/* ---- SBR (ISO/IEC 14496-3 §4.6.18) ---- */
+#define SBR_SLOTS        32  /* QMF time slots per frame: numTimeSlots (16) * RATE (2) */
+#define SBR_T_HFGEN      8   /* slots of the previous frame kept for the covariance and X_low */
+#define SBR_T_HFADJ      2   /* offset of the envelope-adjusted region within the buffer */
+#define SBR_BUF_SLOTS    (SBR_SLOTS + SBR_T_HFGEN)
+#define SBR_MAX_BANDS    64
+#define SBR_MAX_ENV      5
+#define SBR_MAX_NQ       5
+#define SBR_MAX_PATCHES  6
+#define SBR_MAX_LIM      (SBR_MAX_BANDS + SBR_MAX_PATCHES + 2)
+
 typedef struct {
-    uint8_t bs_frame_class;
-    uint8_t bs_num_env;
-    uint8_t bs_freq_res[8];
-    uint8_t bs_pointer;
-    uint8_t t_E[9];
-    uint8_t bs_num_noise;
-    uint8_t bs_add_harmonic[64];
-    int8_t  E_orig[8][64];
-    int8_t  Q_orig[8][64];
+    /* frame grid */
+    uint8_t frame_class, L_E, L_Q, bs_pointer;
+    int8_t  l_A;
+    uint8_t t_E[SBR_MAX_ENV + 1], t_Q[3], freq_res[SBR_MAX_ENV];
+    uint8_t df_env[SBR_MAX_ENV], df_noise[2];
+    uint8_t invf_mode[SBR_MAX_NQ], invf_mode_prev[SBR_MAX_NQ];
+    bool    add_harmonic_flag;
+    uint8_t add_harmonic[SBR_MAX_BANDS];
+    int16_t E[SBR_MAX_ENV][SBR_MAX_BANDS];
+    int16_t Q[2][SBR_MAX_NQ];
+    bool    amp_res; /* this frame's resolution (a single FIXFIX envelope forces 1.5 dB) */
+
+    /* carried across frames */
+    int16_t E_prev[SBR_MAX_BANDS];
+    int16_t Q_prev[SBR_MAX_NQ];
+    uint8_t freq_res_prev;
+    float   bw_array[SBR_MAX_NQ];
+    float   g_hist[4][SBR_MAX_BANDS];
+    float   q_hist[4][SBR_MAX_BANDS];
+    uint8_t s_index_prev[SBR_MAX_BANDS];
+    int8_t  l_A_prev;
+    uint8_t L_E_prev;
+    uint8_t t_E_end_prev; /* RATE * t_E(L_E) of the previous frame */
+    uint8_t kx_prev, M_prev;
+    uint16_t index_noise;
+    uint8_t  index_sine;
+    bool    have_frame;   /* a payload has been decoded since the last reset */
+    bool    primed;       /* smoothing history holds real gains */
+    float   x_low_tail[32][SBR_T_HFGEN][2];
+    float   y_tail[SBR_MAX_BANDS][SBR_T_HFGEN][2];
+    float   qmf_x[320];  /* analysis delay line, newest sample first */
+    float   qmf_v[1280]; /* synthesis delay line */
+} SBRChannel;
+
+/* Header and frequency tables, shared by the channels of one element and
+ * stored at the element's first channel. */
+typedef struct {
     bool header_present;
-    bool bs_amp_res;
-    uint8_t bs_start_freq;
-    uint8_t bs_stop_freq;
-    uint8_t bs_xover_band;
-    float qmf_ovl[640];
-    float qmf_ana_ovl[320];
-    float qmf_syn_ovl[320];
-} SBRState;
+    bool coupling;
+    uint8_t nch;
+    bool amp_res;
+    uint8_t start_freq, stop_freq, xover_band, freq_scale, alter_scale, noise_bands;
+    uint8_t limiter_bands, limiter_gains, interpol_freq, smoothing_mode;
+    uint8_t k0, k2, kx, M;
+    uint8_t n_master, n_high, n_low, n_q, n_lim, num_patches;
+    uint8_t f_master[SBR_MAX_BANDS + 1], f_high[SBR_MAX_BANDS + 1], f_low[SBR_MAX_BANDS + 1];
+    uint8_t f_noise[SBR_MAX_NQ + 1], f_lim[SBR_MAX_LIM + 1];
+    uint8_t patch_start[SBR_MAX_PATCHES], patch_num[SBR_MAX_PATCHES];
+} SBRElement;
+
+/* Per-frame working buffers, one channel at a time. */
+typedef struct {
+    float x_low[32][SBR_BUF_SLOTS][2];
+    float x_high[SBR_MAX_BANDS][SBR_BUF_SLOTS][2];
+    float y[SBR_MAX_BANDS][SBR_BUF_SLOTS][2];
+    float x[SBR_SLOTS][64][2]; /* assembled output per slot */
+} SBRScratch;
 
 struct faad_decoder {
     faad_config config;
@@ -274,7 +324,9 @@ struct faad_decoder {
     float overlap[MAX_CHANNELS][FRAME_LEN_LONG];
     uint8_t prev_window_shape[MAX_CHANNELS]; /* the left window half follows the previous block's shape */
 
-    SBRState sbr[MAX_CHANNELS];
+    SBRChannel sbr[MAX_CHANNELS];
+    SBRElement sbr_el[MAX_CHANNELS];
+    SBRScratch sbr_scratch;
     bool sbr_present;
 
     PSState ps;
@@ -321,7 +373,7 @@ faad_status decode_sce(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, ui
 
 void faad_init_global_tables(void);
 void sbr_init_tables(void);
-faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32_t ch, uint32_t syntax_id);
+faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32_t ch0, uint32_t syntax_id, bool crc);
 void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *pcm_out);
 
 #endif /* FAAD_INTERNAL_H */
