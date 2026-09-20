@@ -774,11 +774,11 @@ static void sbr_chirp(const SBRElement *el, SBRChannel *ch)
 /* Second-order covariance LPC of one low band over the whole buffer. */
 static void sbr_lpc(float x[SBR_BUF_SLOTS][2], float a0[2], float a1[2])
 {
-    double p01r = 0, p01i = 0, p02r = 0, p02i = 0, p11 = 0, p12r = 0, p12i = 0, p22 = 0;
+    float p01r = 0, p01i = 0, p02r = 0, p02i = 0, p11 = 0, p12r = 0, p12i = 0, p22 = 0;
     for (int n = SBR_T_HFADJ; n < SBR_BUF_SLOTS; n++) {
-        double x0r = x[n][0], x0i = x[n][1];
-        double x1r = x[n - 1][0], x1i = x[n - 1][1];
-        double x2r = x[n - 2][0], x2i = x[n - 2][1];
+        float x0r = x[n][0], x0i = x[n][1];
+        float x1r = x[n - 1][0], x1i = x[n - 1][1];
+        float x2r = x[n - 2][0], x2i = x[n - 2][1];
         /* phi(i,j) = sum x(n-i) conj(x(n-j)) */
         p01r += x0r * x1r + x0i * x1i; p01i += x0i * x1r - x0r * x1i;
         p02r += x0r * x2r + x0i * x2i; p02i += x0i * x2r - x0r * x2i;
@@ -786,23 +786,25 @@ static void sbr_lpc(float x[SBR_BUF_SLOTS][2], float a0[2], float a1[2])
         p11 += x1r * x1r + x1i * x1i;
         p22 += x2r * x2r + x2i * x2i;
     }
-    double d = p22 * p11 - (p12r * p12r + p12i * p12i) / 1.000001;
-    double a1r = 0, a1i = 0, a0r = 0, a0i = 0;
-    if (d != 0.0) {
+    float d = p22 * p11 - (p12r * p12r + p12i * p12i) * (1.0f / 1.000001f);
+    float a1r = 0, a1i = 0, a0r = 0, a0i = 0;
+    if (d != 0.0f) {
         /* alpha1 = (phi01 phi12 - phi02 phi11) / d */
-        a1r = (p01r * p12r - p01i * p12i - p02r * p11) / d;
-        a1i = (p01r * p12i + p01i * p12r - p02i * p11) / d;
+        float inv = 1.0f / d;
+        a1r = (p01r * p12r - p01i * p12i - p02r * p11) * inv;
+        a1i = (p01r * p12i + p01i * p12r - p02i * p11) * inv;
     }
-    if (p11 != 0.0) {
+    if (p11 != 0.0f) {
         /* alpha0 = -(phi01 + alpha1 conj(phi12)) / phi11 */
-        a0r = -(p01r + a1r * p12r + a1i * p12i) / p11;
-        a0i = -(p01i + a1i * p12r - a1r * p12i) / p11;
+        float inv = 1.0f / p11;
+        a0r = -(p01r + a1r * p12r + a1i * p12i) * inv;
+        a0i = -(p01i + a1i * p12r - a1r * p12i) * inv;
     }
-    if (a0r * a0r + a0i * a0i >= 16.0 || a1r * a1r + a1i * a1i >= 16.0) {
-        a0r = a0i = a1r = a1i = 0.0;
+    if (a0r * a0r + a0i * a0i >= 16.0f || a1r * a1r + a1i * a1i >= 16.0f) {
+        a0r = a0i = a1r = a1i = 0.0f;
     }
-    a0[0] = (float)a0r; a0[1] = (float)a0i;
-    a1[0] = (float)a1r; a1[1] = (float)a1i;
+    a0[0] = a0r; a0[1] = a0i;
+    a1[0] = a1r; a1[1] = a1i;
 }
 
 static void sbr_hf_generate(const SBRElement *el, SBRChannel *ch, SBRScratch *sc)
