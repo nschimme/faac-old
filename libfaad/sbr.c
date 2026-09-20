@@ -17,6 +17,7 @@
 #include "sbr_tables.h"
 #include "fft.h"
 
+#ifndef FAAD_DISABLE_SBR
 #define SBR_NOISE_FLOOR_OFFSET 6
 
 /* Limiter gains (§4.6.18.7.5), amplitude domain: -3 dB, 0 dB, +3 dB, none. */
@@ -110,6 +111,7 @@ static void qmf_analysis_slot(SBRChannel *ch, const float *in, float out[32][2])
     }
 }
 
+#ifndef FAAD_D_SBR
 /* 64-band synthesis of one slot: 64 output samples. */
 static void qmf_synthesis_slot(SBRChannel *ch, float X[64][2], float *out)
 {
@@ -141,6 +143,7 @@ static void qmf_synthesis_slot(SBRChannel *ch, float X[64][2], float *out)
         out[n] = acc;
     }
 }
+#endif
 
 #ifdef FAAD_D_SBR
 /* 32-band synthesis of one slot at the core rate (§4.6.18.8.2.3): only the
@@ -616,7 +619,6 @@ static void sbr_read_noise(BitReader *bs, const SBRElement *el, SBRChannel *ch, 
 
 faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32_t ch0, uint32_t syntax_id, bool crc)
 {
-#ifndef FAAD_DISABLE_SBR
     int nch = (syntax_id == ID_CPE) ? 2 : 1;
     if (ch0 + nch > MAX_CHANNELS) return FAAD_ERR_INVALID_ARGUMENT;
     SBRElement *el = &dec->sbr_el[ch0];
@@ -745,10 +747,6 @@ faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32
     for (int c = 0; c < nch; c++) chs[c]->have_frame = true;
     dec->sbr_present = true;
     return FAAD_OK;
-#else
-    (void)dec; (void)bs; (void)ch0; (void)syntax_id; (void)crc;
-    return FAAD_OK;
-#endif
 }
 
 /* ------------------------------------------------------------------------ */
@@ -1123,6 +1121,17 @@ static void sbr_process_channel(const SBRElement *el, SBRChannel *ch, SBRScratch
     }
 }
 
+#else /* FAAD_DISABLE_SBR */
+
+void init_qmf_twiddles(void) {}
+
+faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32_t ch0, uint32_t syntax_id, bool crc)
+{
+    (void)dec; (void)bs; (void)ch0; (void)syntax_id; (void)crc;
+    return FAAD_OK;
+}
+#endif /* FAAD_DISABLE_SBR */
+
 /* ------------------------------------------------------------------------ */
 /* Entry point                                                               */
 /* ------------------------------------------------------------------------ */
@@ -1179,6 +1188,7 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
         ch += (uint32_t)nch;
     }
 #else
+    (void)dec;
     for (uint32_t ch = 0; ch < num_ch; ch++) {
         float prev = pcm_in[ch * FRAME_LEN_LONG];
         for (uint32_t i = 0; i < FRAME_LEN_LONG; i++) {
