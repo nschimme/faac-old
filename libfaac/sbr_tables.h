@@ -70,6 +70,38 @@ extern const SBRHuffEntry t_huff_noise_bal_3_0dB[T_HUFF_NOISE_BAL_3_0DB_NSYMS];
 
 extern const float sbr_noise_table[512][2];
 
+/* Parametric stereo codebooks (ISO/IEC 14496-3 §8.6). */
+#define PS_HUFF_IID_DF_FINE_OFFSET 30
+#define PS_HUFF_IID_DF_FINE_NSYMS  61
+extern const SBRHuffEntry ps_huff_iid_df_fine[PS_HUFF_IID_DF_FINE_NSYMS];
+#define PS_HUFF_IID_DT_FINE_OFFSET 30
+#define PS_HUFF_IID_DT_FINE_NSYMS  61
+extern const SBRHuffEntry ps_huff_iid_dt_fine[PS_HUFF_IID_DT_FINE_NSYMS];
+#define PS_HUFF_IID_DF_OFFSET 14
+#define PS_HUFF_IID_DF_NSYMS  29
+extern const SBRHuffEntry ps_huff_iid_df[PS_HUFF_IID_DF_NSYMS];
+#define PS_HUFF_IID_DT_OFFSET 14
+#define PS_HUFF_IID_DT_NSYMS  29
+extern const SBRHuffEntry ps_huff_iid_dt[PS_HUFF_IID_DT_NSYMS];
+#define PS_HUFF_ICC_DF_OFFSET 7
+#define PS_HUFF_ICC_DF_NSYMS  15
+extern const SBRHuffEntry ps_huff_icc_df[PS_HUFF_ICC_DF_NSYMS];
+#define PS_HUFF_ICC_DT_OFFSET 7
+#define PS_HUFF_ICC_DT_NSYMS  15
+extern const SBRHuffEntry ps_huff_icc_dt[PS_HUFF_ICC_DT_NSYMS];
+#define PS_HUFF_IPD_DF_OFFSET 0
+#define PS_HUFF_IPD_DF_NSYMS  8
+extern const SBRHuffEntry ps_huff_ipd_df[PS_HUFF_IPD_DF_NSYMS];
+#define PS_HUFF_IPD_DT_OFFSET 0
+#define PS_HUFF_IPD_DT_NSYMS  8
+extern const SBRHuffEntry ps_huff_ipd_dt[PS_HUFF_IPD_DT_NSYMS];
+#define PS_HUFF_OPD_DF_OFFSET 0
+#define PS_HUFF_OPD_DF_NSYMS  8
+extern const SBRHuffEntry ps_huff_opd_df[PS_HUFF_OPD_DF_NSYMS];
+#define PS_HUFF_OPD_DT_OFFSET 0
+#define PS_HUFF_OPD_DT_NSYMS  8
+extern const SBRHuffEntry ps_huff_opd_dt[PS_HUFF_OPD_DT_NSYMS];
+
 #ifdef __cplusplus
 }
 #endif

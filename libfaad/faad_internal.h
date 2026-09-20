@@ -225,18 +225,35 @@ typedef struct FaadDecStats {
 } FaadDecStats;
 #endif
 
+/* ---- Parametric stereo (ISO/IEC 14496-3 §8.6) ---- */
+#define PS_MAX_ENV      5   /* four coded envelopes plus the implicit trailing one */
+#define PS_NR_PAR       34
+#define PS_NR_BANDS     91  /* hybrid sub-bands in the 34-parameter layout */
+#define PS_QMF_SLOTS    32
+#define PS_IN_SLOTS     38  /* QMF slots handed to the hybrid bank: 32 plus 6 of look-ahead */
+#define PS_MAX_DELAY    14
+#define PS_MAX_AP_DELAY 5
+
 typedef struct {
-    bool header_present;
-    bool enable_iid;
-    bool enable_icc;
-    int8_t iid_idx[SBR_PS_BANDS];
-    int8_t icc_idx[SBR_PS_BANDS];
-    float h11[SBR_PS_BANDS];
-    float h22[SBR_PS_BANDS];
-    float h12[SBR_PS_BANDS];
-    float h21[SBR_PS_BANDS];
-    float delay_r[192];
-    float delay_i[192];
+    bool    start;          /* a header has been seen */
+    bool    enable_iid, enable_icc, enable_ext, enable_ipdopd;
+    bool    iid_quant;      /* fine (31-step) IID quantisation */
+    uint8_t icc_mode;
+    uint8_t nr_iid_par, nr_icc_par, nr_ipdopd_par;
+    uint8_t frame_class, num_env, num_env_old;
+    int8_t  border[PS_MAX_ENV + 1];
+    int8_t  iid_par[PS_MAX_ENV][PS_NR_PAR];
+    int8_t  icc_par[PS_MAX_ENV][PS_NR_PAR];
+    int8_t  ipd_par[PS_MAX_ENV][PS_NR_PAR];
+    int8_t  opd_par[PS_MAX_ENV][PS_NR_PAR];
+    bool    is34, is34_old;
+
+    float   in_buf[5][PS_IN_SLOTS + 6][2];                  /* hybrid analysis history */
+    float   delay[PS_NR_BANDS][PS_QMF_SLOTS + PS_MAX_DELAY][2];
+    float   ap_delay[50][3][PS_QMF_SLOTS + PS_MAX_AP_DELAY][2];
+    float   peak_decay_nrg[PS_NR_PAR], power_smooth[PS_NR_PAR], peak_decay_diff_smooth[PS_NR_PAR];
+    float   H[4][2][PS_MAX_ENV + 1][PS_NR_PAR];             /* mixing matrix per envelope border */
+    int8_t  ipd_hist[17], opd_hist[17];                     /* two previous indices, packed */
 } PSState;
 
 /* ---- SBR (ISO/IEC 14496-3 §4.6.18) ---- */
@@ -306,7 +323,12 @@ typedef struct {
     float x_low[32][SBR_BUF_SLOTS][2];
     float x_high[SBR_MAX_BANDS][SBR_BUF_SLOTS][2];
     float y[SBR_MAX_BANDS][SBR_BUF_SLOTS][2];
-    float x[SBR_SLOTS][64][2]; /* assembled output per slot */
+    float x[PS_IN_SLOTS][64][2]; /* assembled output per slot (38 for the PS look-ahead) */
+#ifndef FAAD_DISABLE_PS
+    float ps_l[PS_NR_BANDS][PS_QMF_SLOTS][2];
+    float ps_r[PS_NR_BANDS][PS_QMF_SLOTS][2];
+    float ps_out[2][PS_QMF_SLOTS][64][2];
+#endif
 } SBRScratch;
 
 struct faad_decoder {
@@ -374,6 +396,9 @@ faad_status decode_sce(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, ui
 void faad_init_global_tables(void);
 void sbr_init_tables(void);
 faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32_t ch0, uint32_t syntax_id, bool crc);
+void ps_read_data(struct faad_decoder *dec, BitReader *bs, uint32_t bits_left);
+void ps_apply(struct faad_decoder *dec, float X[PS_IN_SLOTS][64][2], float L[PS_QMF_SLOTS][64][2], float R[PS_QMF_SLOTS][64][2], int top);
+void init_ps_tables(void);
 void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *pcm_out);
 
 #endif /* FAAD_INTERNAL_H */
