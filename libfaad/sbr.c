@@ -1053,6 +1053,8 @@ static void sbr_hf_adjust(const SBRElement *el, SBRChannel *ch, SBRScratch *sc,
             }
         }
 
+        /* --- smoothing over the four previous envelopes (§4.6.18.7.6) --- */
+        /* the history is a ring of four; hist_pos is the oldest entry */
         if (prime_hist) {
             for (int h = 0; h < 4; h++) {
                 memcpy(ch->g_hist[h], gain, sizeof(float) * (size_t)M);
@@ -1060,29 +1062,30 @@ static void sbr_hf_adjust(const SBRElement *el, SBRChannel *ch, SBRScratch *sc,
             }
             prime_hist = false;
         }
-
-        /* --- assembly (§4.6.18.7.6) --- */
         float g_filt[SBR_MAX_BANDS], q_filt[SBR_MAX_BANDS];
         bool smooth = (el->smoothing_mode == 0) && !transient;
-        for (int m = 0; m < M; m++) {
-            if (smooth) {
-                float g = gain[m] * sbr_h_smooth[0], q = q_m[m] * sbr_h_smooth[0];
-                for (int h = 0; h < 4; h++) {
-                    g += ch->g_hist[3 - h][m] * sbr_h_smooth[h + 1];
-                    q += ch->q_hist[3 - h][m] * sbr_h_smooth[h + 1];
-                }
-                g_filt[m] = g;
-                q_filt[m] = q;
-            } else {
-                g_filt[m] = gain[m];
-                q_filt[m] = transient ? 0.0f : q_m[m];
+        if (smooth) {
+            for (int m = 0; m < M; m++) {
+                g_filt[m] = gain[m] * sbr_h_smooth[0];
+                q_filt[m] = q_m[m] * sbr_h_smooth[0];
             }
+            for (int h = 0; h < 4; h++) {
+                /* h + 1 envelopes back */
+                const float *gh = ch->g_hist[(ch->hist_pos + 3 - h) & 3];
+                const float *qh = ch->q_hist[(ch->hist_pos + 3 - h) & 3];
+                for (int m = 0; m < M; m++) {
+                    g_filt[m] += gh[m] * sbr_h_smooth[h + 1];
+                    q_filt[m] += qh[m] * sbr_h_smooth[h + 1];
+                }
+            }
+        } else {
+            memcpy(g_filt, gain, sizeof(float) * (size_t)M);
+            if (transient) memset(q_filt, 0, sizeof(float) * (size_t)M);
+            else memcpy(q_filt, q_m, sizeof(float) * (size_t)M);
         }
-        /* history: oldest at [0] */
-        memmove(ch->g_hist[0], ch->g_hist[1], sizeof(float) * SBR_MAX_BANDS * 3);
-        memmove(ch->q_hist[0], ch->q_hist[1], sizeof(float) * SBR_MAX_BANDS * 3);
-        memcpy(ch->g_hist[3], gain, sizeof(float) * (size_t)M);
-        memcpy(ch->q_hist[3], q_m, sizeof(float) * (size_t)M);
+        memcpy(ch->g_hist[ch->hist_pos], gain, sizeof(float) * (size_t)M);
+        memcpy(ch->q_hist[ch->hist_pos], q_m, sizeof(float) * (size_t)M);
+        ch->hist_pos = (uint8_t)((ch->hist_pos + 1) & 3);
 
         /* Y = G X + Q noise, plus the sinusoids. The noise index runs on by
          * one per slot and by M across the bands of a slot, and a band with
