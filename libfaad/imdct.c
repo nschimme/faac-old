@@ -123,10 +123,31 @@ static void fast_imdct(const float *in, float *out, int n)
         out[i] = -u[M + H - 1 - i] * scale;
 }
 
+/* The 2048-sample IMDCT output, folded out of the 1024-point DCT-IV u (see
+ * fast_imdct), sample i, scaled. */
+static inline float imdct_sample(const float *u, int i, float scale)
+{
+    if (i < 512) return u[512 + i] * scale;
+    if (i < 1536) return -u[1535 - i] * scale;
+    return -u[i - 1536] * scale;
+}
+
+/* Left half: window, add the previous frame's overlap, emit. Right half:
+ * window into the overlap for the next frame. */
+static inline void imdct_emit(float * restrict out_pcm, float * restrict overlap, const float *u, float scale,
+                              int i0, int i1, const float * restrict wl, int wl_dir, float wflat)
+{
+    /* window sample i is wl[i - i0] (wl_dir > 0), wl[i1 - 1 - i] (< 0) or wflat (wl == NULL) */
+    for (int i = i0; i < i1; i++) {
+        float w = wl ? (wl_dir > 0 ? wl[i - i0] : wl[i1 - 1 - i]) : wflat;
+        float x = imdct_sample(u, i, scale) * w;
+        if (i < FRAME_LEN_LONG) out_pcm[i] = x + overlap[i];
+        else overlap[i - FRAME_LEN_LONG] = x;
+    }
+}
+
 void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, float * restrict spec, float * restrict out_pcm)
 {
-    float imdct_out[FRAME_LEN_LONG * 2];
-
     /* ISO/IEC 14496-3 §4.6.11.3.2: the left half of the window uses the
      * previous block's shape, the right half this block's. */
     uint8_t prev_shape = dec->prev_window_shape[ch];
@@ -134,59 +155,49 @@ void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, float
     const float * restrict win_short_l = (prev_shape == KBD_WINDOW) ? kbd_window_256 : sine_window_256;
     const float * restrict win_long = (ics->window_shape == KBD_WINDOW) ? kbd_window_2048 : sine_window_2048;
     const float * restrict win_short = (ics->window_shape == KBD_WINDOW) ? kbd_window_256 : sine_window_256;
-    float * restrict overlap_ch = dec->overlap[ch];
+    float * restrict overlap = dec->overlap[ch];
     dec->prev_window_shape[ch] = ics->window_shape;
 
     if (ics->window_sequence == EIGHT_SHORT_SEQUENCE) {
-        memset(imdct_out, 0, sizeof(imdct_out));
-        float short_out[256];
+        /* eight 256-sample blocks hopping by 128 cover samples 448..1599 */
+        float acc[1152];
+        memset(acc, 0, sizeof(acc));
         for (int w = 0; w < 8; w++) {
-            fast_imdct(spec + w * 128, short_out, 256);
+            float block[256];
+            fast_imdct(spec + w * 128, block, 256);
             const float * restrict wl = (w == 0) ? win_short_l : win_short;
+            float *dst = acc + w * 128;
             for (int i = 0; i < 128; i++) {
-                short_out[i] *= wl[i];
-                short_out[255 - i] *= win_short[i];
-            }
-            int offset = 448 + w * 128;
-            for (int i = 0; i < 256; i++) {
-                imdct_out[offset + i] += short_out[i];
+                dst[i]       += block[i] * wl[i];
+                dst[255 - i] += block[255 - i] * win_short[i];
             }
         }
-    } else {
-        fast_imdct(spec, imdct_out, 2048);
-        if (ics->window_sequence == ONLY_LONG_SEQUENCE) {
-            for (int i = 0; i < 1024; i++) {
-                imdct_out[i] *= win_long_l[i];
-                imdct_out[2047 - i] *= win_long[i];
-            }
-        } else if (ics->window_sequence == LONG_START_SEQUENCE) {
-            for (int i = 0; i < 1024; i++) {
-                imdct_out[i] *= win_long_l[i];
-            }
-            /* 1024..1471: flat 1.0 */
-            for (int i = 1472; i < 1600; i++) {
-                imdct_out[i] *= win_short[1599 - i]; /* falling half of short window */
-            }
-            for (int i = 1600; i < 2048; i++) {
-                imdct_out[i] = 0.0f;
-            }
-        } else if (ics->window_sequence == LONG_STOP_SEQUENCE) {
-            for (int i = 0; i < 448; i++) {
-                imdct_out[i] = 0.0f;
-            }
-            for (int i = 448; i < 576; i++) {
-                imdct_out[i] *= win_short_l[i - 448]; /* rising half of short window */
-            }
-            /* 576..1023: flat 1.0 */
-            for (int i = 1024; i < 2048; i++) {
-                imdct_out[i] *= win_long[2047 - i];
-            }
-        }
+        for (int i = 0; i < 448; i++) out_pcm[i] = overlap[i];
+        for (int i = 448; i < FRAME_LEN_LONG; i++) out_pcm[i] = acc[i - 448] + overlap[i];
+        for (int i = 0; i < 576; i++) overlap[i] = acc[i + 576];
+        memset(overlap + 576, 0, sizeof(float) * 448);
+        return;
     }
 
-    /* Overlap-add with previous frame overlap buffer */
-    for (int i = 0; i < FRAME_LEN_LONG; i++) {
-        out_pcm[i] = imdct_out[i] + overlap_ch[i];
-        overlap_ch[i] = imdct_out[FRAME_LEN_LONG + i];
+    float u[1024];
+    const float scale = 2.0f / 2048.0f;
+    dct4(spec, u, 1024);
+
+    if (ics->window_sequence == LONG_STOP_SEQUENCE) {
+        /* zero, the short window's rise, then flat */
+        for (int i = 0; i < 448; i++) out_pcm[i] = overlap[i];
+        imdct_emit(out_pcm, overlap, u, scale, 448, 576, win_short_l, 1, 0.0f);
+        imdct_emit(out_pcm, overlap, u, scale, 576, 1024, NULL, 0, 1.0f);
+    } else {
+        imdct_emit(out_pcm, overlap, u, scale, 0, 1024, win_long_l, 1, 0.0f);
+    }
+    if (ics->window_sequence == LONG_START_SEQUENCE) {
+        /* flat, the short window's fall, then zero */
+        imdct_emit(out_pcm, overlap, u, scale, 1024, 1472, NULL, 0, 1.0f);
+        imdct_emit(out_pcm, overlap, u, scale, 1472, 1600, win_short, -1, 0.0f);
+        memset(overlap + 576, 0, sizeof(float) * 448);
+    } else {
+        imdct_emit(out_pcm, overlap, u, scale, 1024, 2048, win_long, -1, 0.0f);
     }
 }
+
