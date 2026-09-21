@@ -316,8 +316,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
 
     uint32_t ch_idx = 0;
     uint32_t last_elem_type = ID_SCE;
-    ICSInfo ics_list[MAX_CHANNELS];
-    memset(ics_list, 0, sizeof(ics_list));
+    ICSInfo ics_list[MAX_CHANNELS]; /* each entry is cleared by the element that fills it */
 
 #ifdef FAAD_STATS
     bool saw_end = false;
@@ -418,7 +417,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
     /* Error Concealment & Fade-Out Fading Mechanism */
     if (decode_success && ch_idx > 0) {
         dec->consecutive_errors = 0;
-        memcpy(dec->prev_spec, dec->spec, sizeof(dec->spec));
+        memcpy(dec->prev_spec, dec->spec, sizeof(dec->spec[0]) * ch_idx);
         dec->num_channels = ch_idx;
 #ifdef FAAD_STATS
         if (!dec->stats.haveLastChannels) {

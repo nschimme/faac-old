@@ -24,7 +24,7 @@ void apply_ms_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spe
 
     int window_offset = 0;
     for (int g = 0; g < ics->num_window_groups && g < 8; g++) {
-        for (int sfb = 0; sfb < ics->max_sfb && sfb < 64; sfb++) {
+        for (int sfb = 0; sfb < ics->max_sfb && sfb < MAX_SFB; sfb++) {
             bool ms_flag = false;
             if (cpe->ms_mask_present == 1) {
                 ms_flag = (cpe->ms_used[g][sfb] != 0);
@@ -33,7 +33,7 @@ void apply_ms_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spe
             }
 
             if (!ms_flag) continue;
-            bool pns_l = ics->pns_used[g][sfb], pns_r = cpe->ics[1].pns_used[g][sfb];
+            bool pns_l = ics->sfb_cb[g][sfb] == 13, pns_r = cpe->ics[1].sfb_cb[g][sfb] == 13;
             if (pns_l != pns_r) continue;
 
             int start_k = ics->sfb_offsets[sfb];
@@ -74,13 +74,10 @@ void apply_is_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spe
 
     int window_offset = 0;
     for (int g = 0; g < ics_r->num_window_groups && g < 8; g++) {
-        for (int i = 0; i < ics_r->num_sections[g] && i < 64; i++) {
-            int cb = ics_r->sect_cb[g][i];
+        for (int sfb = 0; sfb < ics_r->max_sfb && sfb < MAX_SFB; sfb++) {
+            int cb = ics_r->sfb_cb[g][sfb];
             if (cb == 14 || cb == 15) {
-                int start_sfb = ics_r->sect_start[g][i];
-                int end_sfb = ics_r->sect_end[g][i];
-
-                for (int sfb = start_sfb; sfb < end_sfb && sfb < 64; sfb++) {
+                {
                     int pos = ics_r->scalefactors[g][sfb];
                     if (pos < -IS_POS_RANGE) pos = -IS_POS_RANGE;
                     if (pos > IS_POS_RANGE) pos = IS_POS_RANGE;
