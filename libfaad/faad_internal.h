@@ -336,7 +336,8 @@ typedef struct {
     bool    primed;       /* smoothing history holds real gains */
     float   x_low_tail[32][SBR_T_HFGEN][2];
     float   y_tail[SBR_MAX_BANDS][SBR_T_HFGEN][2];
-    float   qmf_x[320];  /* analysis delay line, newest sample first */
+    float   qmf_x[640];  /* analysis delay line, newest sample first, mirrored ring */
+    uint16_t qmf_x_pos;  /* start of the newest block in qmf_x */
     float   qmf_v[1280]; /* synthesis delay line, ring of 128-sample blocks */
     uint16_t qmf_v_pos;  /* start of the newest block in qmf_v */
 } SBRChannel;

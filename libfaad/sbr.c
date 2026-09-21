@@ -85,9 +85,11 @@ void init_qmf_twiddles(void)
  * 64-point inverse DFT of u(n)*exp(j*pi*n/64), rotated. */
 static void qmf_analysis_slot(SBRChannel *ch, const float *in, float out[32][2])
 {
-    float *x = ch->qmf_x;
-    memmove(x + 32, x, 288 * sizeof(float));
-    for (int n = 0; n < 32; n++) x[n] = in[31 - n];
+    /* Newest sample first. The line is a ring of ten 32-sample blocks kept
+     * twice over, so the five 64-sample runs below never wrap. */
+    ch->qmf_x_pos = (ch->qmf_x_pos + 320 - 32) % 320;
+    float *x = ch->qmf_x + ch->qmf_x_pos;
+    for (int n = 0; n < 32; n++) x[n] = x[320 + n] = in[31 - n];
 
     /* The decimated prototype c(2n) halves the passband gain of the full
      * 64-band bank the encoder's energies refer to; the factor 2 restores it. */
@@ -861,8 +863,9 @@ static void sbr_lpc(float x[SBR_BUF_SLOTS][2], float a0[2], float a1[2])
 
 static void sbr_hf_generate(const SBRElement *el, SBRChannel *ch, SBRScratch *sc)
 {
+    /* predictor per source band, computed the first time a patch uses it */
     float a0[32][2], a1[32][2];
-    for (int p = 0; p < el->k0; p++) sbr_lpc(sc->x_low[p], a0[p], a1[p]);
+    bool have_lpc[32] = { false };
 
     int start = 2 * ch->t_E[0] + SBR_T_HFADJ;
     int end = 2 * ch->t_E[ch->L_E] + SBR_T_HFADJ;
@@ -870,6 +873,10 @@ static void sbr_hf_generate(const SBRElement *el, SBRChannel *ch, SBRScratch *sc
     for (int i = 0; i < el->num_patches; i++) {
         for (int x = 0; x < el->patch_num[i]; x++, k++) {
             int p = el->patch_start[i] + x;
+            if (!have_lpc[p]) {
+                sbr_lpc(sc->x_low[p], a0[p], a1[p]);
+                have_lpc[p] = true;
+            }
             while (g < el->n_q && k >= el->f_noise[g + 1]) g++;
             float bw = ch->bw_array[g], bw2 = bw * bw;
             float c0r = a0[p][0] * bw, c0i = a0[p][1] * bw;
