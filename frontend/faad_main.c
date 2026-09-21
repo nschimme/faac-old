@@ -521,7 +521,7 @@ int main(int argc, char **argv)
                 if (st == FAAD_ERR_NEED_MORE_DATA || bytes_consumed == 0) {
                     break;
                 }
-                offset += 1;
+                offset += bytes_consumed; /* resync distance on SYNC_LOST */
                 continue;
             }
 

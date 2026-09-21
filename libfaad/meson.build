@@ -81,3 +81,11 @@ test_faad = executable('test_faad',
     dependencies: [thread_dep],
 )
 test('faad_smoke_test', test_faad)
+
+test_faad_robust = executable('test_faad_robust',
+    'test_faad_robust.c',
+    include_directories: ['..', '../include'],
+    link_with: [libfaad, libfaac],
+    dependencies: [libm],
+)
+test('faad_robust_test', test_faad_robust, timeout: 120)

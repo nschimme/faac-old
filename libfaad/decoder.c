@@ -291,8 +291,15 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
     bool decode_success = true;
     if (dec->config.stream_format == FAAD_STREAM_ADTS) {
         faad_status st = adts_decode_header(&bs, &dec->asc, &adts_frame_len);
-        if (st != FAAD_OK) {
-            decode_success = false;
+        if (st != FAAD_OK || adts_frame_len < 7) {
+            /* No frame to conceal: hand back how far to skip to the next
+             * syncword so a caller that loops on bytes_consumed always
+             * advances, and emit nothing. */
+            uint32_t skip = 1;
+            while (skip + 1 < in_bytes && !(in_buf[skip] == 0xFF && (in_buf[skip + 1] & 0xF6) == 0xF0)) skip++;
+            *bytes_consumed = (skip + 1 < in_bytes) ? skip : in_bytes;
+            *bytes_written = 0;
+            return FAAD_ERR_SYNC_LOST;
         } else if (adts_frame_len > in_bytes) {
             return FAAD_ERR_NEED_MORE_DATA;
         } else {
