@@ -325,8 +325,9 @@ typedef struct {
     int16_t Q_prev[SBR_MAX_NQ];
     uint8_t freq_res_prev;
     float   bw_array[SBR_MAX_NQ];
-    float   g_hist[4][SBR_MAX_BANDS];
+    float   g_hist[4][SBR_MAX_BANDS]; /* gains of the four previous envelopes, a ring */
     float   q_hist[4][SBR_MAX_BANDS];
+    uint8_t hist_pos;                 /* oldest entry of the ring */
     uint8_t s_index_prev[SBR_MAX_BANDS];
     int8_t  l_A_prev;
     uint8_t L_E_prev;
