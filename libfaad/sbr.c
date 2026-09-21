@@ -1220,13 +1220,12 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
         if (dec->ps_present && num_ch == 1) {
             sbr_process_channel(el, &dec->sbr[0], sc, pcm_in, E0, Q0, have_hf, PS_IN_SLOTS);
             dec->num_channels = 2;
-            if (dec->ps.start) ps_apply(dec, sc->x, have_hf ? el->kx + el->M : 32);
+            if (dec->ps.start) ps_frame_begin(dec, sc->x, have_hf ? el->kx + el->M : 32);
             for (int t = 0; t < SBR_SLOTS; t++) {
                 float L[64][2], R[64][2];
                 float (*l)[2] = sc->x[t], (*r)[2] = sc->x[t]; /* no PS data yet: dual mono */
                 if (dec->ps.start) {
-                    ps_synthesis_slot(dec, 0, t, L);
-                    ps_synthesis_slot(dec, 1, t, R);
+                    ps_slot(dec, t, sc->x, L, R);
                     l = L; r = R;
                 }
 #ifdef FAAD_D_SBR
