@@ -152,6 +152,9 @@ typedef struct {
 faad_status asc_decode(BitReader *bs, AudioSpecificConfig *asc);
 faad_status adts_decode_header(BitReader *bs, AudioSpecificConfig *asc, uint32_t *frame_length);
 
+#define MAX_SFB       52 /* long blocks reach 51 bands, short ones 8 x 15 */
+#define TNS_MAX_ORDER 12 /* AAC-LC: 12 for long blocks, 7 for short */
+
 typedef struct {
     uint8_t window_sequence;
     uint8_t window_shape;
@@ -161,17 +164,12 @@ typedef struct {
     uint8_t num_windows;
     uint16_t sfb_offsets[68];
     uint8_t num_sfbs;
-    uint8_t sect_cb[8][64];
-    uint8_t sect_start[8][64];
-    uint8_t sect_end[8][64];
-    uint8_t num_sections[8];
     int8_t sample_rate_index; /* core rate index, for TNS_MAX_BANDS */
-    int16_t sfb_cb[8][64];
-    int16_t scalefactors[8][64];
+    /* per window group and scalefactor band: the codebook (0 zero, 13 noise,
+     * 14/15 intensity) and the scalefactor, noise energy or intensity position */
+    uint8_t sfb_cb[8][MAX_SFB];
+    int16_t scalefactors[8][MAX_SFB];
     uint8_t global_gain;
-
-    /* PNS */
-    bool pns_used[8][64];
 
     /* Pulse data */
     bool pulse_data_present;
@@ -183,7 +181,7 @@ typedef struct {
     uint8_t tns_order[8][4];
     uint8_t tns_direction[8][4];
     uint8_t tns_coef_res[8];
-    int8_t  tns_coef[8][4][32];
+    int8_t  tns_coef[8][4][TNS_MAX_ORDER];
 
     /* Gain control */
     bool gain_control_present;
@@ -192,7 +190,7 @@ typedef struct {
 typedef struct {
     bool common_window;
     uint8_t ms_mask_present; /* 0 none, 1 per band, 2 all bands */
-    uint8_t ms_used[8][64];
+    uint8_t ms_used[8][MAX_SFB];
     ICSInfo ics[2];
 } CPEInfo;
 

@@ -37,18 +37,13 @@ static inline float pow_4_3_fast(int x)
 void dequantize_spectrum(ICSInfo *ics, float *spec)
 {
     int window_offset = 0;
+    int max_sfb = ics->max_sfb < ics->num_sfbs ? ics->max_sfb : ics->num_sfbs;
+    if (max_sfb > MAX_SFB) max_sfb = MAX_SFB;
     for (int g = 0; g < ics->num_window_groups && g < 8; g++) {
-        for (int i = 0; i < ics->num_sections[g] && i < 64; i++) {
-            int cb = ics->sect_cb[g][i];
+        for (int sfb = 0; sfb < max_sfb; sfb++) {
+            int cb = ics->sfb_cb[g][sfb];
             if (cb == 0 || cb == 13) continue;
-
-            int start_sfb = ics->sect_start[g][i];
-            int end_sfb = ics->sect_end[g][i];
-            if (start_sfb < 0 || start_sfb >= ics->num_sfbs || start_sfb >= 64) continue;
-            if (end_sfb > ics->num_sfbs) end_sfb = ics->num_sfbs;
-            if (end_sfb > 64) end_sfb = 64;
-
-            for (int sfb = start_sfb; sfb < end_sfb && (sfb + 1) <= ics->num_sfbs && (sfb + 1) < 68; sfb++) {
+            {
                 int sf = ics->scalefactors[g][sfb];
                 float scale = (sf >= 0 && sf < 256) ? sf_scale_lut[sf] : powf(2.0f, 0.25f * (sf - 100));
 
@@ -80,8 +75,10 @@ void apply_pns(ICSInfo *ics, float *spec, uint32_t *pns_seed)
     uint32_t seed = *pns_seed;
 
     for (int g = 0; g < ics->num_window_groups && g < 8; g++) {
-        for (int sfb = 0; sfb < ics->num_sfbs && (sfb + 1) <= ics->num_sfbs && (sfb + 1) < 68; sfb++) {
-            if (ics->pns_used[g][sfb]) {
+        int max_sfb = ics->max_sfb < ics->num_sfbs ? ics->max_sfb : ics->num_sfbs;
+        if (max_sfb > MAX_SFB) max_sfb = MAX_SFB;
+        for (int sfb = 0; sfb < max_sfb; sfb++) {
+            if (ics->sfb_cb[g][sfb] == 13) {
                 /* §4.6.13.3: the band's summed energy is 2^(noise_nrg/2), with
                  * no SF_OFFSET -- noise_nrg is not a scalefactor. */
                 int nrg = ics->scalefactors[g][sfb];

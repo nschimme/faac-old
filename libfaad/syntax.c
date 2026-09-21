@@ -47,7 +47,7 @@ static void decode_section_data(BitReader *bs, ICSInfo *ics)
     for (int g = 0; g < ics->num_window_groups && g < 8; g++) {
         int k = 0;
         int i = 0;
-        while (k < ics->max_sfb && i < 64) {
+        while (k < ics->max_sfb && i < MAX_SFB) {
             uint32_t cb = bits_get(bs, 4);
             uint32_t max_run = (1U << sect_bits) - 1;
             uint32_t run_field = bits_get(bs, sect_bits);
@@ -60,16 +60,13 @@ static void decode_section_data(BitReader *bs, ICSInfo *ics)
                 len += run_field;
             }
             if (len == 0) len = 1;
-            ics->sect_cb[g][i] = cb;
-            ics->sect_start[g][i] = k;
+            /* a section is a run of bands sharing one codebook */
             int end_sfb = k + len;
             if (end_sfb > ics->max_sfb) end_sfb = ics->max_sfb;
-            if (end_sfb > 64) end_sfb = 64;
-            ics->sect_end[g][i] = end_sfb;
-            k += len;
+            if (end_sfb > MAX_SFB) end_sfb = MAX_SFB;
+            for (; k < end_sfb; k++) ics->sfb_cb[g][k] = (uint8_t)cb;
             i++;
         }
-        ics->num_sections[g] = i;
     }
 }
 
@@ -202,14 +199,17 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
                         ics->tns_direction[w][f] = bits_get(bs, 1);
                         uint32_t coef_compress = bits_get(bs, 1);
                         int bits_per_coef = (coef_res ? 4 : 3) - (int)coef_compress;
-                        for (int c = 0; c < ics->tns_order[w][f] && c < 32; c++) {
+                        /* every coefficient is in the stream; only the LC
+                         * order is kept and filtered */
+                        for (int c = 0; c < ics->tns_order[w][f]; c++) {
                             uint32_t val = bits_get(bs, bits_per_coef);
                             int32_t sval = (int32_t)val;
                             if (sval & (1 << (bits_per_coef - 1))) {
                                 sval |= ~((1 << bits_per_coef) - 1);
                             }
-                            ics->tns_coef[w][f][c] = (int8_t)sval;
+                            if (c < TNS_MAX_ORDER) ics->tns_coef[w][f][c] = (int8_t)sval;
                         }
+                        if (ics->tns_order[w][f] > TNS_MAX_ORDER) ics->tns_order[w][f] = TNS_MAX_ORDER;
                     }
                 }
             }
@@ -244,7 +244,7 @@ faad_status decode_cpe(BitReader *bs, struct faad_decoder *dec, CPEInfo *cpe, ui
         cpe->ms_mask_present = bits_get(bs, 2);
         if (cpe->ms_mask_present == 1) {
             for (int g = 0; g < cpe->ics[0].num_window_groups && g < 8; g++) {
-                for (int sfb = 0; sfb < cpe->ics[0].max_sfb && sfb < 64; sfb++) {
+                for (int sfb = 0; sfb < cpe->ics[0].max_sfb && sfb < MAX_SFB; sfb++) {
                     cpe->ms_used[g][sfb] = bits_get(bs, 1);
                 }
             }
@@ -261,6 +261,7 @@ faad_status decode_cpe(BitReader *bs, struct faad_decoder *dec, CPEInfo *cpe, ui
 faad_status decode_sce(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, uint32_t ch)
 {
     if (ch >= MAX_CHANNELS) return FAAD_ERR_DECODE_FAILED;
+    memset(ics, 0, sizeof(*ics));
     bits_skip(bs, 4);
     return decode_ics(bs, dec, ics, dec->spec[ch], false);
 }
