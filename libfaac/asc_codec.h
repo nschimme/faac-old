@@ -101,9 +101,11 @@ static inline void asc_codec_parse(const uint8_t *buf, uint32_t len, AscInfo *ou
     out->sample_rate = asc_parse_sample_rate(&br);
     out->num_channels = (uint8_t)asc_br_get(&br, 4);
 
-    if (aot == 5) {
-        /* Explicit form: SBR config directly nested at the top level. */
+    if (aot == 5 || aot == 29) {
+        /* Explicit hierarchical form: the SBR (29: SBR+PS) object wraps the
+         * core object and carries the output sampling frequency itself. */
         out->sbr_present = true;
+        out->ps_present = (aot == 29);
         out->sbr_sample_rate = asc_parse_sample_rate(&br);
         uint32_t real_aot = asc_br_get(&br, 5);
         if (real_aot == 31) real_aot = 32 + asc_br_get(&br, 6);
@@ -163,6 +165,7 @@ typedef struct {
     uint8_t sbr_sr_idx;  /* Table 1.16 index for the post-SBR (output) rate; ignored if !sbr_present */
     bool    ps_signaled; /* emit the PS sync-extension block at all (only meaningful if sbr_present) */
     bool    ps_present;  /* psPresentFlag value inside that block, if ps_signaled */
+    bool    hierarchical; /* explicit hierarchical form (AOT 5/29 wrapping the core) instead of the sync-extension */
 } AscBuildInfo;
 
 /*
@@ -177,6 +180,14 @@ static inline uint32_t asc_codec_build(const AscBuildInfo *info, uint8_t *out, u
     memset(out, 0, out_cap);
     asc_bitwriter bw = { out, out_cap * 8, 0 };
 
+    if (info->sbr_present && info->hierarchical) {
+        if (out_cap < 4) return 0;
+        asc_bw_put(&bw, info->ps_signaled && info->ps_present ? 29 : 5, 5);
+        asc_bw_put(&bw, info->sr_idx, 4);
+        asc_bw_put(&bw, info->channels & 0x0F, 4);
+        asc_bw_put(&bw, info->sbr_sr_idx, 4);
+    }
+
     uint8_t obj = info->object_type;
     if (obj >= 32) {
         /* AOT-escape form, mirroring asc_codec_parse()'s aot==31 read above. */
@@ -185,11 +196,13 @@ static inline uint32_t asc_codec_build(const AscBuildInfo *info, uint8_t *out, u
     } else {
         asc_bw_put(&bw, obj, 5);
     }
-    asc_bw_put(&bw, info->sr_idx, 4);
-    asc_bw_put(&bw, info->channels & 0x0F, 4);
+    if (!(info->sbr_present && info->hierarchical)) {
+        asc_bw_put(&bw, info->sr_idx, 4);
+        asc_bw_put(&bw, info->channels & 0x0F, 4);
+    }
     asc_bw_put(&bw, 0, 3); /* frameLengthFlag, dependsOnCoreCoder, extensionFlag */
 
-    if (info->sbr_present) {
+    if (info->sbr_present && !info->hierarchical) {
         asc_bw_put(&bw, ASC_SYNC_EXTENSION_SBR, 11);
         asc_bw_put(&bw, 5, 5); /* extensionAudioObjectType = SBR */
         asc_bw_put(&bw, 1, 1); /* sbrPresentFlag */

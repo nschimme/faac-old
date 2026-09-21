@@ -257,6 +257,7 @@ enum {
     OPT_BRAND = 400,
     OPT_ENCODER_DELAY,
     OPT_PADDING_DELAY,
+    OPT_SBR_SIGNALING,
     OPT_EXPORT_ASC,
     OPT_WIDTH,
     OPT_HEIGHT,
@@ -277,6 +278,10 @@ static int cmd_mux(int argc, char **argv)
     uint16_t width = 1920;
     uint16_t height = 1080;
     const char *codec_str = "aac";
+    /* ADTS cannot say whether SBR/PS follow, so the caller states it:
+     * none (decoder detects), compatible (sync extension), explicit
+     * (hierarchical AOT 5), ps / ps-explicit for HE-AAC v2. */
+    const char *sbr_signaling = "none";
 
     static struct option long_options[] = {
         {"output", required_argument, 0, 'o'},
@@ -286,6 +291,7 @@ static int cmd_mux(int argc, char **argv)
         {"height", required_argument, 0, OPT_HEIGHT},
         {"encoder-delay", required_argument, 0, OPT_ENCODER_DELAY},
         {"padding-delay", required_argument, 0, OPT_PADDING_DELAY},
+        {"sbr-signaling", required_argument, 0, OPT_SBR_SIGNALING},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
@@ -301,6 +307,7 @@ static int cmd_mux(int argc, char **argv)
         case OPT_HEIGHT: height = (uint16_t)atoi(optarg); break;
         case OPT_ENCODER_DELAY: delay = (uint32_t)atoi(optarg); break;
         case OPT_PADDING_DELAY: padding = (uint32_t)atoi(optarg); break;
+        case OPT_SBR_SIGNALING: sbr_signaling = optarg; break;
         case 'h': print_usage(); return 0;
         default: break;
         }
@@ -437,6 +444,13 @@ static int cmd_mux(int argc, char **argv)
                 build.object_type = aot;
                 build.sr_idx = sr_idx;
                 build.channels = ch;
+                if (strcmp(sbr_signaling, "none") != 0) {
+                    build.sbr_present = true;
+                    build.sbr_sr_idx = sr_idx >= 3 ? sr_idx - 3 : 0; /* double rate: table 1.16 steps by 3 */
+                    build.hierarchical = strstr(sbr_signaling, "explicit") != NULL;
+                    build.ps_signaled = strncmp(sbr_signaling, "ps", 2) == 0;
+                    build.ps_present = build.ps_signaled;
+                }
                 asc_len = asc_codec_build(&build, asc_buf, sizeof(asc_buf));
 
                 if (sr_idx < 13) tc.sample_rate = asc_codec_sample_rates[sr_idx];
