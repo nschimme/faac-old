@@ -127,9 +127,11 @@ static inline void asc_codec_parse(const uint8_t *buf, uint32_t len, AscInfo *ou
 
     if (asc_br_remaining(&br) >= 16 && asc_br_get(&br, 11) == ASC_SYNC_EXTENSION_SBR) {
         uint32_t ext_aot = asc_br_get(&br, 5);
-        if (ext_aot == 5) {
+        /* sbrPresentFlag is a real bit: an encoder may append the extension
+         * to state explicitly that there is no SBR (FFmpeg does), and then
+         * no sample-rate index follows. */
+        if (ext_aot == 5 && asc_br_get(&br, 1)) {
             out->sbr_present = true;
-            asc_br_get(&br, 1); /* sbrPresentFlag: implied by the sync-extension itself */
             out->sbr_sample_rate = asc_parse_sample_rate(&br);
             if (asc_br_remaining(&br) >= 12 && asc_br_get(&br, 11) == ASC_SYNC_EXTENSION_PS) {
                 out->ps_present = asc_br_get(&br, 1) != 0;
