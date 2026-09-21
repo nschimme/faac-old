@@ -306,7 +306,8 @@ typedef struct {
     float   x_low_tail[32][SBR_T_HFGEN][2];
     float   y_tail[SBR_MAX_BANDS][SBR_T_HFGEN][2];
     float   qmf_x[320];  /* analysis delay line, newest sample first */
-    float   qmf_v[1280]; /* synthesis delay line */
+    float   qmf_v[1280]; /* synthesis delay line, ring of 128-sample blocks */
+    uint16_t qmf_v_pos;  /* start of the newest block in qmf_v */
 } SBRChannel;
 
 /* Header and frequency tables, shared by the channels of one element and
