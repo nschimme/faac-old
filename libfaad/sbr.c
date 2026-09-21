@@ -111,13 +111,17 @@ static void qmf_analysis_slot(SBRChannel *ch, const float *in, float out[32][2])
     }
 }
 
+/* Separate restrict pointers so the tap loop vectorises. */
+static inline void mac64(float * restrict acc, const float * restrict x, const float * restrict c)
+{
+    for (int n = 0; n < 64; n++) acc[n] += x[n] * c[n];
+}
+
 #ifndef FAAD_D_SBR
-/* 64-band synthesis of one slot: 64 output samples. */
+/* 64-band synthesis of one slot: 64 output samples. The delay line is a
+ * ring of ten 128-sample blocks; the newest block starts at qmf_v_pos. */
 static void qmf_synthesis_slot(SBRChannel *ch, float X[64][2], float *out)
 {
-    float *v = ch->qmf_v;
-    memmove(v + 128, v, 1152 * sizeof(float));
-
     /* v(n) = 1/64 Re{ exp(j*pi*(2n-255)/256) * IDFT128(X(k) exp(-j*255*pi*k/128)) } */
     float re[128], im[128];
     for (int k = 0; k < 64; k++) {
@@ -129,19 +133,22 @@ static void qmf_synthesis_slot(SBRChannel *ch, float X[64][2], float *out)
     memset(re + 64, 0, 64 * sizeof(float));
     memset(im + 64, 0, 64 * sizeof(float));
     fft(&sbr_fft, re, im, 7);
+
+    ch->qmf_v_pos = (ch->qmf_v_pos + 1280 - 128) % 1280;
+    float *v = ch->qmf_v + ch->qmf_v_pos;
     for (int n = 0; n < 128; n++) {
         float cr = re[n], ci = -im[n];
         v[n] = (cr * syn_post_c[n] - ci * syn_post_s[n]) * (1.0f / 64.0f);
     }
 
-    for (int n = 0; n < 64; n++) {
-        float acc = 0.0f;
-        for (int i = 0; i < 5; i++) {
-            acc += v[256 * i + n]       * qmf_c[128 * i + n];
-            acc += v[256 * i + 192 + n] * qmf_c[128 * i + 64 + n];
-        }
-        out[n] = acc;
+    /* Ten 64-tap runs, each inside one 128-sample block, so no run wraps. */
+    const float *run[10];
+    for (int i = 0; i < 5; i++) {
+        run[2 * i]     = ch->qmf_v + ((ch->qmf_v_pos + 256 * i) % 1280);
+        run[2 * i + 1] = ch->qmf_v + ((ch->qmf_v_pos + 256 * i + 192) % 1280);
     }
+    for (int n = 0; n < 64; n++) out[n] = run[0][n] * qmf_c[n];
+    for (int i = 1; i < 10; i++) mac64(out, run[i], qmf_c + 64 * i);
 }
 #endif
 
