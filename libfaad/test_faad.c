@@ -59,8 +59,38 @@ static void *thread_test_worker(void *arg)
 }
 #endif
 
+/* AudioSpecificConfig signalling: the 0x2b7 sync extension carries a real
+ * sbrPresentFlag, so an explicit "no SBR" (FFmpeg's default for AAC-LC in
+ * MP4) must stay LC at the core rate, while faac's HE-AAC form enables it. */
+static void test_asc_sbr_signalling(void)
+{
+    static const uint8_t lc_explicit_no_sbr[] = { 0x14, 0x08, 0x56, 0xe5, 0x00 };
+    static const uint8_t lc_plain[]           = { 0x14, 0x08 };
+    static const uint8_t he_sbr_present[]     = { 0x14, 0x08, 0x56, 0xe5, 0xa8 };
+    const struct { const uint8_t *asc; uint32_t len; enum faad_object_type obj; uint32_t rate; } cases[] = {
+        { lc_explicit_no_sbr, sizeof(lc_explicit_no_sbr), FAAD_OBJ_LC,        16000 },
+        { lc_plain,           sizeof(lc_plain),           FAAD_OBJ_LC,        16000 },
+        { he_sbr_present,     sizeof(he_sbr_present),     FAAD_OBJ_HE_AAC_V1, 32000 },
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        faad_config cfg;
+        assert(faad_config_init(&cfg, sizeof(cfg)) == FAAD_OK);
+        cfg.stream_format = FAAD_STREAM_RAW;
+        faad_decoder *dec = NULL;
+        assert(faad_decoder_create(&cfg, cases[i].asc, cases[i].len, &dec) == FAAD_OK);
+        faad_stream_info info;
+        assert(faad_decoder_get_info(dec, &info) == FAAD_OK);
+        assert(info.sample_rate == cases[i].rate);
+        assert(info.channels == 1);
+        assert(info.object_type == cases[i].obj);
+        faad_decoder_destroy(dec);
+    }
+}
+
 int main(void)
 {
+    test_asc_sbr_signalling();
+
     faad_config cfg;
     faad_status st = faad_config_init(&cfg, sizeof(cfg));
     assert(st == FAAD_OK);
