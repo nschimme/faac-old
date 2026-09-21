@@ -205,8 +205,14 @@ static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, str
                     stss_tables[current_trak_idx][e] = read_u32_be(buf + payload_offset + 8 + e * 4);
                 }
             }
-        } else if (memcmp(type, "iTun", 4) == 0 || memcmp(type, "SMPB", 4) == 0) {
-            for (long j = payload_offset; j < payload_end - 32; j++) {
+        } else if (memcmp(type, "----", 4) == 0 || memcmp(type, "iTun", 4) == 0 || memcmp(type, "SMPB", 4) == 0) {
+            /* iTunes gapless info: a '----' box whose 'name' child is iTunSMPB and
+             * whose 'data' child holds the hex string. Match on the name, then
+             * scan for the string; other '----' boxes carry different names. */
+            bool named = memcmp(type, "----", 4) != 0;
+            for (long j = payload_offset; !named && j + 8 <= payload_end; j++)
+                if (memcmp(buf + j, "iTunSMPB", 8) == 0) named = true;
+            for (long j = payload_offset; named && j < payload_end - 32; j++) {
                 if (memcmp(buf + j, " 00000000 ", 10) == 0) {
                     char str_buf[128] = {0};
                     long copy_len = payload_end - j;
@@ -439,6 +445,9 @@ faam_status faam_demuxer_init(void *mem_buf, uint32_t mem_bytes, const faam_io *
             }
             if (buf_len > 32) {
                 faam_parse_stream(d, buf, (long)buf_len);
+                /* Without iTunSMPB the edit list's media time is the priming. */
+                if (!d->has_gapless && d->has_elst && d->elst_media_time < 0xFFFFFFFFULL)
+                    d->gapless.encoder_delay = (uint32_t)d->elst_media_time;
             }
             FreeMemory(buf);
         }
