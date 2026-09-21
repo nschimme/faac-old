@@ -433,13 +433,81 @@ static void sbr_reset_channel(SBRChannel *ch)
 /* Bitstream: header, grid, envelopes (§4.6.18.3)                           */
 /* ------------------------------------------------------------------------ */
 
-static int sbr_huff(BitReader *bs, const SBRHuffEntry *tab, int nsyms, int offset)
+SBRHuffBook sbr_books[HB_COUNT];
+static uint8_t sbr_huff_pool[846];
+
+static const struct { const SBRHuffEntry *tab; uint8_t nsyms; int8_t offset; } sbr_book_desc[HB_COUNT] = {
+    { t_huff_env_1_5dB, T_HUFF_ENV_1_5DB_NSYMS, T_HUFF_ENV_1_5DB_OFFSET },
+    { f_huff_env_1_5dB, F_HUFF_ENV_1_5DB_NSYMS, F_HUFF_ENV_1_5DB_OFFSET },
+    { t_huff_env_bal_1_5dB, T_HUFF_ENV_BAL_1_5DB_NSYMS, T_HUFF_ENV_BAL_1_5DB_OFFSET },
+    { f_huff_env_bal_1_5dB, F_HUFF_ENV_BAL_1_5DB_NSYMS, F_HUFF_ENV_BAL_1_5DB_OFFSET },
+    { t_huff_env_3_0dB, T_HUFF_ENV_3_0DB_NSYMS, T_HUFF_ENV_3_0DB_OFFSET },
+    { f_huff_env_3_0dB, F_HUFF_ENV_3_0DB_NSYMS, F_HUFF_ENV_3_0DB_OFFSET },
+    { t_huff_env_bal_3_0dB, T_HUFF_ENV_BAL_3_0DB_NSYMS, T_HUFF_ENV_BAL_3_0DB_OFFSET },
+    { f_huff_env_bal_3_0dB, F_HUFF_ENV_BAL_3_0DB_NSYMS, F_HUFF_ENV_BAL_3_0DB_OFFSET },
+    { t_huff_noise_3_0dB, T_HUFF_NOISE_3_0DB_NSYMS, T_HUFF_NOISE_3_0DB_OFFSET },
+    { t_huff_noise_bal_3_0dB, T_HUFF_NOISE_BAL_3_0DB_NSYMS, T_HUFF_NOISE_BAL_3_0DB_OFFSET },
+#ifndef FAAD_DISABLE_PS
+    { ps_huff_iid_df_fine, PS_HUFF_IID_DF_FINE_NSYMS, PS_HUFF_IID_DF_FINE_OFFSET },
+    { ps_huff_iid_dt_fine, PS_HUFF_IID_DT_FINE_NSYMS, PS_HUFF_IID_DT_FINE_OFFSET },
+    { ps_huff_iid_df, PS_HUFF_IID_DF_NSYMS, PS_HUFF_IID_DF_OFFSET },
+    { ps_huff_iid_dt, PS_HUFF_IID_DT_NSYMS, PS_HUFF_IID_DT_OFFSET },
+    { ps_huff_icc_df, PS_HUFF_ICC_DF_NSYMS, PS_HUFF_ICC_DF_OFFSET },
+    { ps_huff_icc_dt, PS_HUFF_ICC_DT_NSYMS, PS_HUFF_ICC_DT_OFFSET },
+    { ps_huff_ipd_df, PS_HUFF_IPD_DF_NSYMS, PS_HUFF_IPD_DF_OFFSET },
+    { ps_huff_ipd_dt, PS_HUFF_IPD_DT_NSYMS, PS_HUFF_IPD_DT_OFFSET },
+    { ps_huff_opd_df, PS_HUFF_OPD_DF_NSYMS, PS_HUFF_OPD_DF_OFFSET },
+    { ps_huff_opd_dt, PS_HUFF_OPD_DT_NSYMS, PS_HUFF_OPD_DT_OFFSET },
+#endif
+};
+
+void init_sbr_books(void)
 {
+    static bool done = false;
+    if (done) return;
+    uint16_t pos = 0;
+    for (int id = 0; id < HB_COUNT; id++) {
+        const SBRHuffEntry *tab = sbr_book_desc[id].tab;
+        int nsyms = sbr_book_desc[id].nsyms;
+        SBRHuffBook *b = &sbr_books[id];
+        uint8_t *order = sbr_huff_pool + pos;
+        if (!tab) continue;
+        b->tab = tab; b->nsyms = (uint8_t)nsyms; b->offset = sbr_book_desc[id].offset; b->pool = pos;
+        pos += (uint16_t)nsyms;
+
+        memset(b->first, 0, sizeof(b->first));
+        for (int i = 0; i < nsyms; i++) b->first[tab[i].len + 1]++;
+        for (int l = 1; l <= HB_MAX_LEN + 1; l++) b->first[l] += b->first[l - 1];
+        /* stable fill, then order each length's run by code */
+        uint8_t fill[HB_MAX_LEN + 2];
+        memcpy(fill, b->first, sizeof(fill));
+        for (int i = 0; i < nsyms; i++) order[fill[tab[i].len]++] = (uint8_t)i;
+        for (int l = 1; l <= HB_MAX_LEN; l++) {
+            for (int i = b->first[l] + 1; i < b->first[l + 1]; i++) {
+                uint8_t sym = order[i];
+                int j = i;
+                while (j > b->first[l] && tab[order[j - 1]].code > tab[sym].code) { order[j] = order[j - 1]; j--; }
+                order[j] = sym;
+            }
+        }
+    }
+    done = true;
+}
+
+/* Reads one codeword: after each bit, only the symbols of that length are
+ * candidates, and they are in code order. */
+int sbr_huff_decode(BitReader *bs, const SBRHuffBook *book)
+{
+    const SBRHuffEntry *tab = book->tab;
+    const uint8_t *order = sbr_huff_pool + book->pool;
     uint32_t code = 0;
-    for (int len = 1; len <= 20; len++) {
+    for (int len = 1; len <= HB_MAX_LEN; len++) {
         code = (code << 1) | bits_get_1(bs);
-        for (int i = 0; i < nsyms; i++)
-            if (tab[i].len == (uint32_t)len && tab[i].code == code) return i - offset;
+        for (int i = book->first[len]; i < book->first[len + 1]; i++) {
+            uint32_t c = tab[order[i]].code;
+            if (c == code) return order[i] - book->offset;
+            if (c > code) break;
+        }
     }
     return 0;
 }
@@ -538,29 +606,12 @@ static bool sbr_read_grid(BitReader *bs, SBRChannel *ch)
 
 static void sbr_read_envelope(BitReader *bs, const SBRElement *el, SBRChannel *ch, bool balance)
 {
-    const SBRHuffEntry *t_tab, *f_tab;
-    int t_n, t_off, f_n, f_off, start_bits;
-    if (ch->amp_res) {
-        if (balance) {
-            t_tab = t_huff_env_bal_3_0dB; t_n = T_HUFF_ENV_BAL_3_0DB_NSYMS; t_off = T_HUFF_ENV_BAL_3_0DB_OFFSET;
-            f_tab = f_huff_env_bal_3_0dB; f_n = F_HUFF_ENV_BAL_3_0DB_NSYMS; f_off = F_HUFF_ENV_BAL_3_0DB_OFFSET;
-            start_bits = 5;
-        } else {
-            t_tab = t_huff_env_3_0dB; t_n = T_HUFF_ENV_3_0DB_NSYMS; t_off = T_HUFF_ENV_3_0DB_OFFSET;
-            f_tab = f_huff_env_3_0dB; f_n = F_HUFF_ENV_3_0DB_NSYMS; f_off = F_HUFF_ENV_3_0DB_OFFSET;
-            start_bits = 6;
-        }
-    } else {
-        if (balance) {
-            t_tab = t_huff_env_bal_1_5dB; t_n = T_HUFF_ENV_BAL_1_5DB_NSYMS; t_off = T_HUFF_ENV_BAL_1_5DB_OFFSET;
-            f_tab = f_huff_env_bal_1_5dB; f_n = F_HUFF_ENV_BAL_1_5DB_NSYMS; f_off = F_HUFF_ENV_BAL_1_5DB_OFFSET;
-            start_bits = 6;
-        } else {
-            t_tab = t_huff_env_1_5dB; t_n = T_HUFF_ENV_1_5DB_NSYMS; t_off = T_HUFF_ENV_1_5DB_OFFSET;
-            f_tab = f_huff_env_1_5dB; f_n = F_HUFF_ENV_1_5DB_NSYMS; f_off = F_HUFF_ENV_1_5DB_OFFSET;
-            start_bits = 7;
-        }
-    }
+    /* 3.0 dB resolution: 5-bit start (6 for the balance channel); 1.5 dB: 7 (6). */
+    int start_bits = ch->amp_res ? (balance ? 5 : 6) : (balance ? 6 : 7);
+    const SBRHuffBook *t_book = &sbr_books[ch->amp_res ? (balance ? HB_T_ENV_BAL_30 : HB_T_ENV_30)
+                                                       : (balance ? HB_T_ENV_BAL_15 : HB_T_ENV_15)];
+    const SBRHuffBook *f_book = &sbr_books[ch->amp_res ? (balance ? HB_F_ENV_BAL_30 : HB_F_ENV_30)
+                                                       : (balance ? HB_F_ENV_BAL_15 : HB_F_ENV_15)];
 
     /* The balance channel is coded at half resolution: its values count double. */
     int scale = balance ? 2 : 1;
@@ -569,7 +620,7 @@ static void sbr_read_envelope(BitReader *bs, const SBRElement *el, SBRChannel *c
         if (ch->df_env[l] == 0) {
             ch->E[l][0] = (int16_t)(scale * (int)bits_get(bs, start_bits));
             for (int k = 1; k < nb; k++) {
-                int d = scale * sbr_huff(bs, f_tab, f_n, f_off);
+                int d = scale * sbr_huff_decode(bs, f_book);
                 ch->E[l][k] = (int16_t)(ch->E[l][k - 1] + d);
             }
         } else {
@@ -578,7 +629,7 @@ static void sbr_read_envelope(BitReader *bs, const SBRElement *el, SBRChannel *c
             const int16_t *prev = (l == 0) ? ch->E_prev : ch->E[l - 1];
             int r_prev = (l == 0) ? ch->freq_res_prev : ch->freq_res[l - 1];
             for (int k = 0; k < nb; k++) {
-                int d = scale * sbr_huff(bs, t_tab, t_n, t_off);
+                int d = scale * sbr_huff_decode(bs, t_book);
                 int ref;
                 if (r_prev == ch->freq_res[l]) {
                     ref = prev[k];
@@ -599,25 +650,21 @@ static void sbr_read_envelope(BitReader *bs, const SBRElement *el, SBRChannel *c
 
 static void sbr_read_noise(BitReader *bs, const SBRElement *el, SBRChannel *ch, bool balance)
 {
-    const SBRHuffEntry *t_tab = balance ? t_huff_noise_bal_3_0dB : t_huff_noise_3_0dB;
-    int t_n = balance ? T_HUFF_NOISE_BAL_3_0DB_NSYMS : T_HUFF_NOISE_3_0DB_NSYMS;
-    int t_off = balance ? T_HUFF_NOISE_BAL_3_0DB_OFFSET : T_HUFF_NOISE_3_0DB_OFFSET;
-    const SBRHuffEntry *f_tab = balance ? f_huff_env_bal_3_0dB : f_huff_env_3_0dB;
-    int f_n = balance ? F_HUFF_ENV_BAL_3_0DB_NSYMS : F_HUFF_ENV_3_0DB_NSYMS;
-    int f_off = balance ? F_HUFF_ENV_BAL_3_0DB_OFFSET : F_HUFF_ENV_3_0DB_OFFSET;
+    const SBRHuffBook *t_book = &sbr_books[balance ? HB_T_NOISE_BAL_30 : HB_T_NOISE_30];
+    const SBRHuffBook *f_book = &sbr_books[balance ? HB_F_ENV_BAL_30 : HB_F_ENV_30];
 
     int scale = balance ? 2 : 1;
     for (int l = 0; l < ch->L_Q; l++) {
         if (ch->df_noise[l] == 0) {
             ch->Q[l][0] = (int16_t)(scale * (int)bits_get(bs, 5));
             for (int k = 1; k < el->n_q; k++) {
-                int d = scale * sbr_huff(bs, f_tab, f_n, f_off);
+                int d = scale * sbr_huff_decode(bs, f_book);
                 ch->Q[l][k] = (int16_t)(ch->Q[l][k - 1] + d);
             }
         } else {
             const int16_t *prev = (l == 0) ? ch->Q_prev : ch->Q[l - 1];
             for (int k = 0; k < el->n_q; k++) {
-                int d = scale * sbr_huff(bs, t_tab, t_n, t_off);
+                int d = scale * sbr_huff_decode(bs, t_book);
                 ch->Q[l][k] = (int16_t)(prev[k] + d);
             }
         }
@@ -1133,6 +1180,8 @@ static void sbr_process_channel(const SBRElement *el, SBRChannel *ch, SBRScratch
 #else /* FAAD_DISABLE_SBR */
 
 void init_qmf_twiddles(void) {}
+void init_sbr_books(void) {}
+SBRHuffBook sbr_books[HB_COUNT];
 
 faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32_t ch0, uint32_t syntax_id, bool crc)
 {
