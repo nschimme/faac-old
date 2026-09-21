@@ -895,6 +895,22 @@ static void sbr_hf_generate(const SBRElement *el, SBRChannel *ch, SBRScratch *sc
 /* Envelope adjustment (§4.6.18.7)                                           */
 /* ------------------------------------------------------------------------ */
 
+/* 2^(n/2) built from the float exponent field; the envelope and noise
+ * scalefactors are integers, so no pow() is needed. */
+static inline float sbr_pow2_half(int n)
+{
+    union { uint32_t u; float f; } v;
+    int e = n >> 1; /* floor(n/2), also for negative n */
+    if (e < -126) return 0.0f;
+    if (e > 127) e = 127;
+    v.u = (uint32_t)(e + 127) << 23;
+    return (n & 1) ? v.f * 1.41421356f : v.f;
+}
+
+/* Envelope and noise-floor scalefactors to linear values (§4.6.18.7.1):
+ * E = 64 * 2^(E_q / 2) at 1.5 dB steps or 64 * 2^E_q at 3 dB, and
+ * Q = 2^(6 - Q_q). A coupled pair sends a level and a balance; the level
+ * splits as 2E / (1 + 2^(pan - balance)) and its complement. */
 static void sbr_dequant(const SBRElement *el, SBRChannel *c0, SBRChannel *c1,
                         float E0[SBR_MAX_ENV][SBR_MAX_BANDS], float Q0[2][SBR_MAX_NQ],
                         float E1[SBR_MAX_ENV][SBR_MAX_BANDS], float Q1[2][SBR_MAX_NQ])
@@ -905,32 +921,31 @@ static void sbr_dequant(const SBRElement *el, SBRChannel *c0, SBRChannel *c1,
         float (*Qs[2])[SBR_MAX_NQ] = { Q0, Q1 };
         for (int c = 0; c < 2 && chs[c]; c++) {
             SBRChannel *ch = chs[c];
-            float a = ch->amp_res ? 1.0f : 0.5f;
+            int step = ch->amp_res ? 2 : 1; /* half-steps per unit */
             for (int l = 0; l < ch->L_E; l++) {
                 int nb = ch->freq_res[l] ? el->n_high : el->n_low;
-                for (int k = 0; k < nb; k++) Es[c][l][k] = 64.0f * powf(2.0f, a * ch->E[l][k]);
+                for (int k = 0; k < nb; k++) Es[c][l][k] = 64.0f * sbr_pow2_half(step * ch->E[l][k]);
             }
             for (int l = 0; l < ch->L_Q; l++)
-                for (int k = 0; k < el->n_q; k++) Qs[c][l][k] = powf(2.0f, (float)(SBR_NOISE_FLOOR_OFFSET - ch->Q[l][k]));
+                for (int k = 0; k < el->n_q; k++) Qs[c][l][k] = sbr_pow2_half(2 * (SBR_NOISE_FLOOR_OFFSET - ch->Q[l][k]));
         }
         return;
     }
-    /* Coupled pair: channel 0 carries the level, channel 1 the balance. */
-    float a = c0->amp_res ? 1.0f : 0.5f;
+    int step = c0->amp_res ? 2 : 1;
     int pan = c0->amp_res ? 12 : 24;
     for (int l = 0; l < c0->L_E; l++) {
         int nb = c0->freq_res[l] ? el->n_high : el->n_low;
         for (int k = 0; k < nb; k++) {
-            float e = 64.0f * powf(2.0f, a * c0->E[l][k]);
-            float b = powf(2.0f, a * (pan - c1->E[l][k]));
+            float e = 64.0f * sbr_pow2_half(step * c0->E[l][k]);
+            float b = sbr_pow2_half(step * (pan - c1->E[l][k]));
             E0[l][k] = 2.0f * e / (1.0f + b);
             E1[l][k] = 2.0f * e / (1.0f + 1.0f / b);
         }
     }
     for (int l = 0; l < c0->L_Q; l++) {
         for (int k = 0; k < el->n_q; k++) {
-            float q = powf(2.0f, (float)(SBR_NOISE_FLOOR_OFFSET - c0->Q[l][k]));
-            float b = powf(2.0f, (float)(12 - c1->Q[l][k]));
+            float q = sbr_pow2_half(2 * (SBR_NOISE_FLOOR_OFFSET - c0->Q[l][k]));
+            float b = sbr_pow2_half(2 * (12 - c1->Q[l][k]));
             Q0[l][k] = 2.0f * q / (1.0f + b);
             Q1[l][k] = 2.0f * q / (1.0f + 1.0f / b);
         }
@@ -1069,32 +1084,38 @@ static void sbr_hf_adjust(const SBRElement *el, SBRChannel *ch, SBRScratch *sc,
         memcpy(ch->g_hist[3], gain, sizeof(float) * (size_t)M);
         memcpy(ch->q_hist[3], q_m, sizeof(float) * (size_t)M);
 
-        for (int n = slot0; n < slot1; n++) {
-            ch->index_noise = (uint16_t)((ch->index_noise + 1) & 511);
-            int phase = ch->index_sine;
-            ch->index_sine = (uint8_t)((ch->index_sine + 1) & 3);
-            /* (-1)^k sign alternation of the sinusoid's imaginary part */
-            float sign = (kx & 1) ? -1.0f : 1.0f;
-            for (int m = 0; m < M; m++) {
-                const float *xh = sc->y[kx + m][n];
-                float yr = xh[0] * g_filt[m], yi = xh[1] * g_filt[m];
-                if (s_m[m] != 0.0f) {
-                    /* cos(pi/2 idx) real, sin(pi/2 idx) imaginary */
-                    static const float ph_c[4] = { 1.0f, 0.0f, -1.0f, 0.0f };
-                    static const float ph_s[4] = { 0.0f, 1.0f, 0.0f, -1.0f };
-                    yr += s_m[m] * ph_c[phase];
-                    yi += s_m[m] * ph_s[phase] * sign;
-                } else {
-                    int idx = (ch->index_noise + m) & 511;
-                    yr += q_filt[m] * sbr_noise_table[idx][0];
-                    yi += q_filt[m] * sbr_noise_table[idx][1];
-                }
-                sign = -sign;
-                sc->y[kx + m][n][0] = yr;
-                sc->y[kx + m][n][1] = yi;
+        /* Y = G X + Q noise, plus the sinusoids. The noise index runs on by
+         * one per slot and by M across the bands of a slot, and a band with
+         * a sinusoid takes no noise: its Q is zeroed so one uniform pass
+         * covers every band, then the few sinusoid bands get their tone. */
+        for (int m = 0; m < M; m++) if (s_m[m] != 0.0f) q_filt[m] = 0.0f;
+        int noise0 = (ch->index_noise + 1) & 511;
+        int phase0 = ch->index_sine;
+        int nslots = slot1 - slot0;
+        for (int m = 0; m < M; m++) {
+            float (*yb)[2] = sc->y[kx + m] + slot0;
+            float g = g_filt[m], q = q_filt[m];
+            int idx = (noise0 + m) & 511;
+            for (int n = 0; n < nslots; n++) {
+                yb[n][0] = yb[n][0] * g + q * sbr_noise_table[idx][0];
+                yb[n][1] = yb[n][1] * g + q * sbr_noise_table[idx][1];
+                idx = (idx + M) & 511;
             }
-            ch->index_noise = (uint16_t)((ch->index_noise + M - 1) & 511);
+            if (s_m[m] != 0.0f) {
+                /* exp(j pi/2 idx), the imaginary part alternating in sign
+                 * from band to band */
+                static const float ph_c[4] = { 1.0f, 0.0f, -1.0f, 0.0f };
+                static const float ph_s[4] = { 0.0f, 1.0f, 0.0f, -1.0f };
+                float sr = s_m[m], si = ((kx + m) & 1) ? -s_m[m] : s_m[m];
+                for (int n = 0; n < nslots; n++) {
+                    int ph = (phase0 + n) & 3;
+                    yb[n][0] += sr * ph_c[ph];
+                    yb[n][1] += si * ph_s[ph];
+                }
+            }
         }
+        ch->index_noise = (uint16_t)((ch->index_noise + nslots * M) & 511);
+        ch->index_sine = (uint8_t)((ch->index_sine + nslots) & 3);
         if (l == ch->L_E - 1) memcpy(ch->s_index_prev, s_index, (size_t)M);
     }
 }
