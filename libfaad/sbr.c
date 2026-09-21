@@ -828,7 +828,7 @@ static void sbr_hf_generate(const SBRElement *el, SBRChannel *ch, SBRScratch *sc
             float c0r = a0[p][0] * bw, c0i = a0[p][1] * bw;
             float c1r = a1[p][0] * bw2, c1i = a1[p][1] * bw2;
             float (*xl)[2] = sc->x_low[p];
-            float (*xh)[2] = sc->x_high[k];
+            float (*xh)[2] = sc->y[k];
             for (int n = start; n < end; n++) {
                 xh[n][0] = xl[n][0] + c0r * xl[n - 1][0] - c0i * xl[n - 1][1] + c1r * xl[n - 2][0] - c1i * xl[n - 2][1];
                 xh[n][1] = xl[n][1] + c0r * xl[n - 1][1] + c0i * xl[n - 1][0] + c1r * xl[n - 2][1] + c1i * xl[n - 2][0];
@@ -926,7 +926,7 @@ static void sbr_hf_adjust(const SBRElement *el, SBRChannel *ch, SBRScratch *sc,
         float inv_slots = 1.0f / (float)(slot1 - slot0);
         if (el->interpol_freq) {
             for (int m = 0; m < M; m++) {
-                float (*xh)[2] = sc->x_high[kx + m];
+                float (*xh)[2] = sc->y[kx + m];
                 float acc = 0.0f;
                 for (int n = slot0; n < slot1; n++) acc += xh[n][0] * xh[n][0] + xh[n][1] * xh[n][1];
                 e_curr[m] = acc * inv_slots;
@@ -935,7 +935,7 @@ static void sbr_hf_adjust(const SBRElement *el, SBRChannel *ch, SBRScratch *sc,
             for (int i = 0; i < nb; i++) {
                 float acc = 0.0f;
                 for (int k = tab[i]; k < tab[i + 1]; k++) {
-                    float (*xh)[2] = sc->x_high[k];
+                    float (*xh)[2] = sc->y[k];
                     for (int n = slot0; n < slot1; n++) acc += xh[n][0] * xh[n][0] + xh[n][1] * xh[n][1];
                 }
                 acc *= inv_slots / (float)(tab[i + 1] - tab[i]);
@@ -1022,7 +1022,7 @@ static void sbr_hf_adjust(const SBRElement *el, SBRChannel *ch, SBRScratch *sc,
             /* (-1)^k sign alternation of the sinusoid's imaginary part */
             float sign = (kx & 1) ? -1.0f : 1.0f;
             for (int m = 0; m < M; m++) {
-                const float *xh = sc->x_high[kx + m][n];
+                const float *xh = sc->y[kx + m][n];
                 float yr = xh[0] * g_filt[m], yi = xh[1] * g_filt[m];
                 if (s_m[m] != 0.0f) {
                     /* cos(pi/2 idx) real, sin(pi/2 idx) imaginary */
@@ -1096,8 +1096,10 @@ static void sbr_process_channel(const SBRElement *el, SBRChannel *ch, SBRScratch
 {
     sbr_analyse(ch, sc, pcm);
 
-    /* Y carries the previous frame's tail; the region this frame adjusts is
-     * written below and the rest stays zero. */
+    /* Y carries the previous frame's tail; the HF generator then writes
+     * the region this frame adjusts, the adjuster rewrites it in place
+     * (each envelope's energy is read before its slots are scaled), and
+     * the rest stays zero. */
     memset(sc->y, 0, sizeof(sc->y));
     for (int k = 0; k < SBR_MAX_BANDS; k++)
         memcpy(sc->y[k], ch->y_tail[k], sizeof(ch->y_tail[k]));
@@ -1162,20 +1164,21 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
         if (dec->ps_present && num_ch == 1) {
             sbr_process_channel(el, &dec->sbr[0], sc, pcm_in, E0, Q0, have_hf, PS_IN_SLOTS);
             dec->num_channels = 2;
-            float (*L)[64][2] = sc->ps_out[0], (*R)[64][2] = sc->ps_out[1];
-            if (dec->ps.start) {
-                ps_apply(dec, sc->x, L, R, have_hf ? el->kx + el->M : 32);
-            } else {
-                memcpy(L, sc->x, sizeof(sc->ps_out[0]));
-                memcpy(R, sc->x, sizeof(sc->ps_out[0]));
-            }
+            if (dec->ps.start) ps_apply(dec, sc->x, have_hf ? el->kx + el->M : 32);
             for (int t = 0; t < SBR_SLOTS; t++) {
+                float L[64][2], R[64][2];
+                float (*l)[2] = sc->x[t], (*r)[2] = sc->x[t]; /* no PS data yet: dual mono */
+                if (dec->ps.start) {
+                    ps_synthesis_slot(dec, 0, t, L);
+                    ps_synthesis_slot(dec, 1, t, R);
+                    l = L; r = R;
+                }
 #ifdef FAAD_D_SBR
-                qmf_synthesis_slot_ds(&dec->sbr[0], L[t], pcm_out + t * 32);
-                qmf_synthesis_slot_ds(&dec->sbr[1], R[t], pcm_out + 1024 + t * 32);
+                qmf_synthesis_slot_ds(&dec->sbr[0], l, pcm_out + t * 32);
+                qmf_synthesis_slot_ds(&dec->sbr[1], r, pcm_out + 1024 + t * 32);
 #else
-                qmf_synthesis_slot(&dec->sbr[0], L[t], pcm_out + t * 64);
-                qmf_synthesis_slot(&dec->sbr[1], R[t], pcm_out + 2048 + t * 64);
+                qmf_synthesis_slot(&dec->sbr[0], l, pcm_out + t * 64);
+                qmf_synthesis_slot(&dec->sbr[1], r, pcm_out + 2048 + t * 64);
 #endif
             }
             return;
