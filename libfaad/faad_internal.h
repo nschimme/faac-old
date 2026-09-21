@@ -239,7 +239,8 @@ typedef struct FaadDecStats {
 #define PS_QMF_SLOTS    32
 #define PS_IN_SLOTS     38  /* QMF slots handed to the hybrid bank: 32 plus 6 of look-ahead */
 #define PS_MAX_DELAY    14
-#define PS_MAX_AP_DELAY 5
+#define PS_NR_ALLPASS   50  /* all-pass bands in the 34-parameter layout (30 in the 20) */
+#define PS_AP_STATE     12  /* link delays 3 + 4 + 5 */
 
 typedef struct {
     bool    start;          /* a header has been seen */
@@ -256,8 +257,13 @@ typedef struct {
     bool    is34, is34_old;
 
     float   in_buf[5][PS_IN_SLOTS + 6][2];                  /* hybrid analysis history */
-    float   delay[PS_NR_BANDS][PS_QMF_SLOTS + PS_MAX_DELAY][2];
-    float   ap_delay[50][3][PS_QMF_SLOTS + PS_MAX_AP_DELAY][2];
+    /* Decorrelator history, only what a frame leaves for the next: the
+     * two-slot input delay and the 3+4+5 link states of each all-pass
+     * band, the 14-slot line of each delay band (indexed from the first
+     * delay band). */
+    float   dc_in[PS_NR_ALLPASS][2][2];
+    float   dc_ap[PS_NR_ALLPASS][PS_AP_STATE][2];
+    float   dc_delay[PS_NR_BANDS - 30][PS_MAX_DELAY][2];
     float   peak_decay_nrg[PS_NR_PAR], power_smooth[PS_NR_PAR], peak_decay_diff_smooth[PS_NR_PAR];
     float   H[4][2][PS_MAX_ENV + 1][PS_NR_PAR];             /* mixing matrix per envelope border */
     int8_t  ipd_hist[17], opd_hist[17];                     /* two previous indices, packed */
