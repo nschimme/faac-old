@@ -417,7 +417,6 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
     , FaadDecStats *stats
 #endif
 );
-void dequantize_spectrum(ICSInfo *ics, float *spec);
 void apply_pns(ICSInfo *ics, float *spec, uint32_t *pns_seed);
 void apply_ms_stereo(CPEInfo *cpe, float *spec_l, float *spec_r);
 void apply_is_stereo(CPEInfo *cpe, float *spec_l, float *spec_r);

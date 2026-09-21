@@ -338,7 +338,6 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                 if (ch_idx >= MAX_CHANNELS) break;
                 last_elem_type = syntax_id;
                 decode_sce(&bs, dec, &ics_list[ch_idx], ch_idx);
-                dequantize_spectrum(&ics_list[ch_idx], dec->spec[ch_idx]);
                 apply_pns(&ics_list[ch_idx], dec->spec[ch_idx], &dec->pns_seed);
                 apply_tns(&ics_list[ch_idx], dec->spec[ch_idx]);
                 ch_idx += 1;
@@ -351,8 +350,6 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                 ics_list[ch_idx] = cpe.ics[0];
                 ics_list[ch_idx + 1] = cpe.ics[1];
 
-                dequantize_spectrum(&cpe.ics[0], dec->spec[ch_idx]);
-                dequantize_spectrum(&cpe.ics[1], dec->spec[ch_idx + 1]);
                 apply_pns(&cpe.ics[0], dec->spec[ch_idx], &dec->pns_seed);
                 apply_pns(&cpe.ics[1], dec->spec[ch_idx + 1], &dec->pns_seed);
                 apply_ms_stereo(&cpe, dec->spec[ch_idx], dec->spec[ch_idx + 1]);
