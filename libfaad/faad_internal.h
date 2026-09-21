@@ -39,6 +39,7 @@
 
 #include "faad.h"
 #include "huffdata.h"
+#include "sbr_tables.h"
 
 /* Channel capacity: the build's -Dmax-channels (config.h) when present. Every
  * per-channel buffer, including the SBR and PS state, scales with it. */
@@ -268,6 +269,30 @@ typedef struct {
     float   H[4][2][PS_MAX_ENV + 1][PS_NR_PAR];             /* mixing matrix per envelope border */
     int8_t  ipd_hist[17], opd_hist[17];                     /* two previous indices, packed */
 } PSState;
+
+/* SBR/PS codebooks: the spec tables list codewords by symbol; decoding
+ * walks the symbols of each length in code order, so an index built once
+ * at start holds, per book, where each length's run starts in a pool of
+ * symbols sorted by (length, code). */
+enum {
+    HB_T_ENV_15, HB_F_ENV_15, HB_T_ENV_BAL_15, HB_F_ENV_BAL_15,
+    HB_T_ENV_30, HB_F_ENV_30, HB_T_ENV_BAL_30, HB_F_ENV_BAL_30,
+    HB_T_NOISE_30, HB_T_NOISE_BAL_30,
+    HB_PS_IID_DF_FINE, HB_PS_IID_DT_FINE, HB_PS_IID_DF, HB_PS_IID_DT,
+    HB_PS_ICC_DF, HB_PS_ICC_DT, HB_PS_IPD_DF, HB_PS_IPD_DT, HB_PS_OPD_DF, HB_PS_OPD_DT,
+    HB_COUNT
+};
+#define HB_MAX_LEN 20
+typedef struct {
+    const SBRHuffEntry *tab;
+    int16_t  offset;          /* symbol index of value 0 */
+    uint8_t  nsyms;
+    uint16_t pool;            /* start of this book's symbols in sbr_huff_pool */
+    uint8_t  first[HB_MAX_LEN + 2]; /* first symbol of each length, relative to pool */
+} SBRHuffBook;
+extern SBRHuffBook sbr_books[HB_COUNT];
+void init_sbr_books(void);
+int  sbr_huff_decode(BitReader *bs, const SBRHuffBook *book);
 
 /* ---- SBR (ISO/IEC 14496-3 §4.6.18) ---- */
 #define SBR_SLOTS        32  /* QMF time slots per frame: numTimeSlots (16) * RATE (2) */

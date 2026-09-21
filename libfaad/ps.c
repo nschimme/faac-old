@@ -140,26 +140,15 @@ void init_ps_tables(void)
 /* Bitstream (§8.6.2)                                                        */
 /* ------------------------------------------------------------------------ */
 
-static int ps_huff(BitReader *bs, const SBRHuffEntry *tab, int nsyms, int offset)
-{
-    uint32_t code = 0;
-    for (int len = 1; len <= 20; len++) {
-        code = (code << 1) | bits_get_1(bs);
-        for (int i = 0; i < nsyms; i++)
-            if (tab[i].len == (uint32_t)len && tab[i].code == code) return i - offset;
-    }
-    return 0;
-}
-
 /* Deltas along frequency (df) or against the previous envelope (dt). */
 static bool ps_read_par(BitReader *bs, PSState *ps, int8_t par[PS_MAX_ENV][PS_NR_PAR], int num, int e, bool dt,
-                        const SBRHuffEntry *tab, int nsyms, int offset, int mask, int limit)
+                        const SBRHuffBook *book, int mask, int limit)
 {
     if (dt) {
         int e_prev = e ? e - 1 : (int)ps->num_env_old - 1;
         if (e_prev < 0) e_prev = 0;
         for (int b = 0; b < num; b++) {
-            int v = par[e_prev][b] + ps_huff(bs, tab, nsyms, offset);
+            int v = par[e_prev][b] + sbr_huff_decode(bs, book);
             if (mask) v &= mask;
             par[e][b] = (int8_t)v;
             if (limit && (v > limit || v < -limit)) return false;
@@ -167,7 +156,7 @@ static bool ps_read_par(BitReader *bs, PSState *ps, int8_t par[PS_MAX_ENV][PS_NR
     } else {
         int v = 0;
         for (int b = 0; b < num; b++) {
-            v += ps_huff(bs, tab, nsyms, offset);
+            v += sbr_huff_decode(bs, book);
             if (mask) v &= mask;
             par[e][b] = (int8_t)v;
             if (limit && (v > limit || v < -limit)) return false;
@@ -232,15 +221,9 @@ void ps_read_data(struct faad_decoder *dec, BitReader *bs, uint32_t bits_left)
         int limit = ps->iid_quant ? 15 : 7;
         for (int e = 0; e < ps->num_env && ok; e++) {
             bool dt = bits_get(bs, 1);
-            const SBRHuffEntry *tab; int n, off;
-            if (ps->iid_quant) {
-                tab = dt ? ps_huff_iid_dt_fine : ps_huff_iid_df_fine;
-                n = PS_HUFF_IID_DT_FINE_NSYMS; off = PS_HUFF_IID_DT_FINE_OFFSET;
-            } else {
-                tab = dt ? ps_huff_iid_dt : ps_huff_iid_df;
-                n = PS_HUFF_IID_DT_NSYMS; off = PS_HUFF_IID_DT_OFFSET;
-            }
-            ok = ps_read_par(bs, ps, ps->iid_par, ps->nr_iid_par, e, dt, tab, n, off, 0, limit);
+            int book = ps->iid_quant ? (dt ? HB_PS_IID_DT_FINE : HB_PS_IID_DF_FINE)
+                                     : (dt ? HB_PS_IID_DT : HB_PS_IID_DF);
+            ok = ps_read_par(bs, ps, ps->iid_par, ps->nr_iid_par, e, dt, &sbr_books[book], 0, limit);
         }
     } else {
         memset(ps->iid_par, 0, sizeof(ps->iid_par));
@@ -249,7 +232,7 @@ void ps_read_data(struct faad_decoder *dec, BitReader *bs, uint32_t bits_left)
         for (int e = 0; e < ps->num_env && ok; e++) {
             bool dt = bits_get(bs, 1);
             ok = ps_read_par(bs, ps, ps->icc_par, ps->nr_icc_par, e, dt,
-                             dt ? ps_huff_icc_dt : ps_huff_icc_df, PS_HUFF_ICC_DT_NSYMS, PS_HUFF_ICC_DT_OFFSET, 0, 0);
+                             &sbr_books[dt ? HB_PS_ICC_DT : HB_PS_ICC_DF], 0, 0);
             for (int b = 0; b < ps->nr_icc_par; b++) if ((unsigned)ps->icc_par[e][b] > 7) ok = false;
         }
     } else {
@@ -269,10 +252,10 @@ void ps_read_data(struct faad_decoder *dec, BitReader *bs, uint32_t bits_left)
                     for (int e = 0; e < ps->num_env; e++) {
                         bool dt = bits_get(bs, 1);
                         ps_read_par(bs, ps, ps->ipd_par, ps->nr_ipdopd_par, e, dt,
-                                    dt ? ps_huff_ipd_dt : ps_huff_ipd_df, PS_HUFF_IPD_DT_NSYMS, 0, 7, 0);
+                                    &sbr_books[dt ? HB_PS_IPD_DT : HB_PS_IPD_DF], 7, 0);
                         dt = bits_get(bs, 1);
                         ps_read_par(bs, ps, ps->opd_par, ps->nr_ipdopd_par, e, dt,
-                                    dt ? ps_huff_opd_dt : ps_huff_opd_df, PS_HUFF_OPD_DT_NSYMS, 0, 7, 0);
+                                    &sbr_books[dt ? HB_PS_OPD_DT : HB_PS_OPD_DF], 7, 0);
                     }
                 }
                 bits_skip(bs, 1); /* reserved_ps */
