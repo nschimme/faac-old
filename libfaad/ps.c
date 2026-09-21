@@ -396,26 +396,27 @@ static void ps_hybrid_analysis(PSState *ps, float out[PS_NR_BANDS][PS_QMF_SLOTS]
         memmove(ps->in_buf[i], ps->in_buf[i] + PS_QMF_SLOTS, 6 * sizeof(ps->in_buf[i][0]));
 }
 
-static void ps_hybrid_synthesis(float out[PS_QMF_SLOTS][64][2], float in[PS_NR_BANDS][PS_QMF_SLOTS][2], bool is34)
+/* Hybrid synthesis of one slot: the sub-bands of the split QMF bands sum
+ * back, the others pass through. */
+void ps_synthesis_slot(struct faad_decoder *dec, int side, int n, float out[64][2])
 {
     static const uint8_t counts34[5] = { 12, 8, 4, 4, 4 };
-    for (int n = 0; n < PS_QMF_SLOTS; n++) {
-        if (is34) {
-            int k = 0;
-            for (int b = 0; b < 5; b++) {
-                float sr = 0.0f, si = 0.0f;
-                for (int q = 0; q < counts34[b]; q++, k++) { sr += in[k][n][0]; si += in[k][n][1]; }
-                out[n][b][0] = sr; out[n][b][1] = si;
-            }
-            for (int b = 5; b < 64; b++) { out[n][b][0] = in[b + 27][n][0]; out[n][b][1] = in[b + 27][n][1]; }
-        } else {
+    float (*in)[PS_QMF_SLOTS][2] = side ? dec->sbr_scratch.ps_r : dec->sbr_scratch.ps_l;
+    if (dec->ps.is34) {
+        int k = 0;
+        for (int b = 0; b < 5; b++) {
             float sr = 0.0f, si = 0.0f;
-            for (int q = 0; q < 6; q++) { sr += in[q][n][0]; si += in[q][n][1]; }
-            out[n][0][0] = sr; out[n][0][1] = si;
-            out[n][1][0] = in[6][n][0] + in[7][n][0]; out[n][1][1] = in[6][n][1] + in[7][n][1];
-            out[n][2][0] = in[8][n][0] + in[9][n][0]; out[n][2][1] = in[8][n][1] + in[9][n][1];
-            for (int b = 3; b < 64; b++) { out[n][b][0] = in[b + 7][n][0]; out[n][b][1] = in[b + 7][n][1]; }
+            for (int q = 0; q < counts34[b]; q++, k++) { sr += in[k][n][0]; si += in[k][n][1]; }
+            out[b][0] = sr; out[b][1] = si;
         }
+        for (int b = 5; b < 64; b++) { out[b][0] = in[b + 27][n][0]; out[b][1] = in[b + 27][n][1]; }
+    } else {
+        float sr = 0.0f, si = 0.0f;
+        for (int q = 0; q < 6; q++) { sr += in[q][n][0]; si += in[q][n][1]; }
+        out[0][0] = sr; out[0][1] = si;
+        out[1][0] = in[6][n][0] + in[7][n][0]; out[1][1] = in[6][n][1] + in[7][n][1];
+        out[2][0] = in[8][n][0] + in[9][n][0]; out[2][1] = in[8][n][1] + in[9][n][1];
+        for (int b = 3; b < 64; b++) { out[b][0] = in[b + 7][n][0]; out[b][1] = in[b + 7][n][1]; }
     }
 }
 
@@ -722,7 +723,9 @@ static void ps_stereo(PSState *ps, float l[PS_NR_BANDS][PS_QMF_SLOTS][2], float 
 }
 
 /* Mono X (38 slots, the last six a low-band look-ahead) to a stereo pair of 32 slots. */
-void ps_apply(struct faad_decoder *dec, float X[PS_IN_SLOTS][64][2], float L[PS_QMF_SLOTS][64][2], float R[PS_QMF_SLOTS][64][2], int top)
+/* Runs the frame up to the hybrid domain; ps_synthesis_slot() then yields
+ * each output slot, so no frame-sized QMF-domain output is kept. */
+void ps_apply(struct faad_decoder *dec, float X[PS_IN_SLOTS][64][2], int top)
 {
     PSState *ps = &dec->ps;
     bool is34 = ps->is34;
@@ -746,8 +749,6 @@ void ps_apply(struct faad_decoder *dec, float X[PS_IN_SLOTS][64][2], float L[PS_
     ps_hybrid_analysis(ps, lb, X, is34);
     ps_decorrelate(ps, rb, lb, is34);
     ps_stereo(ps, lb, rb, is34);
-    ps_hybrid_synthesis(L, lb, is34);
-    ps_hybrid_synthesis(R, rb, is34);
 }
 
 #endif /* FAAD_DISABLE_PS */

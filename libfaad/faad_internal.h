@@ -335,13 +335,11 @@ typedef struct {
 /* Per-frame working buffers, one channel at a time. */
 typedef struct {
     float x_low[32][SBR_BUF_SLOTS][2];
-    float x_high[SBR_MAX_BANDS][SBR_BUF_SLOTS][2];
-    float y[SBR_MAX_BANDS][SBR_BUF_SLOTS][2];
+    float y[SBR_MAX_BANDS][SBR_BUF_SLOTS][2]; /* generated HF, adjusted in place */
     float x[PS_IN_SLOTS][64][2]; /* assembled output per slot (38 for the PS look-ahead) */
 #ifndef FAAD_DISABLE_PS
     float ps_l[PS_NR_BANDS][PS_QMF_SLOTS][2];
     float ps_r[PS_NR_BANDS][PS_QMF_SLOTS][2];
-    float ps_out[2][PS_QMF_SLOTS][64][2];
 #endif
 } SBRScratch;
 
@@ -415,7 +413,8 @@ void faad_init_global_tables(void);
 void sbr_init_tables(void);
 faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32_t ch0, uint32_t syntax_id, bool crc);
 void ps_read_data(struct faad_decoder *dec, BitReader *bs, uint32_t bits_left);
-void ps_apply(struct faad_decoder *dec, float X[PS_IN_SLOTS][64][2], float L[PS_QMF_SLOTS][64][2], float R[PS_QMF_SLOTS][64][2], int top);
+void ps_apply(struct faad_decoder *dec, float X[PS_IN_SLOTS][64][2], int top);
+void ps_synthesis_slot(struct faad_decoder *dec, int side, int n, float out[64][2]);
 void init_ps_tables(void);
 void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *pcm_out);
 
