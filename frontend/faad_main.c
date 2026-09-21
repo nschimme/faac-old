@@ -419,7 +419,11 @@ int main(int argc, char **argv)
         start_frame = (uint32_t)((jump_seconds * (double)sr) / (double)fl);
     }
 
+    /* Gapless counts are in the track's timescale, the core rate; the decoder
+     * may output at twice that (SBR), so they are scaled by the first frame. */
     uint32_t samples_to_skip = (is_mp4 && gapless) ? track.delay : 0;
+    uint32_t padding_samples = (is_mp4 && gapless) ? track.padding : 0;
+    bool gapless_scaled = false;
     PCMFifo fifo;
     fifo_init(&fifo, 262144);
 
@@ -447,6 +451,14 @@ int main(int argc, char **argv)
                 uint32_t dec_bytes_per_sample = is_float ? 4 : 2;
                 uint32_t dec_bytes_per_frame_sample = num_channels * dec_bytes_per_sample;
                 uint32_t frame_samples = bytes_written / dec_bytes_per_frame_sample;
+                if (!gapless_scaled) {
+                    uint32_t factor = finfo.samples_per_ch / 1024;
+                    if (factor > 1) {
+                        samples_to_skip *= factor;
+                        padding_samples *= factor;
+                    }
+                    gapless_scaled = true;
+                }
 
                 uint8_t *write_ptr = outbuf;
                 uint32_t samples_to_write = frame_samples;
@@ -478,7 +490,7 @@ int main(int argc, char **argv)
                         fifo_push(&fifo, write_ptr, samples_to_write * dec_bytes_per_frame_sample);
                     }
 
-                    uint32_t padding_bytes = (gapless && track.padding > 0) ? (track.padding * num_channels * (bit_depth / 8)) : 0;
+                    uint32_t padding_bytes = padding_samples * num_channels * (bit_depth / 8);
                     if (fifo.fill > padding_bytes) {
                         uint32_t can_pop = fifo.fill - padding_bytes;
                         uint8_t pop_buf[4096];
@@ -521,6 +533,14 @@ int main(int argc, char **argv)
                 uint32_t dec_bytes_per_sample = is_float ? 4 : 2;
                 uint32_t dec_bytes_per_frame_sample = num_channels * dec_bytes_per_sample;
                 uint32_t frame_samples = bytes_written / dec_bytes_per_frame_sample;
+                if (!gapless_scaled) {
+                    uint32_t factor = finfo.samples_per_ch / 1024;
+                    if (factor > 1) {
+                        samples_to_skip *= factor;
+                        padding_samples *= factor;
+                    }
+                    gapless_scaled = true;
+                }
 
                 if (bit_depth == 24 && !is_float) {
                     const int16_t *src_pcm = (const int16_t *)outbuf;
@@ -552,8 +572,8 @@ int main(int argc, char **argv)
     }
 
     if (fout) {
-        if (is_mp4 && gapless && track.padding > 0) {
-            uint32_t padding_bytes = track.padding * num_channels * (bit_depth / 8);
+        if (is_mp4 && gapless && padding_samples > 0) {
+            uint32_t padding_bytes = padding_samples * num_channels * (bit_depth / 8);
             if (fifo.fill > padding_bytes) {
                 fifo_truncate_tail(&fifo, padding_bytes);
             } else {
