@@ -265,6 +265,8 @@ typedef struct {
     float   dc_in[PS_NR_ALLPASS][2][2];
     float   dc_ap[PS_NR_ALLPASS][PS_AP_STATE][2];
     float   dc_delay[PS_NR_BANDS - 30][PS_MAX_DELAY][2];
+    uint8_t ap_pos[3];        /* ring positions of the three link states */
+    uint8_t dl_pos;           /* ring position of the delay lines */
     float   peak_decay_nrg[PS_NR_PAR], power_smooth[PS_NR_PAR], peak_decay_diff_smooth[PS_NR_PAR];
     float   H[4][2][PS_MAX_ENV + 1][PS_NR_PAR];             /* mixing matrix per envelope border */
     int8_t  ipd_hist[17], opd_hist[17];                     /* two previous indices, packed */
@@ -363,10 +365,6 @@ typedef struct {
     float x_low[32][SBR_BUF_SLOTS][2];
     float y[SBR_MAX_BANDS][SBR_BUF_SLOTS][2]; /* generated HF, adjusted in place */
     float x[PS_IN_SLOTS][64][2]; /* assembled output per slot (38 for the PS look-ahead) */
-#ifndef FAAD_DISABLE_PS
-    float ps_l[PS_NR_BANDS][PS_QMF_SLOTS][2];
-    float ps_r[PS_NR_BANDS][PS_QMF_SLOTS][2];
-#endif
 } SBRScratch;
 
 struct faad_decoder {
@@ -439,8 +437,8 @@ void faad_init_global_tables(void);
 void sbr_init_tables(void);
 faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32_t ch0, uint32_t syntax_id, bool crc);
 void ps_read_data(struct faad_decoder *dec, BitReader *bs, uint32_t bits_left);
-void ps_apply(struct faad_decoder *dec, float X[PS_IN_SLOTS][64][2], int top);
-void ps_synthesis_slot(struct faad_decoder *dec, int side, int n, float out[64][2]);
+void ps_frame_begin(struct faad_decoder *dec, float X[PS_IN_SLOTS][64][2], int top);
+void ps_slot(struct faad_decoder *dec, int n, float X[PS_IN_SLOTS][64][2], float L[64][2], float R[64][2]);
 void init_ps_tables(void);
 void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *pcm_out);
 
