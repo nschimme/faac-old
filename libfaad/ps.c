@@ -423,80 +423,114 @@ static void ps_hybrid_synthesis(float out[PS_QMF_SLOTS][64][2], float in[PS_NR_B
 /* Decorrelation (§8.6.4.6.1)                                                */
 /* ------------------------------------------------------------------------ */
 
+/* Decorrelation (§8.6.4.6.3). Each all-pass band runs
+ *   H_k(z) = z^-2 phi_k prod_m (Q_m z^-d_m - a_m g_k) / (1 - a_m g_k Q_m z^-d_m)
+ * with link delays d = 3, 4, 5, each link in direct form II so its state is
+ * d_m samples; the delay bands are a plain 14- or 1-slot delay. The band's
+ * history is loaded into a slot-contiguous working line, the frame is run,
+ * and the tail is stored back, so the state is the history alone. The
+ * transient detector scales every band of a parameter band by G_tr(b, n). */
+static void ps_transient_gain(PSState *ps, float gain[PS_NR_PAR][PS_QMF_SLOTS], float s[PS_NR_BANDS][PS_QMF_SLOTS][2], bool is34)
+{
+    const float peak_decay = 0.76592833836465f, impact = 1.5f, alpha = 0.25f;
+    const int8_t *k_to_b = is34 ? ps_k_to_b_34 : ps_k_to_b_20;
+    float power[PS_NR_PAR][PS_QMF_SLOTS];
+
+    memset(power, 0, sizeof(power));
+    for (int k = 0; k < ps_nr_bands[is34]; k++) {
+        float *pw = power[k_to_b[k]];
+        for (int n = 0; n < PS_QMF_SLOTS; n++) pw[n] += s[k][n][0] * s[k][n][0] + s[k][n][1] * s[k][n][1];
+    }
+    for (int b = 0; b < ps_nr_par_bands[is34]; b++) {
+        float peak = ps->peak_decay_nrg[b], smooth = ps->power_smooth[b], diff = ps->peak_decay_diff_smooth[b];
+        for (int n = 0; n < PS_QMF_SLOTS; n++) {
+            float pw = power[b][n];
+            peak = peak * peak_decay;
+            if (peak < pw) peak = pw;
+            smooth += alpha * (pw - smooth);
+            diff += alpha * (peak - pw - diff);
+            float thr = impact * diff;
+            gain[b][n] = (thr > smooth) ? smooth / thr : 1.0f;
+        }
+        ps->peak_decay_nrg[b] = peak;
+        ps->power_smooth[b] = smooth;
+        ps->peak_decay_diff_smooth[b] = diff;
+    }
+}
+
 static void ps_decorrelate(PSState *ps, float out[PS_NR_BANDS][PS_QMF_SLOTS][2], float s[PS_NR_BANDS][PS_QMF_SLOTS][2], bool is34)
 {
     static const float a[3] = { 0.65143905753106f, 0.56471812200776f, 0.48954165955695f };
-    const float peak_decay_factor = 0.76592833836465f, transient_impact = 1.5f, a_smooth = 0.25f;
+    static const int link_delay[3] = { 3, 4, 5 };
     const int8_t *k_to_b = is34 ? ps_k_to_b_34 : ps_k_to_b_20;
-    float power[PS_NR_PAR][PS_QMF_SLOTS], gain[PS_NR_PAR][PS_QMF_SLOTS];
+    const int nr_allpass = ps_nr_allpass[is34];
+    float gain[PS_NR_PAR][PS_QMF_SLOTS];
 
     if (is34 != ps->is34_old) {
         memset(ps->peak_decay_nrg, 0, sizeof(ps->peak_decay_nrg));
         memset(ps->power_smooth, 0, sizeof(ps->power_smooth));
         memset(ps->peak_decay_diff_smooth, 0, sizeof(ps->peak_decay_diff_smooth));
-        memset(ps->delay, 0, sizeof(ps->delay));
-        memset(ps->ap_delay, 0, sizeof(ps->ap_delay));
+        memset(ps->dc_in, 0, sizeof(ps->dc_in));
+        memset(ps->dc_ap, 0, sizeof(ps->dc_ap));
+        memset(ps->dc_delay, 0, sizeof(ps->dc_delay));
     }
-    memset(power, 0, sizeof(power));
-    for (int k = 0; k < ps_nr_bands[is34]; k++) {
-        int b = k_to_b[k];
-        for (int n = 0; n < PS_QMF_SLOTS; n++) power[b][n] += s[k][n][0] * s[k][n][0] + s[k][n][1] * s[k][n][1];
-    }
-    /* transient detection and gain reduction */
-    for (int b = 0; b < ps_nr_par_bands[is34]; b++) {
-        for (int n = 0; n < PS_QMF_SLOTS; n++) {
-            float decayed = peak_decay_factor * ps->peak_decay_nrg[b];
-            ps->peak_decay_nrg[b] = decayed > power[b][n] ? decayed : power[b][n];
-            ps->power_smooth[b] += a_smooth * (power[b][n] - ps->power_smooth[b]);
-            ps->peak_decay_diff_smooth[b] += a_smooth * (ps->peak_decay_nrg[b] - power[b][n] - ps->peak_decay_diff_smooth[b]);
-            float denom = transient_impact * ps->peak_decay_diff_smooth[b];
-            gain[b][n] = (denom > ps->power_smooth[b]) ? ps->power_smooth[b] / denom : 1.0f;
-        }
-    }
+    ps_transient_gain(ps, gain, s, is34);
 
     int k = 0;
-    for (; k < ps_nr_allpass[is34]; k++) {
-        int b = k_to_b[k];
+    for (; k < nr_allpass; k++) {
+        const float *g = gain[k_to_b[k]];
         float slope = 1.0f - PS_DECAY_SLOPE * (float)(k - ps_decay_cutoff[is34]);
         if (slope < 0.0f) slope = 0.0f;
         if (slope > 1.0f) slope = 1.0f;
-        float ag[3] = { a[0] * slope, a[1] * slope, a[2] * slope };
+        const float phi_r = ps_phi_fract[is34][k][0], phi_i = ps_phi_fract[is34][k][1];
 
-        float (*delay)[2] = ps->delay[k];
-        memmove(delay, delay + PS_QMF_SLOTS, PS_MAX_DELAY * sizeof(delay[0]));
-        memcpy(delay + PS_MAX_DELAY, s[k], PS_QMF_SLOTS * sizeof(delay[0]));
-        for (int m = 0; m < 3; m++)
-            memmove(ps->ap_delay[k][m], ps->ap_delay[k][m] + PS_QMF_SLOTS, PS_MAX_AP_DELAY * sizeof(ps->ap_delay[k][m][0]));
-
-        const float *phi = ps_phi_fract[is34][k];
-        float (*qf)[2] = ps_q_fract[is34][k];
-        float (*in)[2] = delay + PS_MAX_DELAY - 2; /* two-slot delay into the all-pass chain */
+        /* u: the band delayed two slots and rotated by phi_k */
+        float u[PS_QMF_SLOTS][2];
+        float in[PS_QMF_SLOTS + 2][2];
+        memcpy(in, ps->dc_in[k], sizeof(ps->dc_in[k]));
+        memcpy(in + 2, s[k], sizeof(u));
+        memcpy(ps->dc_in[k], in + PS_QMF_SLOTS, sizeof(ps->dc_in[k]));
         for (int n = 0; n < PS_QMF_SLOTS; n++) {
-            float re = in[n][0] * phi[0] - in[n][1] * phi[1];
-            float im = in[n][0] * phi[1] + in[n][1] * phi[0];
-            for (int m = 0; m < 3; m++) {
-                float (*ap)[2] = ps->ap_delay[k][m];
-                float a_re = ag[m] * re, a_im = ag[m] * im;
-                float ld_re = ap[n + 2 - m][0], ld_im = ap[n + 2 - m][1]; /* link delays 3, 4, 5 */
-                float apd_re = re, apd_im = im;
-                re = ld_re * qf[m][0] - ld_im * qf[m][1] - a_re;
-                im = ld_re * qf[m][1] + ld_im * qf[m][0] - a_im;
-                ap[n + 5][0] = apd_re + ag[m] * re;
-                ap[n + 5][1] = apd_im + ag[m] * im;
+            u[n][0] = in[n][0] * phi_r - in[n][1] * phi_i;
+            u[n][1] = in[n][0] * phi_i + in[n][1] * phi_r;
+        }
+
+        float *state = ps->dc_ap[k][0];
+        for (int m = 0; m < 3; m++) {
+            const int d = link_delay[m];
+            const float ag = a[m] * slope;
+            const float qr = ps_q_fract[is34][k][m][0], qi = ps_q_fract[is34][k][m][1];
+            /* v(n) = u(n) + ag Q v(n-d);  u'(n) = Q v(n-d) - ag v(n) */
+            float v[PS_QMF_SLOTS + 5][2];
+            memcpy(v, state, (size_t)d * sizeof(v[0]));
+            for (int n = 0; n < PS_QMF_SLOTS; n++) {
+                float vr = v[n][0] * qr - v[n][1] * qi; /* Q v(n-d) */
+                float vi = v[n][0] * qi + v[n][1] * qr;
+                float nr = u[n][0] + ag * vr, ni = u[n][1] + ag * vi;
+                v[n + d][0] = nr;
+                v[n + d][1] = ni;
+                u[n][0] = vr - ag * nr;
+                u[n][1] = vi - ag * ni;
             }
-            out[k][n][0] = gain[b][n] * re;
-            out[k][n][1] = gain[b][n] * im;
+            memcpy(state, v + PS_QMF_SLOTS, (size_t)d * sizeof(v[0]));
+            state += 2 * d;
+        }
+        for (int n = 0; n < PS_QMF_SLOTS; n++) {
+            out[k][n][0] = g[n] * u[n][0];
+            out[k][n][1] = g[n] * u[n][1];
         }
     }
     for (; k < ps_nr_bands[is34]; k++) {
-        int b = k_to_b[k];
-        int d = (k < ps_short_delay_band[is34]) ? 14 : 1;
-        float (*delay)[2] = ps->delay[k];
-        memmove(delay, delay + PS_QMF_SLOTS, PS_MAX_DELAY * sizeof(delay[0]));
-        memcpy(delay + PS_MAX_DELAY, s[k], PS_QMF_SLOTS * sizeof(delay[0]));
+        const float *g = gain[k_to_b[k]];
+        const int d = (k < ps_short_delay_band[is34]) ? PS_MAX_DELAY : 1;
+        float (*hist)[2] = ps->dc_delay[k - nr_allpass];
+        float line[PS_QMF_SLOTS + PS_MAX_DELAY][2];
+        memcpy(line, hist, sizeof(ps->dc_delay[0]));
+        memcpy(line + PS_MAX_DELAY, s[k], sizeof(s[k]));
+        memcpy(hist, line + PS_QMF_SLOTS, sizeof(ps->dc_delay[0]));
         for (int n = 0; n < PS_QMF_SLOTS; n++) {
-            out[k][n][0] = gain[b][n] * delay[PS_MAX_DELAY - d + n][0];
-            out[k][n][1] = gain[b][n] * delay[PS_MAX_DELAY - d + n][1];
+            out[k][n][0] = g[n] * line[PS_MAX_DELAY - d + n][0];
+            out[k][n][1] = g[n] * line[PS_MAX_DELAY - d + n][1];
         }
     }
 }
@@ -699,8 +733,15 @@ void ps_apply(struct faad_decoder *dec, float X[PS_IN_SLOTS][64][2], float L[PS_
     /* bands above the SBR range carry nothing: keep their delay lines silent */
     int top_k = top + ps_nr_bands[is34] - 64;
     if (top_k < 0) top_k = 0;
-    if (top_k < ps_nr_bands[is34]) memset(ps->delay + top_k, 0, sizeof(ps->delay[0]) * (size_t)(ps_nr_bands[is34] - top_k));
-    if (top_k < ps_nr_allpass[is34]) memset(ps->ap_delay + top_k, 0, sizeof(ps->ap_delay[0]) * (size_t)(ps_nr_allpass[is34] - top_k));
+    {
+        int na = ps_nr_allpass[is34], nb = ps_nr_bands[is34];
+        if (top_k < na) {
+            memset(ps->dc_in + top_k, 0, sizeof(ps->dc_in[0]) * (size_t)(na - top_k));
+            memset(ps->dc_ap + top_k, 0, sizeof(ps->dc_ap[0]) * (size_t)(na - top_k));
+        }
+        int td = top_k > na ? top_k - na : 0;
+        if (td < nb - na) memset(ps->dc_delay + td, 0, sizeof(ps->dc_delay[0]) * (size_t)(nb - na - td));
+    }
 
     ps_hybrid_analysis(ps, lb, X, is34);
     ps_decorrelate(ps, rb, lb, is34);
