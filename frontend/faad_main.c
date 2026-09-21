@@ -441,12 +441,11 @@ int main(int argc, char **argv)
                                    &bytes_consumed, outbuf, sizeof(outbuf), &bytes_written, &finfo);
 
             if (st == FAAD_OK && bytes_written > 0) {
-                faad_stream_info sinfo;
-                if (faad_decoder_get_info(dec, &sinfo) == FAAD_OK) {
-                    sample_rate = sinfo.sample_rate;
-                    num_channels = sinfo.channels;
-                    obj_type = sinfo.object_type;
-                }
+                /* Per-frame info, not the stream info: SBR may be signalled
+                 * implicitly and only known once the payload is decoded. */
+                sample_rate = finfo.sample_rate;
+                num_channels = finfo.channels;
+                obj_type = finfo.sbr_active ? FAAD_OBJ_HE_AAC_V1 : FAAD_OBJ_LC;
 
                 uint32_t dec_bytes_per_sample = is_float ? 4 : 2;
                 uint32_t dec_bytes_per_frame_sample = num_channels * dec_bytes_per_sample;
