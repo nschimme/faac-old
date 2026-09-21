@@ -64,20 +64,33 @@ static const int8_t ps_f_center_34[32] = { 2, 6, 10, 14, 18, 22, 26, 30, 34, -10
                                            27, 33, 39, 45, 54, 66, 78, 42, 102, 66, 78, 90, 102, 114, 126, 90 }; /* /24 */
 
 /* ---- derived tables ---- */
-static float f20_0_8[8][7][2], f34_0_12[12][7][2], f34_1_8[8][7][2], f34_2_4[4][7][2];
+/* The complex hybrid filters G_q(n) = g(n) exp(-j 2pi/Q (q + 1/2)(n - 6))
+ * for each prototype and split factor Q, taps 0..6 (the rest by symmetry).
+ * The 20-band layout splits QMF band 0 eight ways (prototype g0); the
+ * 34-band layout splits band 0 twelve ways (g0), band 1 eight ways (g1) and
+ * bands 2..4 four ways (g2). */
+static float ps_split8_g0[8][7][2], ps_split12_g0[12][7][2], ps_split8_g1[8][7][2], ps_split4_g2[4][7][2];
 static float ps_phi_fract[2][50][2];
 static float ps_q_fract[2][50][3][2];
 static float ps_HA[46][8][4], ps_HB[46][8][4];
 static bool ps_tables_init = false;
+static void ps_init_band_maps(void);
 
-static void ps_make_filter(float (*f)[7][2], const float *proto, int bands)
+static void ps_init_split_filters(void)
 {
-    for (int q = 0; q < bands; q++)
-        for (int n = 0; n < 7; n++) {
-            double theta = 2.0 * M_PI * (q + 0.5) * (n - 6) / bands;
-            f[q][n][0] = (float)(proto[n] * cos(theta));
-            f[q][n][1] = (float)(proto[n] * -sin(theta));
+    static const struct { float (*coef)[7][2]; const float *proto; uint8_t Q; } split[4] = {
+        { ps_split8_g0, ps_g0_q8, 8 }, { ps_split12_g0, ps_g0_q12, 12 },
+        { ps_split8_g1, ps_g1_q8, 8 }, { ps_split4_g2, ps_g2_q4, 4 },
+    };
+    for (int i = 0; i < 4; i++) {
+        for (int q = 0; q < split[i].Q; q++) {
+            for (int n = 0; n < 7; n++) {
+                double phase = -2.0 * M_PI * (q + 0.5) * (n - 6) / split[i].Q;
+                split[i].coef[q][n][0] = (float)(split[i].proto[n] * cos(phase));
+                split[i].coef[q][n][1] = (float)(split[i].proto[n] * sin(phase));
+            }
         }
+    }
 }
 
 void init_ps_tables(void)
@@ -86,10 +99,7 @@ void init_ps_tables(void)
     static const double links[3] = { 0.43, 0.75, 0.347 };
     const double gain = 0.39;
 
-    ps_make_filter(f20_0_8, ps_g0_q8, 8);
-    ps_make_filter(f34_0_12, ps_g0_q12, 12);
-    ps_make_filter(f34_1_8, ps_g1_q8, 8);
-    ps_make_filter(f34_2_4, ps_g2_q4, 4);
+    ps_init_split_filters();
 
     for (int is34 = 0; is34 < 2; is34++) {
         for (int k = 0; k < ps_nr_allpass[is34]; k++) {
@@ -133,6 +143,7 @@ void init_ps_tables(void)
             ps_HB[i][icc][3] = (float)( sqrt(2.0) * cos(a) * sin(gamma));
         }
     }
+    ps_init_band_maps();
     ps_tables_init = true;
 }
 
@@ -163,6 +174,14 @@ static bool ps_read_par(BitReader *bs, PSState *ps, int8_t par[PS_MAX_ENV][PS_NR
         }
     }
     return true;
+}
+
+static void ps_copy_envelope(PSState *ps, int to, int from)
+{
+    memcpy(ps->iid_par[to], ps->iid_par[from], sizeof(ps->iid_par[0]));
+    memcpy(ps->icc_par[to], ps->icc_par[from], sizeof(ps->icc_par[0]));
+    memcpy(ps->ipd_par[to], ps->ipd_par[from], sizeof(ps->ipd_par[0]));
+    memcpy(ps->opd_par[to], ps->opd_par[from], sizeof(ps->opd_par[0]));
 }
 
 static void ps_clear_params(PSState *ps)
@@ -267,17 +286,16 @@ void ps_read_data(struct faad_decoder *dec, BitReader *bs, uint32_t bits_left)
     }
 
     if (ok) {
-        /* A frame whose last border falls short of the frame end, or that
-         * carries no envelope, gets one more envelope repeating the last
-         * parameters up to slot 31 (§8.6.4.4). */
-        if (ps->num_env == 0 || ps->border[ps->num_env] < 31) {
-            int source = ps->num_env ? ps->num_env - 1 : (int)ps->num_env_old - 1;
-            if (source >= 0 && source != ps->num_env) {
-                memcpy(ps->iid_par[ps->num_env], ps->iid_par[source], sizeof(ps->iid_par[0]));
-                memcpy(ps->icc_par[ps->num_env], ps->icc_par[source], sizeof(ps->icc_par[0]));
-                memcpy(ps->ipd_par[ps->num_env], ps->ipd_par[source], sizeof(ps->ipd_par[0]));
-                memcpy(ps->opd_par[ps->num_env], ps->opd_par[source], sizeof(ps->opd_par[0]));
-            }
+        /* The parameters must reach the end of the frame (§8.6.4.4): a
+         * frame without envelopes holds the previous frame's last
+         * parameters for its whole length, one whose last border stops
+         * short repeats its last envelope up to slot 31. */
+        if (ps->num_env == 0) {
+            if (ps->num_env_old > 1) ps_copy_envelope(ps, 0, ps->num_env_old - 1);
+            ps->num_env = 1;
+            ps->border[1] = 31;
+        } else if (ps->border[ps->num_env] < 31) {
+            ps_copy_envelope(ps, ps->num_env, ps->num_env - 1);
             ps->num_env++;
             ps->border[ps->num_env] = 31;
         }
@@ -343,17 +361,17 @@ static void ps_split2_slot(float out[2][2], float (*in)[2], int reverse)
 static void ps_hybrid_analysis_slot(PSState *ps, int n, float out[PS_NR_BANDS][2], float X[PS_IN_SLOTS][64][2])
 {
     if (ps->is34) {
-        ps_split_slot(out,      ps->in_buf[0] + n, f34_0_12, 12);
-        ps_split_slot(out + 12, ps->in_buf[1] + n, f34_1_8, 8);
-        ps_split_slot(out + 20, ps->in_buf[2] + n, f34_2_4, 4);
-        ps_split_slot(out + 24, ps->in_buf[3] + n, f34_2_4, 4);
-        ps_split_slot(out + 28, ps->in_buf[4] + n, f34_2_4, 4);
+        ps_split_slot(out,      ps->in_buf[0] + n, ps_split12_g0, 12);
+        ps_split_slot(out + 12, ps->in_buf[1] + n, ps_split8_g1, 8);
+        ps_split_slot(out + 20, ps->in_buf[2] + n, ps_split4_g2, 4);
+        ps_split_slot(out + 24, ps->in_buf[3] + n, ps_split4_g2, 4);
+        ps_split_slot(out + 28, ps->in_buf[4] + n, ps_split4_g2, 4);
         for (int k = 5; k < 64; k++) { out[k + 27][0] = X[n][k][0]; out[k + 27][1] = X[n][k][1]; }
     } else {
         /* QMF band 0 splits eight ways and the sub-bands merge to six in
          * frequency order; bands 1 and 2 split two ways. */
         float t[8][2];
-        ps_split_slot(t, ps->in_buf[0] + n, f20_0_8, 8);
+        ps_split_slot(t, ps->in_buf[0] + n, ps_split8_g0, 8);
         out[0][0] = t[6][0];           out[0][1] = t[6][1];
         out[1][0] = t[7][0];           out[1][1] = t[7][1];
         out[2][0] = t[0][0];           out[2][1] = t[0][1];
@@ -479,85 +497,109 @@ static void ps_decorrelate_slot(PSState *ps, float s[PS_NR_BANDS][2], float d[PS
 }
 
 /* ------------------------------------------------------------------------ */
-/* Parameter band remapping                                                  */
+/* Parameter band layouts                                                    */
 /* ------------------------------------------------------------------------ */
 
-static void ps_map_10_to_20(int8_t *dst, const int8_t *src, bool full)
-{
-    int b = full ? 9 : 4;
-    if (!full) dst[10] = 0;
-    for (; b >= 0; b--) dst[2 * b + 1] = dst[2 * b] = src[b];
-}
+/* The 10, 20 and 34-band layouts meet when a frame switches layout or
+ * codes IPD/OPD on fewer bands: parameters and the previous frame's mixing
+ * matrix have to be read on another grid. The 10-band layout pairs the
+ * 20-band one. Between 20 and 34 bands, a target band takes the mean of the
+ * source bands whose centre frequency falls inside it, or the nearest one;
+ * those maps are built from the band centres at start. */
+typedef struct { uint8_t first, count; } PSBandMap;
+static PSBandMap ps_map_34_20[20], ps_map_20_34[34];
 
-static void ps_map_34_to_20(int8_t *dst, const int8_t *src, bool full)
+static void ps_layout_centres(bool is34, float *centre)
 {
-    dst[0] = (int8_t)((2 * src[0] + src[1]) / 3);   dst[1] = (int8_t)((src[1] + 2 * src[2]) / 3);
-    dst[2] = (int8_t)((2 * src[3] + src[4]) / 3);   dst[3] = (int8_t)((src[4] + 2 * src[5]) / 3);
-    dst[4] = (int8_t)((src[6] + src[7]) / 2);       dst[5] = (int8_t)((src[8] + src[9]) / 2);
-    dst[6] = src[10];                               dst[7] = src[11];
-    dst[8] = (int8_t)((src[12] + src[13]) / 2);     dst[9] = (int8_t)((src[14] + src[15]) / 2);
-    dst[10] = src[16];
-    if (!full) return;
-    dst[11] = src[17]; dst[12] = src[18]; dst[13] = src[19];
-    dst[14] = (int8_t)((src[20] + src[21]) / 2);    dst[15] = (int8_t)((src[22] + src[23]) / 2);
-    dst[16] = (int8_t)((src[24] + src[25]) / 2);    dst[17] = (int8_t)((src[26] + src[27]) / 2);
-    dst[18] = (int8_t)((src[28] + src[29] + src[30] + src[31]) / 4);
-    dst[19] = (int8_t)((src[32] + src[33]) / 2);
-}
-
-static void ps_map_10_to_34(int8_t *dst, const int8_t *src, bool full)
-{
-    static const int8_t lo[17] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 4, 4, -1 };
-    static const int8_t hi[34] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 4, 4, 5, 5, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9 };
-    if (full) { for (int i = 0; i < 34; i++) dst[i] = src[hi[i]]; }
-    else { for (int i = 0; i < 16; i++) dst[i] = src[lo[i]]; dst[16] = 0; }
-}
-
-static void ps_map_20_to_34(int8_t *dst, const int8_t *src, bool full)
-{
-    if (full) {
-        dst[33] = src[19]; dst[32] = src[19]; dst[31] = src[18]; dst[30] = src[18]; dst[29] = src[18]; dst[28] = src[18];
-        dst[27] = src[17]; dst[26] = src[17]; dst[25] = src[16]; dst[24] = src[16]; dst[23] = src[15]; dst[22] = src[15];
-        dst[21] = src[14]; dst[20] = src[14]; dst[19] = src[13]; dst[18] = src[12]; dst[17] = src[11];
+    const int8_t *k_to_b = is34 ? ps_k_to_b_34 : ps_k_to_b_20;
+    int count[PS_NR_PAR] = { 0 };
+    for (int b = 0; b < ps_nr_par_bands[is34]; b++) centre[b] = 0.0f;
+    for (int k = 0; k < ps_nr_bands[is34]; k++) {
+        float f = !is34 ? ((k < 10) ? ps_f_center_20[k] / 8.0f : k - 6.5f)
+                        : ((k < 32) ? ps_f_center_34[k] / 24.0f : k - 26.5f);
+        centre[k_to_b[k]] += fabsf(f);
+        count[k_to_b[k]]++;
     }
-    dst[16] = src[10]; dst[15] = src[9]; dst[14] = src[9]; dst[13] = src[8]; dst[12] = src[8]; dst[11] = src[7];
-    dst[10] = src[6]; dst[9] = src[5]; dst[8] = src[5]; dst[7] = src[4]; dst[6] = src[4]; dst[5] = src[3];
-    dst[4] = (int8_t)((src[2] + src[3]) / 2); dst[3] = src[2]; dst[2] = src[1];
-    dst[1] = (int8_t)((src[0] + src[1]) / 2); dst[0] = src[0];
+    for (int b = 0; b < ps_nr_par_bands[is34]; b++) centre[b] /= (float)count[b];
 }
 
-static void ps_remap(int8_t dst[PS_MAX_ENV][PS_NR_PAR], int8_t src[PS_MAX_ENV][PS_NR_PAR], int num_par, int num_env, bool full, bool is34)
+static void ps_build_band_map(PSBandMap *map, const float *src, int n_src, const float *dst, int n_dst)
 {
+    for (int j = 0; j < n_dst; j++) {
+        float lo = j ? 0.5f * (dst[j - 1] + dst[j]) : 0.0f;
+        float hi = (j + 1 < n_dst) ? 0.5f * (dst[j] + dst[j + 1]) : 1e9f;
+        int first = -1, count = 0;
+        for (int i = 0; i < n_src; i++) {
+            if (src[i] < lo || src[i] >= hi) continue;
+            if (first < 0) first = i;
+            count++;
+        }
+        if (count == 0) {
+            first = 0;
+            for (int i = 1; i < n_src; i++)
+                if (fabsf(src[i] - dst[j]) < fabsf(src[first] - dst[j])) first = i;
+            count = 1;
+        }
+        map[j].first = (uint8_t)first;
+        map[j].count = (uint8_t)count;
+    }
+}
+
+static void ps_init_band_maps(void)
+{
+    float c20[PS_NR_PAR], c34[PS_NR_PAR];
+    ps_layout_centres(false, c20);
+    ps_layout_centres(true, c34);
+    ps_build_band_map(ps_map_34_20, c34, 34, c20, 20);
+    ps_build_band_map(ps_map_20_34, c20, 20, c34, 34);
+}
+
+/* Reads band j of the target layout from src, which has n_src bands of the
+ * source layout (10, 20 or 34 bands, or the low 5, 11 or 17 of them). */
+static float ps_band_read(const float *src, int n_src, int src_layout, int dst_layout, int j)
+{
+    if (src_layout == dst_layout) return j < n_src ? src[j] : 0.0f;
+    if (src_layout == 10) {
+        if (dst_layout == 20) return (j >> 1) < n_src ? src[j >> 1] : 0.0f;
+        /* 10 -> 34 through the 20-band grid */
+        const PSBandMap *m = &ps_map_20_34[j];
+        float sum = 0.0f; int n = 0;
+        for (int i = m->first; i < m->first + m->count; i++)
+            if ((i >> 1) < n_src) { sum += src[i >> 1]; n++; }
+        return n ? sum / (float)n : 0.0f;
+    }
+    const PSBandMap *m = (src_layout == 34) ? &ps_map_34_20[j] : &ps_map_20_34[j];
+    float sum = 0.0f; int n = 0;
+    for (int i = m->first; i < m->first + m->count && i < n_src; i++) { sum += src[i]; n++; }
+    return n ? sum / (float)n : 0.0f;
+}
+
+static int ps_layout_of(int n_par) { return n_par >= 34 || n_par == 17 ? 34 : n_par >= 20 || n_par == 11 ? 20 : 10; }
+
+/* Parameters of every envelope onto this frame's grid (full: all its bands,
+ * else the low IPD/OPD subset). */
+static void ps_remap(int8_t dst[PS_MAX_ENV][PS_NR_PAR], int8_t src[PS_MAX_ENV][PS_NR_PAR], int n_src, int num_env, bool full, bool is34)
+{
+    int dst_layout = is34 ? 34 : 20;
+    int n_dst = full ? dst_layout : ps_nr_ipdopd_bands[is34];
+    int src_layout = ps_layout_of(n_src);
     for (int e = 0; e < num_env; e++) {
-        if (is34) {
-            if (num_par == 20 || num_par == 11) ps_map_20_to_34(dst[e], src[e], full);
-            else if (num_par == 10 || num_par == 5) ps_map_10_to_34(dst[e], src[e], full);
-            else memcpy(dst[e], src[e], PS_NR_PAR);
-        } else {
-            if (num_par == 34 || num_par == 17) ps_map_34_to_20(dst[e], src[e], full);
-            else if (num_par == 10 || num_par == 5) ps_map_10_to_20(dst[e], src[e], full);
-            else memcpy(dst[e], src[e], PS_NR_PAR);
+        float v[PS_NR_PAR];
+        for (int i = 0; i < n_src; i++) v[i] = (float)src[e][i];
+        for (int j = 0; j < n_dst; j++) {
+            float x = ps_band_read(v, n_src, src_layout, dst_layout, j);
+            dst[e][j] = (int8_t)(x >= 0.0f ? (int)(x + 0.5f) : -(int)(0.5f - x));
         }
     }
 }
 
-/* Carry the previous frame's mixing matrix across a band-count change. */
-static void ps_map_val_34_to_20(float *p)
+/* The previous frame's mixing matrix row onto the other grid. */
+static void ps_remap_values(float *p, bool to34)
 {
-    p[0] = (2 * p[0] + p[1]) / 3; p[1] = (p[1] + 2 * p[2]) / 3; p[2] = (2 * p[3] + p[4]) / 3; p[3] = (p[4] + 2 * p[5]) / 3;
-    p[4] = 0.5f * (p[6] + p[7]); p[5] = 0.5f * (p[8] + p[9]); p[6] = p[10]; p[7] = p[11];
-    p[8] = 0.5f * (p[12] + p[13]); p[9] = 0.5f * (p[14] + p[15]); p[10] = p[16]; p[11] = p[17]; p[12] = p[18]; p[13] = p[19];
-    p[14] = 0.5f * (p[20] + p[21]); p[15] = 0.5f * (p[22] + p[23]); p[16] = 0.5f * (p[24] + p[25]); p[17] = 0.5f * (p[26] + p[27]);
-    p[18] = 0.25f * (p[28] + p[29] + p[30] + p[31]); p[19] = 0.5f * (p[32] + p[33]);
-}
-
-static void ps_map_val_20_to_34(float *p)
-{
-    p[33] = p[19]; p[32] = p[19]; p[31] = p[18]; p[30] = p[18]; p[29] = p[18]; p[28] = p[18]; p[27] = p[17]; p[26] = p[17];
-    p[25] = p[16]; p[24] = p[16]; p[23] = p[15]; p[22] = p[15]; p[21] = p[14]; p[20] = p[14]; p[19] = p[13]; p[18] = p[12];
-    p[17] = p[11]; p[16] = p[10]; p[15] = p[9]; p[14] = p[9]; p[13] = p[8]; p[12] = p[8]; p[11] = p[7]; p[10] = p[6];
-    p[9] = p[5]; p[8] = p[5]; p[7] = p[4]; p[6] = p[4]; p[5] = p[3]; p[4] = 0.5f * (p[2] + p[3]); p[3] = p[2]; p[2] = p[1];
-    p[1] = 0.5f * (p[0] + p[1]);
+    float src[PS_NR_PAR];
+    memcpy(src, p, sizeof(src));
+    int n = to34 ? 34 : 20;
+    for (int j = 0; j < n; j++) p[j] = ps_band_read(src, to34 ? 20 : 34, to34 ? 20 : 34, to34 ? 34 : 20, j);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -599,8 +641,7 @@ static void ps_mixing_matrices(PSState *ps)
     if (is34 != ps->is34_old) {
         for (int i = 0; i < 4; i++)
             for (int c = 0; c < 2; c++) {
-                if (is34) ps_map_val_20_to_34(H[i][c][0]);
-                else ps_map_val_34_to_20(H[i][c][0]);
+                ps_remap_values(H[i][c][0], is34);
             }
         memset(ps->ipd_hist, 0, sizeof(ps->ipd_hist));
         memset(ps->opd_hist, 0, sizeof(ps->opd_hist));
