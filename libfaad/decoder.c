@@ -65,11 +65,13 @@ static void faad_init_global_tables_impl(void)
     extern void init_huffman_luts(void);
     extern void init_windows(void);
     extern void init_qmf_twiddles(void);
+    extern void init_sbr_books(void);
 
     init_dequant_tables();
     init_huffman_luts();
     init_windows();
     init_qmf_twiddles();
+    init_sbr_books();
 }
 
 #if defined(_WIN32)
