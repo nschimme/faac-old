@@ -25,183 +25,121 @@ void setup_sfb_offsets(ICSInfo *ics, uint32_t sample_rate)
     }
 }
 
-static const hcode16_t * const huffbook_tables[] = {
+static const hcode16_t * const huffbook_tables[12] = {
     NULL, book01, book02, book03, book04, book05, book06, book07, book08, book09, book10, book11
 };
-
-static const uint16_t huffbook_sizes[] = {
+static const uint16_t huffbook_sizes[12] = {
     0, 81, 81, 81, 81, 81, 81, 64, 64, 169, 169, 289
 };
+/* pair books: index = x * base + y */
+static const uint8_t book_base[12] = { 0, 0, 0, 0, 0, 9, 9, 8, 8, 13, 13, 17 };
 
-
-/* Direct 11-bit LUT entry: bits 0..3 = len (0..11), bits 4..15 = symbol index (0..288) */
-typedef uint16_t HuffLutEntry;
-
-static HuffLutEntry huff_lut_11bit[12][2048];
-
-typedef struct {
-    uint32_t data; /* book12 codewords reach 19 bits */
-    uint8_t len;
-    uint16_t sym;
-} HuffEscEntry;
-
-/* Codewords >= 12 bits fall through the direct 11-bit LUT into this table,
- * searched linearly. 128 slots covers the real maximum (88) with headroom. */
-#define HUFF_ESC_TABLE_CAP 128
-static HuffEscEntry huff_esc_table[12][HUFF_ESC_TABLE_CAP];
-static uint8_t huff_esc_count[12];
-
-static int8_t quad_lut[81][4];
-static const uint8_t book_base[12] = { 0, 81, 81, 81, 81, 9, 9, 8, 8, 13, 13, 17 };
-
+/* Decoding is a lookup on the next 8 bits, which resolves the short codes
+ * that carry most of the symbols directly; a longer code's 8-bit prefix
+ * leads to a second table covering the rest of its subtree, so every code
+ * takes at most two lookups. A lookup yields the decoded tuple, not a
+ * symbol index: four 2-bit magnitudes for a quad book, two 6-bit values
+ * for a pair book (the escape magnitude 16 included), the index itself
+ * for the scalefactor book. Rows 0..10 are the spectral books 1..11,
+ * row 11 the scalefactor book. */
+#define HUFF_LUT_BITS 8
+#define HUFF_MAX_LEN  19
+#define HUFF_SUBTREES 200  /* 8-bit prefixes shared by longer codes, all books */
+#define HUFF_SUB_ENTRIES 3206 /* their second-level entries */
+typedef uint16_t HuffEntry; /* len (bits beyond the prefix at level two) | tuple << 4; level one: 0 | subtree << 4 */
+static HuffEntry huff_lut[12][1 << HUFF_LUT_BITS];
+static HuffEntry huff_sub[HUFF_SUB_ENTRIES];
+static struct { uint16_t start; uint8_t depth; } huff_subtree[HUFF_SUBTREES];
 static bool huff_luts_initialized = false;
+
+static uint32_t huff_tuple(int book, int sym)
+{
+    if (book == 12) return (uint32_t)sym;
+    if (book <= 4) { /* v w x y, base 3 */
+        return (uint32_t)((sym / 27) | ((sym / 9 % 3) << 2) | ((sym / 3 % 3) << 4) | ((sym % 3) << 6));
+    }
+    int base = book_base[book];
+    return (uint32_t)((sym / base) | ((sym % base) << 6));
+}
 
 void init_huffman_luts(void)
 {
     if (huff_luts_initialized) return;
+    int n_sub = 0, n_entries = 0;
+    for (int book = 1; book <= 12; book++) {
+        /* the scalefactor book's codes exceed 16 bits and sit in a wider entry */
+        const hcode16_t *tab16 = (book == 12) ? NULL : huffbook_tables[book];
+        int n = (book == 12) ? 121 : huffbook_sizes[book];
+#define HUFF_LEN(i)  (int)(tab16 ? tab16[i].len : book12[i].len)
+#define HUFF_CODE(i) (tab16 ? (uint32_t)tab16[i].data : (uint32_t)book12[i].data)
+        HuffEntry *lut = huff_lut[book - 1];
+        memset(lut, 0, sizeof(huff_lut[0]));
 
-    for (int i = 0; i < 81; i++) {
-        int idx = i;
-        quad_lut[i][0] = (int8_t)(idx / 27);
-        idx %= 27;
-        quad_lut[i][1] = (int8_t)(idx / 9);
-        idx %= 9;
-        quad_lut[i][2] = (int8_t)(idx / 3);
-        quad_lut[i][3] = (int8_t)(idx % 3);
-    }
-
-    for (int b = 1; b <= 11; b++) {
-        int b_idx = b - 1;
-        const hcode16_t *table = huffbook_tables[b];
-        int size = huffbook_sizes[b];
-        if (!table) continue;
-
-        memset(huff_lut_11bit[b_idx], 0, sizeof(huff_lut_11bit[b_idx]));
-        huff_esc_count[b_idx] = 0;
-
-        for (int i = 0; i < size; i++) {
-            uint32_t len = table[i].len;
+        /* short codes fill their share of the first level; each longer
+         * code's prefix gets a subtree as deep as its longest code */
+        for (int i = 0; i < n; i++) {
+            int len = HUFF_LEN(i);
             if (len == 0) continue;
-
-            if (len <= 11) {
-                uint32_t start = (uint32_t)table[i].data << (11 - len);
-                uint32_t count = 1U << (11 - len);
-                HuffLutEntry val = (HuffLutEntry)(len | ((uint32_t)i << 4));
-                for (uint32_t k = 0; k < count; k++) {
-                    huff_lut_11bit[b_idx][start + k] = val;
+            if (len <= HUFF_LUT_BITS) {
+                uint32_t start = HUFF_CODE(i) << (HUFF_LUT_BITS - len);
+                for (uint32_t k = 0; k < (1U << (HUFF_LUT_BITS - len)); k++)
+                    lut[start + k] = (HuffEntry)(len | (huff_tuple(book, i) << 4));
+            } else {
+                uint32_t prefix = HUFF_CODE(i) >> (len - HUFF_LUT_BITS);
+                if (lut[prefix] == 0) {
+                    lut[prefix] = (HuffEntry)(n_sub << 4);
+                    huff_subtree[n_sub].depth = 0;
+                    n_sub++;
                 }
-            } else if (huff_esc_count[b_idx] < HUFF_ESC_TABLE_CAP) {
-                huff_esc_table[b_idx][huff_esc_count[b_idx]].len = (uint8_t)len;
-                huff_esc_table[b_idx][huff_esc_count[b_idx]].data = table[i].data;
-                huff_esc_table[b_idx][huff_esc_count[b_idx]].sym = (uint16_t)i;
-                huff_esc_count[b_idx]++;
+                int t = lut[prefix] >> 4;
+                if (len - HUFF_LUT_BITS > huff_subtree[t].depth) huff_subtree[t].depth = (uint8_t)(len - HUFF_LUT_BITS);
             }
         }
-    }
-
-    /* Scalefactors book12 */
-    int b12_idx = 11;
-    memset(huff_lut_11bit[b12_idx], 0, sizeof(huff_lut_11bit[b12_idx]));
-    huff_esc_count[b12_idx] = 0;
-    for (int i = 0; i < 121; i++) {
-        uint32_t len = book12[i].len;
-        if (len == 0) continue;
-
-        if (len <= 11) {
-            uint32_t start = (uint32_t)book12[i].data << (11 - len);
-            uint32_t count = 1U << (11 - len);
-            HuffLutEntry val = (HuffLutEntry)(len | ((uint32_t)i << 4));
-            for (uint32_t k = 0; k < count; k++) {
-                huff_lut_11bit[b12_idx][start + k] = val;
+        for (int i = 0; i < n; i++) {
+            int len = HUFF_LEN(i);
+            if (len <= HUFF_LUT_BITS) continue;
+            uint32_t prefix = HUFF_CODE(i) >> (len - HUFF_LUT_BITS);
+            int t = lut[prefix] >> 4;
+            if (!(huff_subtree[t].depth & 0x80)) {
+                /* first code of this subtree: allocate it */
+                huff_subtree[t].start = (uint16_t)n_entries;
+                n_entries += 1 << huff_subtree[t].depth;
+                memset(huff_sub + huff_subtree[t].start, 0, sizeof(HuffEntry) << huff_subtree[t].depth);
+                huff_subtree[t].depth |= 0x80; /* allocated */
             }
-        } else if (huff_esc_count[b12_idx] < HUFF_ESC_TABLE_CAP) {
-            huff_esc_table[b12_idx][huff_esc_count[b12_idx]].len = (uint8_t)len;
-            huff_esc_table[b12_idx][huff_esc_count[b12_idx]].data = book12[i].data;
-            huff_esc_table[b12_idx][huff_esc_count[b12_idx]].sym = (uint16_t)i;
-            huff_esc_count[b12_idx]++;
+            int depth = huff_subtree[t].depth & 0x7F;
+            int rest = len - HUFF_LUT_BITS;
+            uint32_t tail = HUFF_CODE(i) & ((1U << rest) - 1);
+            uint32_t start = huff_subtree[t].start + (tail << (depth - rest));
+            for (uint32_t k = 0; k < (1U << (depth - rest)); k++)
+                huff_sub[start + k] = (HuffEntry)(rest | (huff_tuple(book, i) << 4));
         }
+#undef HUFF_LEN
+#undef HUFF_CODE
     }
-
+    for (int t = 0; t < n_sub; t++) huff_subtree[t].depth &= 0x7F;
     huff_luts_initialized = true;
 }
 
-static inline int decode_huffman_symbol(BitReader *bs, int book
-#ifdef FAAD_STATS
-    , FaadDecStats *stats
-#endif
-)
+/* One codeword of book (1..12): the decoded tuple. */
+static inline uint32_t huff_decode(BitReader *bs, int book)
 {
-    if (book < 1 || book > 11) return 0;
-    int b_idx = book - 1;
-    const HuffLutEntry * restrict lut_row = huff_lut_11bit[b_idx];
-
-    uint32_t cw11 = bits_show_fast(bs, 11);
-    HuffLutEntry lut = lut_row[cw11];
-    uint32_t len = lut & 0x0F;
-    if (len > 0) {
-        bits_skip(bs, len);
-        return (int)(lut >> 4);
+    HuffEntry e = huff_lut[book - 1][bits_show_fast(bs, HUFF_LUT_BITS)];
+    if (e & 15) {
+        bits_skip(bs, e & 15);
+        return e >> 4;
     }
-
-    int esc_cnt = huff_esc_count[b_idx];
-    const HuffEscEntry * restrict esc_tab = huff_esc_table[b_idx];
-    for (int i = 0; i < esc_cnt; i++) {
-        uint32_t l = esc_tab[i].len;
-        if (bits_show(bs, l) == esc_tab[i].data) {
-            bits_skip(bs, l);
-#ifdef FAAD_STATS
-            if (stats) stats->huffEscapeHits[book]++;
-#endif
-            return esc_tab[i].sym;
-        }
-    }
-#ifdef FAAD_STATS
-    if (stats) stats->huffEscapeMisses++;
-#endif
-    return 0;
+    int t = e >> 4, depth = huff_subtree[t].depth;
+    uint32_t rest = bits_show(bs, HUFF_LUT_BITS + depth) & ((1U << depth) - 1);
+    e = huff_sub[huff_subtree[t].start + rest];
+    bits_skip(bs, HUFF_LUT_BITS + (e & 15));
+    return e >> 4;
 }
 
-static inline int decode_huffman_scalefactor(BitReader *bs
 #ifdef FAAD_STATS
-    , FaadDecStats *stats
-#endif
-)
-{
-    int b12_idx = 11;
-    uint32_t cw11 = bits_show(bs, 11);
-    HuffLutEntry lut = huff_lut_11bit[b12_idx][cw11];
-    uint32_t len = lut & 0x0F;
-    if (len > 0) {
-        bits_skip(bs, len);
-        return (int)(lut >> 4);
-    }
-
-    int esc_cnt = huff_esc_count[b12_idx];
-    const HuffEscEntry *esc_tab = huff_esc_table[b12_idx];
-    for (int i = 0; i < esc_cnt; i++) {
-        uint32_t l = esc_tab[i].len;
-        if (bits_show(bs, l) == esc_tab[i].data) {
-            bits_skip(bs, l);
-#ifdef FAAD_STATS
-            if (stats) stats->huffEscapeHits[12]++;
-#endif
-            return esc_tab[i].sym;
-        }
-    }
-#ifdef FAAD_STATS
-    if (stats) stats->huffEscapeMisses++;
-#endif
-    return 0;
-}
-
-
-/* Convenience wrappers so call sites don't need to spell out the #ifdef at
- * every call -- they assume a `stats` variable (possibly NULL) is in scope
- * under FAAD_STATS, matching the parameter name used throughout this file. */
-#ifdef FAAD_STATS
-#define DECODE_HUFF_SF(bs) decode_huffman_scalefactor((bs), stats)
+#define DECODE_HUFF_SF(bs) ((int)huff_decode((bs), 12))
 #else
-#define DECODE_HUFF_SF(bs) decode_huffman_scalefactor((bs))
+#define DECODE_HUFF_SF(bs) ((int)huff_decode((bs), 12))
 #endif
 
 static inline void decode_quad(BitReader *bs, int book, int *v, int *w, int *x, int *y
@@ -210,25 +148,16 @@ static inline void decode_quad(BitReader *bs, int book, int *v, int *w, int *x, 
 #endif
 )
 {
-    int idx = decode_huffman_symbol(bs, book
 #ifdef FAAD_STATS
-        , stats
+    (void)stats;
 #endif
-    );
-    if (idx < 0) idx = 0;
-    if (idx > 80) idx = 80;
-
-    const int8_t *q = quad_lut[idx];
-    int v_val = q[0];
-    int w_val = q[1];
-    int x_val = q[2];
-    int y_val = q[3];
-
+    uint32_t t = huff_decode(bs, book);
+    int v_val = (int)(t & 3), w_val = (int)((t >> 2) & 3), x_val = (int)((t >> 4) & 3), y_val = (int)((t >> 6) & 3);
     if (book <= 2) {
-        /* Signed 4-tuple: values in {-1, 0, 1} */
+        /* signed 4-tuple: values in {-1, 0, 1} */
         *v = v_val - 1; *w = w_val - 1; *x = x_val - 1; *y = y_val - 1;
     } else {
-        /* Unsigned 4-tuple: read sign bit for non-zero values */
+        /* unsigned 4-tuple: a sign bit follows for each non-zero value */
         if (v_val) if (bits_get_1(bs)) v_val = -v_val;
         if (w_val) if (bits_get_1(bs)) w_val = -w_val;
         if (x_val) if (bits_get_1(bs)) x_val = -x_val;
@@ -243,54 +172,37 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y
 #endif
 )
 {
-    int idx = decode_huffman_symbol(bs, book
 #ifdef FAAD_STATS
-        , stats
+    (void)stats;
 #endif
-    );
-    int base = (book >= 1 && book <= 11) ? book_base[book] : 17;
-
-    *x = idx / base;
-    *y = idx % base;
+    uint32_t t = huff_decode(bs, book);
+    *x = (int)(t & 63);
+    *y = (int)(t >> 6);
 
     if (book == 5 || book == 6) {
-        /* Signed 2-tuples in [-4, 4], index = 9(x+4) + (y+4); no sign bits. */
+        /* signed 2-tuples in [-4, 4], no sign bits */
         *x -= 4;
         *y -= 4;
     } else if (book == 11) {
-        /* Codebook 11 (ESCBOOK): sign bits for both values come immediately
-         * after the Huffman codeword -- matching how libfaac's encoder
-         * actually packs them (HCB_ESC in huff2.c appends both sign bits to
-         * the codeword's own bit pattern before separately appending any
-         * escape-sequence data) -- not after the escape sequence. Reading
-         * escape data first only desyncs when a value actually needs
-         * escaping (magnitude >= 16), which is why this went unnoticed on
-         * quieter content. */
-        int abs_x = *x;
-        int abs_y = *y;
+        /* the sign bits of both values come right after the codeword, the
+         * escape sequences (for a magnitude of 16) after those */
+        int abs_x = *x, abs_y = *y;
         bool neg_x = abs_x && bits_get_1(bs);
         bool neg_y = abs_y && bits_get_1(bs);
-
         if (abs_x == 16) {
-#ifdef FAAD_STATS
-            if (stats) stats->escbookMagnitudeEscapes++;
-#endif
             int prefix = 0;
             while (bits_get_1(bs) == 1) prefix++;
             abs_x = (1 << (prefix + 4)) + bits_get_fast(bs, prefix + 4);
         }
         if (abs_y == 16) {
-#ifdef FAAD_STATS
-            if (stats) stats->escbookMagnitudeEscapes++;
-#endif
             int prefix = 0;
             while (bits_get_1(bs) == 1) prefix++;
             abs_y = (1 << (prefix + 4)) + bits_get_fast(bs, prefix + 4);
         }
         *x = neg_x ? -abs_x : abs_x;
         *y = neg_y ? -abs_y : abs_y;
-    } else if (book >= 7 && book <= 10) {
-        /* Unsigned 2-tuple: read sign bit for non-zero values */
+    } else {
+        /* unsigned 2-tuple: a sign bit follows for each non-zero value */
         if (*x) if (bits_get_1(bs)) *x = -*x;
         if (*y) if (bits_get_1(bs)) *y = -*y;
     }
