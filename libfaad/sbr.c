@@ -41,13 +41,12 @@ static float syn_post_c[128], syn_post_s[128]; /* exp(+j*pi*(2n-255)/256) */
 static float ds_pre_c[32], ds_pre_s[32];     /* exp(-j*127.5*pi*k/64) */
 static float ds_post_c[64], ds_post_s[64];   /* exp(+j*pi*(2n-127.5)/128) */
 #endif
-static FFT_Tables sbr_fft;
 static bool qmf_twiddles_init = false;
 
 void init_qmf_twiddles(void)
 {
     if (qmf_twiddles_init) return;
-    fft_initialize(&sbr_fft);
+    fft_init();
     for (int n = 0; n < 64; n++) {
         ana_pre_c[n] = (float)cos(M_PI * n / 64.0);
         ana_pre_s[n] = (float)sin(M_PI * n / 64.0);
@@ -100,12 +99,13 @@ static void qmf_analysis_slot(SBRChannel *ch, const float *in, float out[32][2])
         u[n] = 2.0f * acc;
     }
     /* Inverse DFT through the forward transform: IDFT(a) = conj(FFT(conj(a))). */
-    float re[64], im[64];
+    float z[128], w[128];
     for (int n = 0; n < 64; n++) {
-        re[n] = u[n] * ana_pre_c[n];
-        im[n] = -(u[n] * ana_pre_s[n]);
+        z[n]      = u[n] * ana_pre_c[n];
+        z[64 + n] = -(u[n] * ana_pre_s[n]);
     }
-    fft(&sbr_fft, re, im, 6);
+    fft(z, w, 6);
+    const float *re = w, *im = w + 64;
     for (int k = 0; k < 32; k++) {
         float ar = re[k], ai = -im[k];
         out[k][0] = ar * ana_post_c[k] - ai * ana_post_s[k];
@@ -120,27 +120,33 @@ static inline void mac64(float * restrict acc, const float * restrict x, const f
 }
 
 #ifndef FAAD_D_SBR
-/* 64-band synthesis of one slot: 64 output samples. The delay line is a
- * ring of ten 128-sample blocks; the newest block starts at qmf_v_pos. */
+/* 64-band synthesis of one slot: 64 output samples.
+ * v(n) = 1/64 Re{ exp(j*pi*(2n-255)/256) * IDFT128(X(k) exp(-j*255*pi*k/128)) }
+ * Only 64 of the 128 inputs are non-zero, so the 128-point transform is
+ * two 64-point ones: the even outputs directly, the odd outputs after
+ * rotating the input by exp(-j*pi*n/64). The delay line is a ring of ten
+ * 128-sample blocks; the newest block starts at qmf_v_pos. */
 static void qmf_synthesis_slot(SBRChannel *ch, float X[64][2], float *out)
 {
-    /* v(n) = 1/64 Re{ exp(j*pi*(2n-255)/256) * IDFT128(X(k) exp(-j*255*pi*k/128)) } */
-    float re[128], im[128];
+    float z0[128], z1[128], w0[128], w1[128];
     for (int k = 0; k < 64; k++) {
         float br = X[k][0] * syn_pre_c[k] - X[k][1] * syn_pre_s[k];
-        float bi = X[k][0] * syn_pre_s[k] + X[k][1] * syn_pre_c[k];
-        re[k] = br;
-        im[k] = -bi;
+        float bi = -(X[k][0] * syn_pre_s[k] + X[k][1] * syn_pre_c[k]);
+        z0[k] = br;
+        z0[64 + k] = bi;
+        z1[k]      = br * ana_pre_c[k] + bi * ana_pre_s[k];
+        z1[64 + k] = bi * ana_pre_c[k] - br * ana_pre_s[k];
     }
-    memset(re + 64, 0, 64 * sizeof(float));
-    memset(im + 64, 0, 64 * sizeof(float));
-    fft(&sbr_fft, re, im, 7);
+    fft(z0, w0, 6);
+    fft(z1, w1, 6);
 
     ch->qmf_v_pos = (ch->qmf_v_pos + 1280 - 128) % 1280;
     float *v = ch->qmf_v + ch->qmf_v_pos;
-    for (int n = 0; n < 128; n++) {
-        float cr = re[n], ci = -im[n];
-        v[n] = (cr * syn_post_c[n] - ci * syn_post_s[n]) * (1.0f / 64.0f);
+    for (int k = 0; k < 64; k++) {
+        float cr = w0[k], ci = -w0[64 + k];
+        v[2 * k] = (cr * syn_post_c[2 * k] - ci * syn_post_s[2 * k]) * (1.0f / 64.0f);
+        cr = w1[k]; ci = -w1[64 + k];
+        v[2 * k + 1] = (cr * syn_post_c[2 * k + 1] - ci * syn_post_s[2 * k + 1]) * (1.0f / 64.0f);
     }
 
     /* Ten 64-tap runs, each inside one 128-sample block, so no run wraps. */
@@ -162,16 +168,16 @@ static void qmf_synthesis_slot_ds(SBRChannel *ch, float X[64][2], float *out)
     float *v = ch->qmf_v;
     memmove(v + 64, v, 576 * sizeof(float));
 
-    float re[64], im[64];
+    float z[128], w[128];
+    memset(z, 0, sizeof(z));
     for (int k = 0; k < 32; k++) {
         float br = X[k][0] * ds_pre_c[k] - X[k][1] * ds_pre_s[k];
         float bi = X[k][0] * ds_pre_s[k] + X[k][1] * ds_pre_c[k];
-        re[k] = br;
-        im[k] = -bi;
+        z[k] = br;
+        z[64 + k] = -bi;
     }
-    memset(re + 32, 0, 32 * sizeof(float));
-    memset(im + 32, 0, 32 * sizeof(float));
-    fft(&sbr_fft, re, im, 6);
+    fft(z, w, 6);
+    const float *re = w, *im = w + 64;
     for (int n = 0; n < 64; n++) {
         float cr = re[n], ci = -im[n];
         v[n] = (cr * ds_post_c[n] - ci * ds_post_s[n]) * (1.0f / 64.0f);
