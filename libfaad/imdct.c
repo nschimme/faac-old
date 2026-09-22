@@ -22,8 +22,6 @@ static float dct4_sin_1024[512];
 static float dct4_cos_128[64];
 static float dct4_sin_128[64];
 
-static FFT_Tables fft_tbl;
-
 static bool tables_init = false;
 
 /* Zeroth-order modified Bessel function, power series. */
@@ -58,7 +56,7 @@ void init_windows(void)
 {
     if (tables_init) return;
 
-    fft_initialize(&fft_tbl);
+    fft_init();
 
     for (int i = 0; i < 1024; i++) {
         sine_window_2048[i] = sinf((float)M_PI * (i + 0.5f) / 2048.0f);
@@ -92,17 +90,19 @@ static void dct4(const float *in, float *u, int M)
     int logm = (M == 1024) ? 9 : 6;
     const float *cs = (M == 1024) ? dct4_cos_1024 : dct4_cos_128;
     const float *sn = (M == 1024) ? dct4_sin_1024 : dct4_sin_128;
-    float zr[512], zi[512];
+    float z[1024], w[1024];
+    float *zr = z, *zi = z + K;
 
     for (int n = 0; n < K; n++) {
         float a = in[2 * n], b = in[M - 1 - 2 * n];
         zr[n] = a * cs[n] - b * sn[n];
         zi[n] = a * sn[n] + b * cs[n];
     }
-    fft(&fft_tbl, zr, zi, logm);
+    fft(z, w, logm);
+    const float *wr = w, *wi = w + K;
     for (int k = 0; k < K; k++) {
-        u[2 * k]         =  zr[k] * cs[k] - zi[k] * sn[k];
-        u[M - 1 - 2 * k] = -(zr[k] * sn[k] + zi[k] * cs[k]);
+        u[2 * k]         =  wr[k] * cs[k] - wi[k] * sn[k];
+        u[M - 1 - 2 * k] = -(wr[k] * sn[k] + wi[k] * cs[k]);
     }
 }
 
