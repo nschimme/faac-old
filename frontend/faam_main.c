@@ -74,11 +74,7 @@ enum {
 static int cmd_info(int argc, char **argv)
 {
     const char *filepath = NULL;
-#if defined(FAAM_STRICT) && FAAM_STRICT
-    bool strict_mode = true;
-#else
     bool strict_mode = false;
-#endif
     static struct option long_options[] = {
         {"strict", no_argument, 0, OPT_STRICT},
         {"help", no_argument, 0, 'h'},
@@ -794,11 +790,7 @@ static int cmd_demux(int argc, char **argv)
 static int cmd_tag(int argc, char **argv)
 {
     const char *filepath = NULL;
-#if defined(FAAM_STRICT) && FAAM_STRICT
-    bool strict_mode = true;
-#else
     bool strict_mode = false;
-#endif
     faam_metadata meta;
     memset(&meta, 0, sizeof(meta));
 
