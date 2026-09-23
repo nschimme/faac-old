@@ -612,7 +612,7 @@ static bool sbr_read_grid(BitReader *bs, SBRChannel *ch)
     return true;
 }
 
-static void sbr_read_envelope(BitReader *bs, const SBRElement *el, SBRChannel *ch, bool balance)
+static bool sbr_read_envelope(BitReader *bs, const SBRElement *el, SBRChannel *ch, bool balance)
 {
     /* 3.0 dB resolution: 5-bit start (6 for the balance channel); 1.5 dB: 7 (6). */
     int start_bits = ch->amp_res ? (balance ? 5 : 6) : (balance ? 6 : 7);
@@ -653,10 +653,14 @@ static void sbr_read_envelope(BitReader *bs, const SBRElement *el, SBRChannel *c
                 ch->E[l][k] = (int16_t)(ref + d);
             }
         }
+        for (int k = 0; k < nb; k++) {
+            if (ch->E[l][k] < -128 || ch->E[l][k] > 256) return false;
+        }
     }
+    return true;
 }
 
-static void sbr_read_noise(BitReader *bs, const SBRElement *el, SBRChannel *ch, bool balance)
+static bool sbr_read_noise(BitReader *bs, const SBRElement *el, SBRChannel *ch, bool balance)
 {
     const SBRHuffBook *t_book = &sbr_books[balance ? HB_T_NOISE_BAL_30 : HB_T_NOISE_30];
     const SBRHuffBook *f_book = &sbr_books[balance ? HB_F_ENV_BAL_30 : HB_F_ENV_30];
@@ -676,7 +680,11 @@ static void sbr_read_noise(BitReader *bs, const SBRElement *el, SBRChannel *ch, 
                 ch->Q[l][k] = (int16_t)(prev[k] + d);
             }
         }
+        for (int k = 0; k < el->n_q; k++) {
+            if (ch->Q[l][k] < -60 || ch->Q[l][k] > 60) return false;
+        }
     }
+    return true;
 }
 
 faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32_t ch0, uint32_t syntax_id, bool crc)
@@ -767,13 +775,17 @@ faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32
         else for (int k = 0; k < el->n_q && k < SBR_MAX_NQ; k++) chs[1]->invf_mode[k] = (uint8_t)bits_get(bs, 2);
     }
     if (el->coupling) {
-        sbr_read_envelope(bs, el, chs[0], false);
-        sbr_read_noise(bs, el, chs[0], false);
-        sbr_read_envelope(bs, el, chs[1], true);
-        sbr_read_noise(bs, el, chs[1], true);
+        if (!sbr_read_envelope(bs, el, chs[0], false)) return FAAD_ERR_DECODE_FAILED;
+        if (!sbr_read_noise(bs, el, chs[0], false)) return FAAD_ERR_DECODE_FAILED;
+        if (!sbr_read_envelope(bs, el, chs[1], true)) return FAAD_ERR_DECODE_FAILED;
+        if (!sbr_read_noise(bs, el, chs[1], true)) return FAAD_ERR_DECODE_FAILED;
     } else {
-        for (int c = 0; c < nch; c++) sbr_read_envelope(bs, el, chs[c], false);
-        for (int c = 0; c < nch; c++) sbr_read_noise(bs, el, chs[c], false);
+        for (int c = 0; c < nch; c++) {
+            if (!sbr_read_envelope(bs, el, chs[c], false)) return FAAD_ERR_DECODE_FAILED;
+        }
+        for (int c = 0; c < nch; c++) {
+            if (!sbr_read_noise(bs, el, chs[c], false)) return FAAD_ERR_DECODE_FAILED;
+        }
     }
     for (int c = 0; c < nch; c++) {
         SBRChannel *ch = chs[c];
