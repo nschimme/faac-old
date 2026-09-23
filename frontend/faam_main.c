@@ -51,19 +51,44 @@ static void print_usage(void)
     printf("  demux <input.mp4> -o <out>  Extract elementary track streams from container\n");
     printf("  tag <input.mp4> [options]   Apply iTunes metadata tags\n");
     printf("  chapter <subcommand> ...    Manage chapter / bookmark tracks\n\n");
+    printf("Options:\n");
+    printf("  --strict                    Enable strict error handling and debug diagnostics\n\n");
 }
+
+enum {
+    OPT_BRAND = 400,
+    OPT_ENCODER_DELAY,
+    OPT_PADDING_DELAY,
+    OPT_SBR_SIGNALING,
+    OPT_EXPORT_ASC,
+    OPT_WIDTH,
+    OPT_HEIGHT,
+    OPT_CODEC,
+    OPT_TRACK,
+    OPT_TITLE,
+    OPT_ARTIST,
+    OPT_ALBUM,
+    OPT_STRICT
+};
 
 static int cmd_info(int argc, char **argv)
 {
     const char *filepath = NULL;
+#if defined(FAAM_STRICT) && FAAM_STRICT
+    bool strict_mode = true;
+#else
+    bool strict_mode = false;
+#endif
     static struct option long_options[] = {
+        {"strict", no_argument, 0, OPT_STRICT},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
     int opt;
     optind = 1;
     while ((opt = getopt_long(argc, argv, "h", long_options, NULL)) != -1) {
-        if (opt == 'h') { print_usage(); return 0; }
+        if (opt == OPT_STRICT) { strict_mode = true; }
+        else if (opt == 'h') { print_usage(); return 0; }
     }
     if (optind < argc) filepath = argv[optind];
 
@@ -91,7 +116,11 @@ static int cmd_info(int argc, char **argv)
     faam_demuxer *d = NULL;
     faam_status st = faam_demuxer_init(mem, demux_size, &io, &d);
     if (st != FAAM_OK) {
-        fprintf(stderr, "Error parsing %s: %s\n", filepath, faam_strerror(st));
+        if (strict_mode) {
+            fprintf(stderr, "[STRICT ERROR] Command 'info' failed on %s: status %d (%s)\n", filepath, st, faam_strerror(st));
+        } else {
+            fprintf(stderr, "Error parsing %s: %s\n", filepath, faam_strerror(st));
+        }
         free(mem);
         fclose(f);
         return 1;
@@ -252,21 +281,6 @@ static int cmd_dump(int argc, char **argv)
     free(buf);
     return 0;
 }
-
-enum {
-    OPT_BRAND = 400,
-    OPT_ENCODER_DELAY,
-    OPT_PADDING_DELAY,
-    OPT_SBR_SIGNALING,
-    OPT_EXPORT_ASC,
-    OPT_WIDTH,
-    OPT_HEIGHT,
-    OPT_CODEC,
-    OPT_TRACK,
-    OPT_TITLE,
-    OPT_ARTIST,
-    OPT_ALBUM
-};
 
 static int cmd_mux(int argc, char **argv)
 {
@@ -780,6 +794,11 @@ static int cmd_demux(int argc, char **argv)
 static int cmd_tag(int argc, char **argv)
 {
     const char *filepath = NULL;
+#if defined(FAAM_STRICT) && FAAM_STRICT
+    bool strict_mode = true;
+#else
+    bool strict_mode = false;
+#endif
     faam_metadata meta;
     memset(&meta, 0, sizeof(meta));
 
@@ -787,6 +806,7 @@ static int cmd_tag(int argc, char **argv)
         {"title", required_argument, 0, OPT_TITLE},
         {"artist", required_argument, 0, OPT_ARTIST},
         {"album", required_argument, 0, OPT_ALBUM},
+        {"strict", no_argument, 0, OPT_STRICT},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
@@ -798,6 +818,7 @@ static int cmd_tag(int argc, char **argv)
         case OPT_TITLE: strncpy(meta.title, optarg, sizeof(meta.title) - 1); break;
         case OPT_ARTIST: strncpy(meta.artist, optarg, sizeof(meta.artist) - 1); break;
         case OPT_ALBUM: strncpy(meta.album, optarg, sizeof(meta.album) - 1); break;
+        case OPT_STRICT: strict_mode = true; break;
         case 'h': print_usage(); return 0;
         default: break;
         }
@@ -825,7 +846,11 @@ static int cmd_tag(int argc, char **argv)
     fclose(f);
 
     if (st != FAAM_OK) {
-        fprintf(stderr, "Error updating tags on %s: %s\n", filepath, faam_strerror(st));
+        if (strict_mode) {
+            fprintf(stderr, "[STRICT ERROR] Command 'tag' failed updating %s: status %d (%s)\n", filepath, st, faam_strerror(st));
+        } else {
+            fprintf(stderr, "Error updating tags on %s: %s\n", filepath, faam_strerror(st));
+        }
         return 1;
     }
 
