@@ -5,29 +5,7 @@
 
 #include <stdio.h>
 #include "libfaam_internal.h"
-
-#if defined(__has_builtin)
-#if __has_builtin(__builtin_bswap32) && __has_builtin(__builtin_bswap16)
-#define MP4_HAVE_BSWAP_BUILTINS 1
-#endif
-#elif defined(__GNUC__)
-#define MP4_HAVE_BSWAP_BUILTINS 1
-#endif
-
-#if defined(MP4_HAVE_BSWAP_BUILTINS)
-#define BSWAP32 __builtin_bswap32
-#define BSWAP16 __builtin_bswap16
-#elif defined(_MSC_VER)
-#define BSWAP32 _byteswap_ulong
-#define BSWAP16 _byteswap_ushort
-#else
-static inline uint32_t BSWAP32(uint32_t x) {
-    return (x >> 24) | ((x >> 8) & 0xff00) | ((x << 8) & 0xff0000) | (x << 24);
-}
-static inline uint16_t BSWAP16(uint16_t x) {
-    return (uint16_t)((x >> 8) | (x << 8));
-}
-#endif
+#include "endian.h"
 
 enum {
     MP4_EPOCH_OFFSET = 2082844800,
@@ -110,7 +88,7 @@ static inline void end_atom(faam_muxer *m, long pos) {
     if (m->membuf) {
         uint32_t size = (uint32_t)(m->mempos - pos);
 #ifndef WORDS_BIGENDIAN
-        size = BSWAP32(size);
+        size = bswap32(size);
 #endif
         memcpy(m->membuf + pos, &size, 4);
     } else if (m->io.seek && m->io.write && m->io.tell) {
@@ -153,7 +131,7 @@ static void put_tag_u8(faam_muxer *m, const char *name, uint8_t val) {
 
 static void put_tag_genre(faam_muxer *m, uint16_t genre) {
 #ifndef WORDS_BIGENDIAN
-    uint16_t val = BSWAP16(genre);
+    uint16_t val = bswap16(genre);
 #else
     uint16_t val = genre;
 #endif
@@ -164,8 +142,8 @@ static void put_tag_index(faam_muxer *m, const char *name, uint16_t num, uint16_
     uint16_t buf[4] = {
         0,
 #ifndef WORDS_BIGENDIAN
-        BSWAP16(num),
-        BSWAP16(total),
+        bswap16(num),
+        bswap16(total),
 #else
         num,
         total,
@@ -389,7 +367,7 @@ faam_status faam_muxer_finalize(faam_muxer *m)
     if (m->io.seek && m->io.write) {
         uint64_t pos = m->io.tell ? m->io.tell(m->io.user_data) : 0;
         m->io.seek(m->io.user_data, m->mdat_pos - 8);
-        uint32_t sz_be = BSWAP32((uint32_t)(m->mdat_size + 8));
+        uint32_t sz_be = bswap32((uint32_t)(m->mdat_size + 8));
         m->io.write(m->io.user_data, &sz_be, 4);
         m->io.seek(m->io.user_data, pos);
     }

@@ -55,7 +55,7 @@ libfaac = disabler()
 project_ver = meson.project_version()
 
 common_args = {
-    'include_directories' : ['..', '../include'],
+    'include_directories' : ['..', '../include', '../common'],
     'c_args' : c_args,
     'dependencies' : [libm, faab_dep],
     'link_with' : quantize_simd_libs,
