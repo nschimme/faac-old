@@ -383,7 +383,10 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                         } else {
                             ch0 = (ch_idx >= 1) ? (ch_idx - 1) : 0;
                         }
-                        sbr_decode_extension(dec, &bs, ch0, last_elem_type, ext_type == SBR_EXTENSION_DATA_CRC);
+                        faad_status sbr_st = sbr_decode_extension(dec, &bs, ch0, last_elem_type, ext_type == SBR_EXTENSION_DATA_CRC);
+                        if (sbr_st != FAAD_OK) {
+                            decode_success = false;
+                        }
                         uint32_t consumed = bits_get_consumed(&bs);
 #ifdef FAAD_STATS
                         dec->stats.fillElementCount++;
