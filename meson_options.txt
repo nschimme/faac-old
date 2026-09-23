@@ -56,8 +56,3 @@ option('stats',
     description: 'Enable optional end-of-encode statistics banner',
     type: 'boolean',
     value: false)
-
-option('strict',
-    description: 'Enable strict mode validation and noisy debug diagnostics',
-    type: 'boolean',
-    value: false)
