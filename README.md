@@ -47,3 +47,20 @@ Lesser General Public License for more details.
    meson install
    ```
 
+### Flash-constrained (embedded) builds
+
+For targets where binary size matters (e.g. deploying libfaac and libfaad as
+separate images on flash-constrained hardware), use the `embedded` profile
+instead: it drops libfaam's iTunes tag / QuickTime chapter retrofit APIs and
+links `faac`/`faad` against the shared `libfaab.so`/`libfaam.so` rather than
+duplicating them statically into each binary.
+
+```bash
+./contrib/build-embedded.sh buildcam
+ninja -C buildcam
+```
+
+Equivalent to `meson setup buildcam -Dembedded=true -Ddefault_library=shared`.
+Requires a target with a working dynamic linker; plain `meson setup build`
+(no flags) keeps every current default.
+

@@ -11,6 +11,7 @@ faad_src = [
     'sbr.c',
     'ps.c',
     'sfb_tables.c',
+    'sbr_dec_tables.c',
 ]
 
 faad_c_args = c_args
@@ -24,15 +25,12 @@ if get_option('decoder-downsampled-sbr')
     faad_c_args += ['-DFAAD_D_SBR']
 endif
 
-thread_dep = dependency('threads', required: false)
-
 project_ver = meson.project_version()
 
 common_args = {
     'include_directories' : ['..', '../include', '../libfaac'],
     'c_args' : faad_c_args,
-    'dependencies' : [libm, thread_dep],
-    'link_with' : [libfaac_common_static],
+    'dependencies' : [libm, faab_dep],
     'install' : true,
     'gnu_symbol_visibility' : 'hidden',
 }
@@ -78,7 +76,7 @@ test_faad = executable('test_faad',
     'test_faad.c',
     include_directories: ['..', '../include'],
     link_with: [libfaad],
-    dependencies: [thread_dep],
+    dependencies: [dependency('threads', required: false)],
 )
 test('faad_smoke_test', test_faad)
 

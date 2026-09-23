@@ -16,7 +16,12 @@
 #include <math.h>
 
 #include "fft.h"
-#include "util.h"
+
+/* Double-precision pi, for one-time twiddle-table generation where the extra
+ * precision is free -- this runs once, never in the per-sample hot path. */
+#ifndef M_PI_DOUBLE
+#define M_PI_DOUBLE 3.14159265358979323846
+#endif
 
 /* Radix-4 twiddles laid out in the order the butterflies consume them: stage
  * by stage, six floats per butterfly (W^j, W^2j, W^3j as cos, -sin). One
