@@ -37,7 +37,7 @@ faad_status adts_decode_header(BitReader *bs, AudioSpecificConfig *asc, uint32_t
 {
     uint32_t sync = bits_get(bs, 12);
     if (sync != 0xFFF) {
-        return FAAD_ERR_DECODE_FAILED;
+        return FAAD_ERR_SYNC_LOST;
     }
     bits_skip(bs, 1);
     bits_skip(bs, 2);
@@ -55,6 +55,11 @@ faad_status adts_decode_header(BitReader *bs, AudioSpecificConfig *asc, uint32_t
 
     if (protection_absent == 0) {
         bits_skip(bs, 16);
+    }
+
+    uint32_t min_hdr = (protection_absent == 0) ? 9 : 7;
+    if (sr_idx >= 12 || faad_sample_rates[sr_idx] == 0 || flen < min_hdr) {
+        return FAAD_ERR_DECODE_FAILED;
     }
 
     if (asc) {

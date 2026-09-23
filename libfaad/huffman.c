@@ -149,10 +149,14 @@ static inline uint32_t huff_decode(BitReader *bs, int book)
         bits_skip(bs, e & 15);
         return e >> 4;
     }
-    int t = e >> 4, depth = huff_subtree[t].depth;
+    int t = e >> 4;
+    if (t < 0 || t >= HUFF_SUBTREES) return 0;
+    int depth = huff_subtree[t].depth;
     uint32_t rest = bits_show(bs, HUFF_LUT_BITS + depth) & ((1U << depth) - 1);
     e = huff_sub[huff_subtree[t].start + rest];
-    bits_skip(bs, HUFF_LUT_BITS + (e & 15));
+    uint32_t skip = e & 15;
+    if (skip == 0 && depth > 0) return 0;
+    bits_skip(bs, HUFF_LUT_BITS + skip);
     return e >> 4;
 }
 
