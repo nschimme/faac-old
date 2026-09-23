@@ -41,7 +41,7 @@ static void decode_ics_info(BitReader *bs, ICSInfo *ics)
     }
 }
 
-static void decode_section_data(BitReader *bs, ICSInfo *ics)
+static faad_status decode_section_data(BitReader *bs, ICSInfo *ics)
 {
     uint32_t sect_bits = (ics->window_sequence == EIGHT_SHORT_SEQUENCE) ? 3 : 5;
     for (int g = 0; g < ics->num_window_groups && g < 8; g++) {
@@ -49,6 +49,9 @@ static void decode_section_data(BitReader *bs, ICSInfo *ics)
         int i = 0;
         while (k < ics->max_sfb && i < MAX_SFB) {
             uint32_t cb = bits_get(bs, 4);
+            if (cb == 12) {
+                return FAAD_ERR_DECODE_FAILED; /* Codebook 12 is reserved in ISO/IEC 14496-3 */
+            }
             uint32_t max_run = (1U << sect_bits) - 1;
             uint32_t run_field = bits_get(bs, sect_bits);
             uint32_t len = run_field;
@@ -68,6 +71,7 @@ static void decode_section_data(BitReader *bs, ICSInfo *ics)
             i++;
         }
     }
+    return FAAD_OK;
 }
 
 faad_status decode_pce(BitReader *bs, struct faad_decoder *dec)
@@ -159,7 +163,8 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
     }
 #endif
 
-    decode_section_data(bs, ics);
+    faad_status st = decode_section_data(bs, ics);
+    if (st != FAAD_OK) return st;
 
     decode_scale_factor_data(bs, ics, dec->core_sample_rate
 #ifdef FAAD_STATS

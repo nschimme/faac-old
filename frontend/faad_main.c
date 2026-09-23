@@ -535,15 +535,15 @@ int main(int argc, char **argv)
                                    &bytes_consumed, outbuf, sizeof(outbuf), &bytes_written, &finfo);
 
             if (st != FAAD_OK) {
+                if (st == FAAD_ERR_NEED_MORE_DATA || bytes_consumed == 0) {
+                    break;
+                }
                 if (strict_mode) {
                     fprintf(stderr, "[STRICT ERROR] Frame %u (stream offset 0x%x, remaining %ld): Decode failed with status %d (%s)\n",
                             frames_decoded, offset, file_len - offset, st, faad_strerror(st));
                     faad_decoder_destroy(dec);
                     free(inbuf);
                     return 1;
-                }
-                if (st == FAAD_ERR_NEED_MORE_DATA || bytes_consumed == 0) {
-                    break;
                 }
                 offset += bytes_consumed; /* resync distance on SYNC_LOST */
                 continue;
