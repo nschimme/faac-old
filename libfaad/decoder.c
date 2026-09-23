@@ -8,11 +8,7 @@
 #include <stdio.h>
 #endif
 
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <pthread.h>
-#endif
+#include "atomic.h"
 
 FAADAPI faad_status faad_get_library_info(faad_library_info *out)
 {
@@ -74,26 +70,11 @@ static void faad_init_global_tables_impl(void)
     init_sbr_books();
 }
 
-#if defined(_WIN32)
-static BOOL CALLBACK faad_init_global_tables_cb(PINIT_ONCE once, PVOID param, PVOID *ctx)
-{
-    (void)once; (void)param; (void)ctx;
-    faad_init_global_tables_impl();
-    return TRUE;
-}
-
 void faad_init_global_tables(void)
 {
-    static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
-    InitOnceExecuteOnce(&once, faad_init_global_tables_cb, NULL, NULL);
+    static faac_once_t once = FAAC_ONCE_INIT;
+    faac_once_run(&once, faad_init_global_tables_impl);
 }
-#else
-void faad_init_global_tables(void)
-{
-    static pthread_once_t once = PTHREAD_ONCE_INIT;
-    pthread_once(&once, faad_init_global_tables_impl);
-}
-#endif
 
 FAADAPI faad_status faad_decoder_init(void *mem_buf, uint32_t mem_size,
                                       const faad_config *cfg,
