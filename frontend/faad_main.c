@@ -229,11 +229,7 @@ int main(int argc, char **argv)
     bool info_only = false;
     bool json_info = false;
     bool quiet = false;
-#if defined(FAAD_STRICT) && FAAD_STRICT
-    bool strict_mode = true;
-#else
     bool strict_mode = false;
-#endif
     double jump_seconds = 0.0;
 
     static struct option long_options[] = {
