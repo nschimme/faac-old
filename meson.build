@@ -56,6 +56,7 @@ endif
 
 subdir('docs')
 subdir('include')
+subdir('libfaab')
 subdir('libfaac')
 
 if get_option('muxer')

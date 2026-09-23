@@ -18,7 +18,13 @@ frontend_link_libs = [libfaac]
 c_args_list = has_iconv ? ['-DHAVE_ICONV'] : []
 
 if get_option('muxer')
-    frontend_link_libs += [libfaam_static]
+    # Both faac and faad link libfaam for MP4 read/write. Linking the static
+    # archive into each duplicates it in full; the embedded profile ships
+    # them as separate binaries, so the shared object (one copy on flash,
+    # loaded by both) is what actually saves space -- the default build
+    # keeps the static archive for a self-contained single-binary faac.
+    libfaam_link = get_option('embedded') ? libfaam_shared : libfaam_static
+    frontend_link_libs += [libfaam_link]
     c_args_list += ['-DHAVE_LIBFAAM']
 endif
 
@@ -41,7 +47,10 @@ faac = executable('faac',
     install: true
 )
 
-if get_option('muxer')
+# faam_main.c calls the tag-retrofit API that embedded builds drop from
+# libfaam, and nobody deploys the standalone MP4-inspection CLI on a camera
+# anyway -- skip it under the embedded profile.
+if get_option('muxer') and not get_option('embedded')
     faam = executable('faam',
         ['faam_main.c', 'charset.c'],
         include_directories: ['..', '../include', '../libfaac'],
@@ -54,7 +63,7 @@ endif
 if get_option('decoder')
     decoder_link_libs = [libfaad]
     if get_option('muxer')
-        decoder_link_libs += [libfaam_static]
+        decoder_link_libs += [libfaam_link]
     endif
     gc_args = []
     if cc.has_link_argument('-Wl,--gc-sections')

@@ -49,15 +49,6 @@ common_src = [
     'util.h',
 ]
 
-# Shared ISO tables/FFT engine static helper for libfaad and internal targets.
-libfaac_common_static = static_library(
-    'faac_common',
-    ['fft.c', 'fft.h', 'sbr_tables.c', 'sbr_dec_tables.c', 'sbr_tables.h', 'huffdata.c', 'huffdata.h'],
-    include_directories: ['..', '../include'],
-    c_args: c_args,
-    gnu_symbol_visibility: 'hidden',
-)
-
 libfaac = disabler()
 
 # Derives library shared object version directly from project_version in root meson.build
@@ -66,8 +57,8 @@ project_ver = meson.project_version()
 common_args = {
     'include_directories' : ['..', '../include'],
     'c_args' : c_args,
-    'dependencies' : [libm],
-    'link_with' : quantize_simd_libs + [libfaac_common_static],
+    'dependencies' : [libm, faab_dep],
+    'link_with' : quantize_simd_libs,
     'install' : true,
     'gnu_symbol_visibility' : 'hidden',
 }

@@ -3,10 +3,16 @@
 libfaam_sources = files(
   'demux.c',
   'mux.c',
-  'tag.c',
-  'chapter.c',
   'util.c',
 )
+
+# tag.c/chapter.c are standalone retrofit APIs (faam_update_tags_stream /
+# faam_update_chapters_stream) that neither demux.c nor mux.c calls into --
+# safe to drop on flash-constrained targets that don't need iTunes metadata
+# or QuickTime chapter retrofitting.
+if not get_option('embedded')
+    libfaam_sources += files('tag.c', 'chapter.c')
+endif
 
 libfaam_headers = files(
   '../include/faam.h',

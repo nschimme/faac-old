@@ -1,18 +1,15 @@
 /*
- * ISO/IEC 14496-3 Scale Factor Band (SFB) Tables for all AAC sample rates
+ * Decoder-side scale-factor-band table glue.
+ * The actual ISO/IEC 14496-3 SFB offset tables live in libfaab, shared with
+ * the encoder's FFT/SBR-table/Huffman-codebook core.
  */
 
-#ifndef SFB_TABLES_H
-#define SFB_TABLES_H
+#ifndef FAAD_SFB_TABLES_H
+#define FAAD_SFB_TABLES_H
 
 #include <stdint.h>
-
-extern const uint16_t * const sfb_offsets_1024[12];
-extern const uint8_t num_sfbs_1024[12];
-
-extern const uint16_t * const sfb_offsets_128[12];
-extern const uint8_t num_sfbs_128[12];
+#include "../libfaab/sfb_tables.h"
 
 int get_sr_index(uint32_t sample_rate);
 
-#endif /* SFB_TABLES_H */
+#endif /* FAAD_SFB_TABLES_H */
