@@ -30,8 +30,8 @@ endif
 
 libfrontend = static_library('frontend',
     ['input.c', 'mp4write.c', 'charset.c', 'output.c', 'encode_engine.c', 'progress.c',
-     'input.h', 'mp4write.h', 'charset.h', 'progress.h', 'output.h', 'encode_engine.h', 'endian.h', git_version_h],
-    include_directories: ['..', '../include'],
+     'input.h', 'mp4write.h', 'charset.h', 'progress.h', 'output.h', 'encode_engine.h', '../common/endian.h', git_version_h],
+    include_directories: ['..', '../include', '../common'],
     link_with: frontend_link_libs,
     c_args: c_args_list,
     dependencies: [libiconv]
@@ -53,7 +53,7 @@ faac = executable('faac',
 if get_option('muxer') and not get_option('embedded')
     faam = executable('faam',
         ['faam_main.c', 'charset.c'],
-        include_directories: ['..', '../include', '../libfaac'],
+        include_directories: ['..', '../include', '../libfaac', '../common'],
         link_with: [libfaam_shared],
         dependencies: [libshell32, libiconv],
         install: true
@@ -73,7 +73,7 @@ if get_option('decoder')
     endif
     faad = executable('faad',
         ['faad_main.c', 'mp4read.c', 'charset.c'],
-        include_directories: ['..', '../include'],
+        include_directories: ['..', '../include', '../common'],
         link_with: decoder_link_libs,
         c_args: c_args_list,
         link_args: gc_args,
