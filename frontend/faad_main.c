@@ -190,12 +190,14 @@ static void print_usage(const char *prog)
     printf("  -i, --info             Display bitstream & container metadata, then exit\n");
     printf("      --json             Output bitstream info in JSON format\n");
     printf("  -q, --quiet            Quiet mode (suppress decoding progress)\n");
+    printf("      --strict           Strict mode (noisily error and report debug details on failure)\n");
     printf("  -h, --help             Display this help text\n");
 }
 
 enum {
     OPT_NO_GAPLESS = 300,
-    OPT_JSON
+    OPT_JSON,
+    OPT_STRICT
 };
 
 int main(int argc, char **argv)
@@ -227,6 +229,11 @@ int main(int argc, char **argv)
     bool info_only = false;
     bool json_info = false;
     bool quiet = false;
+#if defined(FAAD_STRICT) && FAAD_STRICT
+    bool strict_mode = true;
+#else
+    bool strict_mode = false;
+#endif
     double jump_seconds = 0.0;
 
     static struct option long_options[] = {
@@ -241,6 +248,7 @@ int main(int argc, char **argv)
         {"info", no_argument, 0, 'i'},
         {"json", no_argument, 0, OPT_JSON},
         {"quiet", no_argument, 0, 'q'},
+        {"strict", no_argument, 0, OPT_STRICT},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
@@ -264,6 +272,7 @@ int main(int argc, char **argv)
         case 'i': info_only = true; break;
         case OPT_JSON: json_info = true; info_only = true; break;
         case 'q': quiet = true; break;
+        case OPT_STRICT: strict_mode = true; break;
         case 'h': print_usage(argv[0]); return 0;
         default: break;
         }
@@ -440,7 +449,16 @@ int main(int argc, char **argv)
             st = faad_decode_frame(dec, inbuf + offset, size,
                                    &bytes_consumed, outbuf, sizeof(outbuf), &bytes_written, &finfo);
 
-            if (st == FAAD_OK && bytes_written > 0) {
+            if (st != FAAD_OK) {
+                if (strict_mode) {
+                    fprintf(stderr, "[STRICT ERROR] Frame %u (sample %u, offset 0x%llx, size %u): Decode failed with status %d (%s)\n",
+                            s, s, (unsigned long long)offset, size, st, faad_strerror(st));
+                    faad_decoder_destroy(dec);
+                    free(inbuf);
+                    mp4_free_track(&track);
+                    return 1;
+                }
+            } else if (bytes_written > 0) {
                 /* Per-frame info, not the stream info: SBR may be signalled
                  * implicitly and only known once the payload is decoded. */
                 sample_rate = finfo.sample_rate;
@@ -517,6 +535,13 @@ int main(int argc, char **argv)
                                    &bytes_consumed, outbuf, sizeof(outbuf), &bytes_written, &finfo);
 
             if (st != FAAD_OK) {
+                if (strict_mode) {
+                    fprintf(stderr, "[STRICT ERROR] Frame %u (stream offset 0x%x, remaining %ld): Decode failed with status %d (%s)\n",
+                            frames_decoded, offset, file_len - offset, st, faad_strerror(st));
+                    faad_decoder_destroy(dec);
+                    free(inbuf);
+                    return 1;
+                }
                 if (st == FAAD_ERR_NEED_MORE_DATA || bytes_consumed == 0) {
                     break;
                 }
