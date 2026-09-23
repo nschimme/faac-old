@@ -18,7 +18,7 @@ libfaam_headers = files(
   '../include/faam.h',
 )
 
-libfaam_inc = include_directories('../include', '../libfaac')
+libfaam_inc = include_directories('../include', '../libfaac', '../common')
 
 libfaam_shared = shared_library(
   'faam',
