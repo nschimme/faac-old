@@ -200,6 +200,35 @@ enum {
     OPT_STRICT
 };
 
+static void print_strict_llvm_error(const char *filename, uint64_t offset, uint32_t frame_idx,
+                                    const uint8_t *buf, size_t buf_len,
+                                    faad_status st, const char *hint)
+{
+    fprintf(stderr, "\n%s:0x%04llx: error: %s (status %d)\n",
+            filename ? filename : "input", (unsigned long long)offset, faad_strerror(st), st);
+    fprintf(stderr, "  --> frame %u, byte offset 0x%08llx (%llu bytes in)\n",
+            frame_idx, (unsigned long long)offset, (unsigned long long)offset);
+    fprintf(stderr, "   |\n");
+
+    if (buf && buf_len > 0) {
+        size_t show_bytes = buf_len < 16 ? buf_len : 16;
+        fprintf(stderr, "%4llu | ", (unsigned long long)offset);
+        for (size_t i = 0; i < show_bytes; i++) {
+            fprintf(stderr, "%02X ", buf[i]);
+        }
+        fprintf(stderr, "\n   | ");
+        for (size_t i = 0; i < show_bytes; i++) {
+            fprintf(stderr, "^^ ");
+        }
+        fprintf(stderr, "\n");
+    }
+
+    if (hint) {
+        fprintf(stderr, "   | note: %s\n", hint);
+    }
+    fprintf(stderr, "\n");
+}
+
 int main(int argc, char **argv)
 {
 #ifdef _WIN32
@@ -447,8 +476,9 @@ int main(int argc, char **argv)
 
             if (st != FAAD_OK) {
                 if (strict_mode) {
-                    fprintf(stderr, "[STRICT ERROR] Frame %u (sample %u, offset 0x%llx, size %u): Decode failed with status %d (%s)\n",
-                            s, s, (unsigned long long)offset, size, st, faad_strerror(st));
+                    const char *hint = (st == FAAD_ERR_SYNC_LOST) ? "Expected ADTS syncword 0xFFF (12 bits)" :
+                                       (st == FAAD_ERR_DECODE_FAILED) ? "Bitstream corruption or invalid Huffman codeword / SBR bounds" : NULL;
+                    print_strict_llvm_error(infile, offset, s, inbuf + offset, size, st, hint);
                     faad_decoder_destroy(dec);
                     free(inbuf);
                     mp4_free_track(&track);
@@ -535,8 +565,9 @@ int main(int argc, char **argv)
                     break;
                 }
                 if (strict_mode) {
-                    fprintf(stderr, "[STRICT ERROR] Frame %u (stream offset 0x%x, remaining %ld): Decode failed with status %d (%s)\n",
-                            frames_decoded, offset, file_len - offset, st, faad_strerror(st));
+                    const char *hint = (st == FAAD_ERR_SYNC_LOST) ? "Expected ADTS syncword 0xFFF (12 bits)" :
+                                       (st == FAAD_ERR_DECODE_FAILED) ? "Bitstream corruption or invalid Huffman codeword / SBR bounds" : NULL;
+                    print_strict_llvm_error(infile, offset, frames_decoded, inbuf + offset, file_len - offset, st, hint);
                     faad_decoder_destroy(dec);
                     free(inbuf);
                     return 1;

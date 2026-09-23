@@ -113,7 +113,10 @@ static int cmd_info(int argc, char **argv)
     faam_status st = faam_demuxer_init(mem, demux_size, &io, &d);
     if (st != FAAM_OK) {
         if (strict_mode) {
-            fprintf(stderr, "[STRICT ERROR] Command 'info' failed on %s: status %d (%s)\n", filepath, st, faam_strerror(st));
+            fprintf(stderr, "\n%s: error: %s (status %d)\n", filepath, faam_strerror(st), st);
+            fprintf(stderr, "  --> subcommand 'info', file '%s'\n", filepath);
+            fprintf(stderr, "   |\n");
+            fprintf(stderr, "   | note: Invalid MP4/M4A BMFF atom hierarchy or truncated metadata box\n\n");
         } else {
             fprintf(stderr, "Error parsing %s: %s\n", filepath, faam_strerror(st));
         }
@@ -839,7 +842,10 @@ static int cmd_tag(int argc, char **argv)
 
     if (st != FAAM_OK) {
         if (strict_mode) {
-            fprintf(stderr, "[STRICT ERROR] Command 'tag' failed updating %s: status %d (%s)\n", filepath, st, faam_strerror(st));
+            fprintf(stderr, "\n%s: error: %s (status %d)\n", filepath, faam_strerror(st), st);
+            fprintf(stderr, "  --> subcommand 'tag', file '%s'\n", filepath);
+            fprintf(stderr, "   |\n");
+            fprintf(stderr, "   | note: Failed updating iTunes ilst metadata atom box\n\n");
         } else {
             fprintf(stderr, "Error updating tags on %s: %s\n", filepath, faam_strerror(st));
         }
