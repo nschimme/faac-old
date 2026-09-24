@@ -14,6 +14,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#ifdef FAAD_STATS
+#include <stdio.h>
+#endif
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -235,6 +238,10 @@ typedef struct FaadDecStats {
     unsigned int fillElementMaxPad;
 
     unsigned int errorConcealmentFrames;
+
+    /* Per-frame decision dump, opened lazily from FAAD_DUMP (decoder.c). */
+    FILE *dumpFile;
+    bool dumpOpenTried;
 } FaadDecStats;
 #endif
 
@@ -450,5 +457,8 @@ void ps_frame_begin(struct faad_decoder *dec, float X[PS_IN_SLOTS][64][2], int t
 void ps_slot(struct faad_decoder *dec, int n, float X[PS_IN_SLOTS][64][2], float L[64][2], float R[64][2]);
 void init_ps_tables(void);
 void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *pcm_out);
+#ifdef FAAD_STATS
+FILE *faad_dump_file(struct faad_decoder *dec);
+#endif
 
 #endif /* FAAD_INTERNAL_H */

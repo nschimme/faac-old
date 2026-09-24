@@ -735,6 +735,19 @@ faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32
             }
             for (int c = 0; c < nch; c++) sbr_reset_channel(&dec->sbr[ch0 + c]);
         }
+#ifdef FAAD_STATS
+        {
+            FILE *df = faad_dump_file(dec);
+            if (df) {
+                fprintf(df, "H %u %d %d %u %u %u %u %u %u %u %u %u %u %d %u %u %u %u %u %d %d\n",
+                        dec->stats.totalFrames, nch, (int)el->amp_res, el->start_freq, el->stop_freq,
+                        el->xover_band, el->freq_scale, el->alter_scale, el->noise_bands,
+                        el->limiter_bands, el->limiter_gains, el->interpol_freq, el->smoothing_mode,
+                        (int)reset, el->kx, el->M, el->n_low, el->n_high, el->n_q,
+                        (int)extra1, (int)extra2);
+            }
+        }
+#endif
     }
     if (!el->header_present) return FAAD_OK; /* nothing to reconstruct against yet */
 
@@ -1243,6 +1256,57 @@ faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32
 /* Entry point                                                               */
 /* ------------------------------------------------------------------------ */
 
+#ifdef FAAD_STATS
+/* One 'F' record for one SBR channel of one frame: dequantized envelope/
+ * noise levels are captured here (post sbr_dequant, pre sbr_hf_adjust), so
+ * they are E_orig/Q before any decoder-side limiter or smoothing gain. */
+static void sbr_dump_frame(FILE *df, unsigned int frame_idx, uint32_t ch, const SBRElement *el,
+                           const SBRChannel *sch, float E[SBR_MAX_ENV][SBR_MAX_BANDS],
+                           float Q[2][SBR_MAX_NQ])
+{
+    char freq_res_s[2 * SBR_MAX_ENV + 1] = {0};
+    for (int l = 0; l < sch->L_E; l++) {
+        char b[3];
+        snprintf(b, sizeof(b), "%s%d", l ? "," : "", sch->freq_res[l]);
+        strncat(freq_res_s, b, sizeof(freq_res_s) - strlen(freq_res_s) - 1);
+    }
+    char invf_s[4 * SBR_MAX_NQ + 1] = {0};
+    for (int k = 0; k < el->n_q; k++) {
+        char b[5];
+        snprintf(b, sizeof(b), "%s%d", k ? "," : "", sch->invf_mode[k]);
+        strncat(invf_s, b, sizeof(invf_s) - strlen(invf_s) - 1);
+    }
+    int nharm = 0;
+    if (sch->add_harmonic_flag)
+        for (int i = 0; i < el->n_high; i++) if (sch->add_harmonic[i]) nharm++;
+
+    double e_sum = 0.0; int e_n = 0;
+    for (int l = 0; l < sch->L_E; l++) {
+        int nb = sch->freq_res[l] ? el->n_high : el->n_low;
+        for (int k = 0; k < nb; k++) {
+            float e = E[l][k];
+            e_sum += 10.0 * log10((double)(e > 1e-9f ? e : 1e-9f));
+            e_n++;
+        }
+    }
+    double q_sum = 0.0; int q_n = 0;
+    for (int l = 0; l < sch->L_Q; l++) {
+        for (int k = 0; k < el->n_q; k++) {
+            float q = Q[l][k];
+            q_sum += 10.0 * log10((double)(q > 1e-9f ? q : 1e-9f));
+            q_n++;
+        }
+    }
+    fprintf(df, "F %u %u %u %u %u %s %d %s %d %d %d %d %.2f %.2f\n",
+            frame_idx, ch, sch->frame_class, sch->L_E, sch->L_Q, freq_res_s, (int)sch->amp_res,
+            invf_s, (int)sch->add_harmonic_flag, nharm, (int)el->coupling, -1,
+            e_n > 0 ? e_sum / e_n : 0.0, q_n > 0 ? q_sum / q_n : 0.0);
+    fprintf(df, "G %u %u %u %u %u", frame_idx, ch, sch->frame_class, sch->L_E, sch->bs_pointer);
+    for (int l = 0; l <= sch->L_E; l++) fprintf(df, " %u", sch->t_E[l]);
+    fprintf(df, "\n");
+}
+#endif
+
 void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *pcm_out)
 {
 #ifndef FAAD_DISABLE_SBR
@@ -1257,6 +1321,16 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
         bool have_hf = el->header_present && dec->sbr[ch].have_frame;
 
         if (have_hf) sbr_dequant(el, &dec->sbr[ch], pair ? &dec->sbr[ch + 1] : NULL, E0, Q0, E1, Q1);
+
+#ifdef FAAD_STATS
+        if (have_hf) {
+            FILE *df = faad_dump_file(dec);
+            if (df) {
+                sbr_dump_frame(df, dec->stats.totalFrames, ch, el, &dec->sbr[ch], E0, Q0);
+                if (pair) sbr_dump_frame(df, dec->stats.totalFrames, ch + 1, el, &dec->sbr[ch + 1], E1, Q1);
+            }
+        }
+#endif
 
 #ifndef FAAD_DISABLE_PS
         if (dec->ps_present && num_ch == 1) {
