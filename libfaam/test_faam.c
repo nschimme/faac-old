@@ -104,7 +104,7 @@ static void make_faststart_layout(const char *path) {
         char type[4];
         memcpy(type, buf + pos + 4, 4);
         if (size < 8 || pos + (long)size > total) break;
-        if (memcmp(type, "ftyp", 4) == 0) ftyp_end = pos + size;
+        if (memcmp(type, "ftyp", 4) == 0 || memcmp(type, "wide", 4) == 0) ftyp_end = pos + size;
         else if (memcmp(type, "mdat", 4) == 0) mdat_off = pos;
         else if (memcmp(type, "moov", 4) == 0) { moov_off = pos; moov_size = size; }
         pos += size;
