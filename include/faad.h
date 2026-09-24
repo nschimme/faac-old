@@ -93,12 +93,18 @@ typedef struct faad_config {
     enum faad_downmix_mode  downmix_mode;  /* Channel downmixing strategy */
 } faad_config;
 
+/* SBR QMF analysis+synthesis delay in core-rate samples. Apple and fdk-aac
+ * priming values exclude it, so a gapless trim of an SBR stream skips
+ * (priming + FAAD_SBR_DELAY) core samples and pads FAAD_SBR_DELAY fewer. */
+#define FAAD_SBR_DELAY 481
+
 /* Static stream information (derived from ASC or ADTS headers) */
 typedef struct faad_stream_info {
     uint32_t                sample_rate;      /* Base sample rate in Hz */
     uint32_t                channels;         /* Base channel count */
     enum faad_object_type   object_type;      /* Detected object type */
-    uint32_t                delay_samples;    /* Intrinsic decoder delay (priming samples) */
+    uint32_t                delay_samples;    /* Decoder delay at the core rate that MP4/iTunSMPB priming
+                                               * excludes: FAAD_SBR_DELAY with explicit SBR, else 0 */
 } faad_stream_info;
 
 /* Dynamic frame metadata returned after every decoded packet */
