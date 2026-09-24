@@ -18,6 +18,8 @@
 
 #include <stdint.h>
 
+#include "faab_export.h"
+
 typedef struct {
     uint16_t len;
     uint16_t data;
@@ -28,18 +30,18 @@ typedef struct {
     uint32_t data : 24;   /* codes are <= 19 bits */
 } hcode32_t;
 
-extern const hcode16_t book01[81];
-extern const hcode16_t book02[81];
-extern const hcode16_t book03[81];
-extern const hcode16_t book04[81];
-extern const hcode16_t book05[81];
-extern const hcode16_t book06[81];
-extern const hcode16_t book07[64];
-extern const hcode16_t book08[64];
-extern const hcode16_t book09[169];
-extern const hcode16_t book10[169];
-extern const hcode16_t book11[289];
+extern FAABAPI const hcode16_t book01[81];
+extern FAABAPI const hcode16_t book02[81];
+extern FAABAPI const hcode16_t book03[81];
+extern FAABAPI const hcode16_t book04[81];
+extern FAABAPI const hcode16_t book05[81];
+extern FAABAPI const hcode16_t book06[81];
+extern FAABAPI const hcode16_t book07[64];
+extern FAABAPI const hcode16_t book08[64];
+extern FAABAPI const hcode16_t book09[169];
+extern FAABAPI const hcode16_t book10[169];
+extern FAABAPI const hcode16_t book11[289];
 /* Scalefactor-delta book: ISO/IEC 14496-3 SF_DELTA range is +/-60. */
-extern const hcode32_t book12[121];
+extern FAABAPI const hcode32_t book12[121];
 
 #endif /* HUFFDATA_H */
