@@ -238,6 +238,9 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
 #endif
 )
 {
+#ifdef FAAD_STATS
+    (void)stats;
+#endif
     setup_sfb_offsets(ics, sample_rate);
 
     int sf = ics->global_gain;
