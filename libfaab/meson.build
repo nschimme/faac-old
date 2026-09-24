@@ -16,6 +16,7 @@ libfaab_headers = files(
   'huffdata.h',
   'sfb_tables.h',
   'atomic.h',
+  'faab_export.h',
 )
 
 libfaab_inc = include_directories('.')
@@ -23,15 +24,18 @@ libfaab_inc = include_directories('.')
 default_lib = get_option('default_library')
 
 if default_lib == 'shared' or default_lib == 'both'
-    # Unlike libfaac/libfaad/libfaam, everything faab exports (tables, the
-    # FFT entry points) is meant to cross the library boundary -- hidden
-    # visibility would just make its own consumers unable to resolve them.
+    # Hidden by default like libfaac/libfaad/libfaam; the cross-boundary FFT
+    # entry points and table symbols are marked FAABAPI in their headers so
+    # LTO can still internalize anything a given consumer doesn't reference
+    # (e.g. libfaad-only SFB tables when only libfaac links this .so).
     libfaab_shared = shared_library(
         'faab',
         libfaab_sources,
         include_directories: libfaab_inc,
         c_args: c_args,
+        dependencies: [libm],
         version: meson.project_version(),
+        gnu_symbol_visibility: 'hidden',
         install: true,
     )
 endif
@@ -42,6 +46,8 @@ if default_lib == 'static' or default_lib == 'both'
         libfaab_sources,
         include_directories: libfaab_inc,
         c_args: c_args,
+        dependencies: [libm],
+        gnu_symbol_visibility: 'hidden',
         # Final static archive stays non-LTO/portable, matching the
         # libfaac_static/libfaad_static convention -- LTO's dead-code
         # elimination already ran when faab's own sources were compiled.
