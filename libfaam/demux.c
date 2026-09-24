@@ -30,6 +30,112 @@ static uint32_t parse_ber_length(const uint8_t *buf, long *offset, long max_offs
     return len;
 }
 
+#define FAAM_ILST_SET_STR(field) do { \
+        uint32_t l = val_len < sizeof(meta->field) - 1 ? val_len : (uint32_t)sizeof(meta->field) - 1; \
+        memcpy(meta->field, val, l); \
+        meta->field[l] = '\0'; \
+    } while (0)
+
+/* Reverse of tag.c's/mux.c's ilst writers: walks ilst's direct children and
+ * fills the matching faam_metadata field. `buf` must outlive `meta` --
+ * cover_art is left pointing directly into it rather than copied, same as
+ * every other in-memory reference this demuxer hands back (codec_data etc.
+ * are copied on output, but cover art can be large, so it's zero-copy like
+ * frame payloads are). */
+static void parse_ilst_children(const uint8_t *buf, long offset, long end, struct faam_demuxer *d)
+{
+    faam_metadata *meta = &d->metadata;
+    long cur = offset;
+    while (cur + 8 <= end) {
+        uint32_t size = read_u32_be(buf + cur);
+        char name[4];
+        memcpy(name, buf + cur + 4, 4);
+        if (size < 8 || cur + (long)size > end) break;
+        long content_end = cur + (long)size;
+        long data_off = cur + 8;
+
+        if (memcmp(name, "----", 4) == 0) {
+            char tagname[64] = { 0 };
+            const uint8_t *tval = NULL;
+            uint32_t tval_len = 0;
+            long p = data_off;
+            while (p + 8 <= content_end) {
+                uint32_t sub_size = read_u32_be(buf + p);
+                char sub_type[4];
+                memcpy(sub_type, buf + p + 4, 4);
+                if (sub_size < 8 || p + (long)sub_size > content_end) break;
+                if (memcmp(sub_type, "name", 4) == 0 && sub_size > 12) {
+                    uint32_t nlen = sub_size - 12;
+                    if (nlen >= sizeof(tagname)) nlen = sizeof(tagname) - 1;
+                    memcpy(tagname, buf + p + 12, nlen);
+                    tagname[nlen] = '\0';
+                } else if (memcmp(sub_type, "data", 4) == 0 && sub_size > 16) {
+                    tval = buf + p + 16;
+                    tval_len = sub_size - 16;
+                }
+                p += sub_size;
+            }
+            if (tagname[0] && tval && meta->num_custom_tags < 16) {
+                faam_custom_tag *ct = &meta->custom_tags[meta->num_custom_tags];
+                uint32_t nlen = (uint32_t)(strlen(tagname) < sizeof(ct->name) - 1 ? strlen(tagname) : sizeof(ct->name) - 1);
+                memcpy(ct->name, tagname, nlen);
+                ct->name[nlen] = '\0';
+                uint32_t vlen = tval_len < sizeof(ct->value) - 1 ? tval_len : (uint32_t)sizeof(ct->value) - 1;
+                memcpy(ct->value, tval, vlen);
+                ct->value[vlen] = '\0';
+                meta->num_custom_tags++;
+            }
+            cur += size;
+            continue;
+        }
+
+        if (data_off + 16 > content_end) { cur += size; continue; }
+        uint32_t data_box_size = read_u32_be(buf + data_off);
+        if (memcmp(buf + data_off + 4, "data", 4) != 0 || data_off + (long)data_box_size > content_end || data_box_size < 16) {
+            cur += size;
+            continue;
+        }
+        const uint8_t *val = buf + data_off + 16;
+        uint32_t val_len = data_box_size - 16;
+
+        if (!memcmp(name, "\251nam", 4)) FAAM_ILST_SET_STR(title);
+        else if (!memcmp(name, "sonm", 4)) FAAM_ILST_SET_STR(title_sort);
+        else if (!memcmp(name, "\251ART", 4)) FAAM_ILST_SET_STR(artist);
+        else if (!memcmp(name, "soar", 4)) FAAM_ILST_SET_STR(artist_sort);
+        else if (!memcmp(name, "\251alb", 4)) FAAM_ILST_SET_STR(album);
+        else if (!memcmp(name, "soal", 4)) FAAM_ILST_SET_STR(album_sort);
+        else if (!memcmp(name, "aART", 4)) FAAM_ILST_SET_STR(album_artist);
+        else if (!memcmp(name, "soaa", 4)) FAAM_ILST_SET_STR(album_artist_sort);
+        else if (!memcmp(name, "\251wrt", 4)) FAAM_ILST_SET_STR(composer);
+        else if (!memcmp(name, "soco", 4)) FAAM_ILST_SET_STR(composer_sort);
+        else if (!memcmp(name, "\251day", 4)) FAAM_ILST_SET_STR(year);
+        else if (!memcmp(name, "\251cmt", 4)) FAAM_ILST_SET_STR(comment);
+        else if (!memcmp(name, "\251too", 4)) FAAM_ILST_SET_STR(encoder);
+        else if (!memcmp(name, "\251gen", 4)) FAAM_ILST_SET_STR(genre_str);
+        else if (!memcmp(name, "gnre", 4) && val_len >= 2) meta->genre_code = read_u16_be(val);
+        else if (!memcmp(name, "cpil", 4) && val_len >= 1) meta->compilation = val[0] != 0;
+        else if (!memcmp(name, "trkn", 4) && val_len >= 6) {
+            meta->track_num = read_u16_be(val + 2);
+            meta->track_total = read_u16_be(val + 4);
+        } else if (!memcmp(name, "disk", 4) && val_len >= 6) {
+            meta->disc_num = read_u16_be(val + 2);
+            meta->disc_total = read_u16_be(val + 4);
+        } else if (!memcmp(name, "covr", 4) && val_len > 0) {
+            uint8_t *owned = (uint8_t *)AllocMemory(val_len);
+            if (owned) {
+                memcpy(owned, val, val_len);
+                if (d->cover_art_owned) FreeMemory(d->cover_art_owned);
+                d->cover_art_owned = owned;
+                meta->cover_art = owned;
+                meta->cover_bytes = val_len;
+            }
+        }
+
+        cur += size;
+    }
+}
+#undef FAAM_ILST_SET_STR
+
 static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, struct faam_demuxer *d,
                                   int current_trak_idx,
                                   uint32_t **stsz_tables, uint32_t *num_stsz_samples, uint32_t *fixed_sample_sizes,
@@ -71,7 +177,7 @@ static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, str
         if (memcmp(type, "moov", 4) == 0 || memcmp(type, "trak", 4) == 0 ||
             memcmp(type, "mdia", 4) == 0 || memcmp(type, "minf", 4) == 0 ||
             memcmp(type, "stbl", 4) == 0 || memcmp(type, "udta", 4) == 0 ||
-            memcmp(type, "meta", 4) == 0 || memcmp(type, "ilst", 4) == 0 ||
+            memcmp(type, "meta", 4) == 0 ||
             memcmp(type, "stsd", 4) == 0 || memcmp(type, "edts", 4) == 0) {
             long sub_offset = payload_offset;
             if (memcmp(type, "meta", 4) == 0) sub_offset += 4;
@@ -82,6 +188,12 @@ static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, str
                                    stco_tables, num_stco_chunks,
                                    stts_tables, num_stts_entries,
                                    stss_tables, num_stss_entries);
+        } else if (memcmp(type, "ilst", 4) == 0) {
+            /* Tag children ("\xa9nam", "trkn", "----", ...) aren't containers
+             * the generic walk above recognizes, so parse them directly
+             * instead of recursing -- this is the reverse of tag.c's/mux.c's
+             * ilst writers. */
+            parse_ilst_children(buf, payload_offset, payload_end, d);
         } else if (memcmp(type, "chpl", 4) == 0 && payload_offset + 8 <= payload_end) {
             long p = payload_offset + 4;
             uint32_t entry_count = read_u32_be(buf + p);
@@ -463,6 +575,7 @@ void faam_demuxer_close(faam_demuxer *d)
     for (uint32_t t = 0; t < d->num_tracks; t++) {
         if (d->tracks[t].samples) FreeMemory(d->tracks[t].samples);
     }
+    if (d->cover_art_owned) FreeMemory(d->cover_art_owned);
 }
 
 faam_status faam_demuxer_get_num_tracks(faam_demuxer *d, uint32_t *out_num_tracks)
