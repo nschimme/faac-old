@@ -75,7 +75,14 @@ static void parse_ilst_children(const uint8_t *buf, long offset, long end, struc
                 }
                 p += sub_size;
             }
-            if (tagname[0] && tval && meta->num_custom_tags < 16) {
+            if (tval && strcmp(tagname, "iTunSMPB") == 0) {
+                /* Gapless info, not a user tag: " 00000000 <priming> <padding> <length> ..." */
+                char str_buf[128] = { 0 };
+                uint32_t slen = tval_len < sizeof(str_buf) - 1 ? tval_len : (uint32_t)sizeof(str_buf) - 1;
+                memcpy(str_buf, tval, slen);
+                if (sscanf(str_buf, " %*x %x %x", &d->gapless.encoder_delay, &d->gapless.end_padding) == 2)
+                    d->has_gapless = true;
+            } else if (tagname[0] && tval && meta->num_custom_tags < 16) {
                 faam_custom_tag *ct = &meta->custom_tags[meta->num_custom_tags];
                 uint32_t nlen = (uint32_t)(strlen(tagname) < sizeof(ct->name) - 1 ? strlen(tagname) : sizeof(ct->name) - 1);
                 memcpy(ct->name, tagname, nlen);
@@ -317,24 +324,6 @@ static void parse_boxes_recursive(const uint8_t *buf, long offset, long end, str
                     stss_tables[current_trak_idx][e] = read_u32_be(buf + payload_offset + 8 + e * 4);
                 }
             }
-        } else if (memcmp(type, "----", 4) == 0 || memcmp(type, "iTun", 4) == 0 || memcmp(type, "SMPB", 4) == 0) {
-            /* iTunes gapless info: a '----' box whose 'name' child is iTunSMPB and
-             * whose 'data' child holds the hex string. Match on the name, then
-             * scan for the string; other '----' boxes carry different names. */
-            bool named = memcmp(type, "----", 4) != 0;
-            for (long j = payload_offset; !named && j + 8 <= payload_end; j++)
-                if (memcmp(buf + j, "iTunSMPB", 8) == 0) named = true;
-            for (long j = payload_offset; named && j < payload_end - 32; j++) {
-                if (memcmp(buf + j, " 00000000 ", 10) == 0) {
-                    char str_buf[128] = {0};
-                    long copy_len = payload_end - j;
-                    if (copy_len > (long)(sizeof(str_buf) - 1)) copy_len = sizeof(str_buf) - 1;
-                    memcpy(str_buf, buf + j, copy_len);
-                    sscanf(str_buf, " %*x %x %x", &d->gapless.encoder_delay, &d->gapless.end_padding);
-                    d->has_gapless = true;
-                    break;
-                }
-            }
         } else if (memcmp(type, "elst", 4) == 0 && !d->has_elst && payload_offset + 8 <= payload_end) {
             uint8_t version = buf[payload_offset];
             long p = payload_offset + 4;
@@ -558,8 +547,19 @@ faam_status faam_demuxer_init(void *mem_buf, uint32_t mem_bytes, const faam_io *
             if (buf_len > 32) {
                 faam_parse_stream(d, buf, (long)buf_len);
                 /* Without iTunSMPB the edit list's media time is the priming. */
-                if (!d->has_gapless && d->has_elst && d->elst_media_time < 0xFFFFFFFFULL)
+                if (!d->has_gapless && d->has_elst && d->elst_media_time < 0xFFFFFFFFULL) {
                     d->gapless.encoder_delay = (uint32_t)d->elst_media_time;
+                    /* ...and whatever media runs past the edit is padding. */
+                    for (uint32_t t = 0; t < d->num_tracks; t++) {
+                        const faam_track_info *ti = &d->tracks[t].info;
+                        if (ti->track_type != FAAM_TRACK_AUDIO || !ti->timescale || !d->movie_timescale) continue;
+                        uint64_t edit = d->elst_segment_duration * ti->timescale / d->movie_timescale;
+                        uint64_t used = d->elst_media_time + edit;
+                        if (edit && ti->total_duration > used)
+                            d->gapless.end_padding = (uint32_t)(ti->total_duration - used);
+                        break;
+                    }
+                }
             }
             FreeMemory(buf);
         }
