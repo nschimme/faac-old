@@ -420,7 +420,8 @@ int main(int argc, char **argv)
     }
 
     /* Gapless counts are in the track's timescale, the core rate; the decoder
-     * may output at twice that (SBR), so they are scaled by the first frame. */
+     * may output at twice that (SBR), so they are scaled by the first frame,
+     * after adding the SBR delay the priming leaves out. */
     uint32_t samples_to_skip = (is_mp4 && gapless) ? track.delay : 0;
     uint32_t padding_samples = (is_mp4 && gapless) ? track.padding : 0;
     bool gapless_scaled = false;
@@ -459,6 +460,10 @@ int main(int argc, char **argv)
                 uint32_t dec_bytes_per_frame_sample = num_channels * dec_bytes_per_sample;
                 uint32_t frame_samples = bytes_written / dec_bytes_per_frame_sample;
                 if (!gapless_scaled) {
+                    if (finfo.sbr_active && gapless) {
+                        samples_to_skip += FAAD_SBR_DELAY;
+                        padding_samples = padding_samples > FAAD_SBR_DELAY ? padding_samples - FAAD_SBR_DELAY : 0;
+                    }
                     uint32_t factor = finfo.samples_per_ch / 1024;
                     if (factor > 1) {
                         samples_to_skip *= factor;
