@@ -13,6 +13,7 @@
 #else
 #include <unistd.h>
 #endif
+#include "cli_common.h"
 
 #include "mp4write.h"
 
@@ -47,11 +48,10 @@ int mp4_open(const char *path, bool overwrite) {
 #ifdef HAVE_LIBFAAM
 #ifdef _WIN32
     if (!overwrite && win32_access_utf8(path, 0) == 0) return 1;
-    g_file = win32_fopen_utf8(path, "wb");
 #else
     if (!overwrite && access(path, 0) == 0) return 1;
-    g_file = fopen(path, "wb");
 #endif
+    g_file = cli_fopen(path, "wb");
     if (!g_file) return 1;
 
     g_io.user_data = g_file;

@@ -42,6 +42,7 @@
 #include <faac.h>
 #include "output.h"
 #include "charset.h"
+#include "cli_common.h"
 #include "encode_engine.h"
 
 #ifdef _WIN32
@@ -770,11 +771,7 @@ int main(int argc, char *argv[])
             break;
         case COVER_ART_FLAG:
             {
-#ifdef _WIN32
-                FILE *f = win32_fopen_utf8(optarg, "rb");
-#else
-                FILE *f = fopen(optarg, "rb");
-#endif
+                FILE *f = cli_fopen(optarg, "rb");
                 if (f)
                 {
                     fseek(f, 0, SEEK_END);

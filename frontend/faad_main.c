@@ -21,6 +21,7 @@
 
 #include "faad.h"
 #include "charset.h"
+#include "cli_common.h"
 #include "endian.h"
 
 typedef struct {
@@ -289,11 +290,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-#ifdef _WIN32
-    FILE *fin = win32_fopen_utf8(infile, "rb");
-#else
-    FILE *fin = fopen(infile, "rb");
-#endif
+    FILE *fin = cli_fopen(infile, "rb");
     if (!fin) {
         fprintf(stderr, "Error opening input file %s\n", infile);
         return 1;
@@ -323,11 +320,7 @@ int main(int argc, char **argv)
 
     /* Direct ADTS extraction from MP4 container without decoding */
     if (adts_outfile && is_mp4) {
-#ifdef _WIN32
-        FILE *fadts = win32_fopen_utf8(adts_outfile, "wb");
-#else
-        FILE *fadts = fopen(adts_outfile, "wb");
-#endif
+        FILE *fadts = cli_fopen(adts_outfile, "wb");
         if (!fadts) {
             fprintf(stderr, "Error opening ADTS output file %s\n", adts_outfile);
             free(inbuf);
@@ -383,11 +376,7 @@ int main(int argc, char **argv)
                 else strcat(out_path, raw_format ? ".raw" : ".wav");
                 outfile = out_path;
             }
-#ifdef _WIN32
-            fout = win32_fopen_utf8(outfile, "wb");
-#else
-            fout = fopen(outfile, "wb");
-#endif
+            fout = cli_fopen(outfile, "wb");
             if (!fout) {
                 fprintf(stderr, "Error opening output file %s\n", outfile);
                 faad_decoder_destroy(dec); dec = NULL;
