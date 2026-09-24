@@ -214,7 +214,7 @@ FAADAPI faad_status faad_decoder_get_info(const faad_decoder *dec, faad_stream_i
     out_info->sample_rate = dec->sample_rate;
     out_info->channels = dec->num_channels;
     out_info->object_type = dec->asc.is_sbr ? FAAD_OBJ_HE_AAC_V1 : FAAD_OBJ_LC;
-    out_info->delay_samples = dec->asc.is_sbr ? 3041 : 1024;
+    out_info->delay_samples = dec->asc.is_sbr ? FAAD_SBR_DELAY : 0;
 
     return FAAD_OK;
 }

@@ -291,7 +291,7 @@ FAACAPI faac_status faac_encoder_close(faac_encoder **enc)
 /* LC: one frame of 50% MDCT overlap. HE-AAC: that same core delay at full
  * rate, plus the half-band downsampler's FIR group delay, plus the one sample
  * the input FIFO is primed with to make the count even. The SBR decoder's QMF
- * delay is excluded: decoders add their own when trimming. */
+ * delay is excluded from priming; decoders add it themselves when trimming. */
 static uint32_t faacEncoderDelay(const faacEncStruct *h)
 {
     switch (h->config.aacObjectType) {
