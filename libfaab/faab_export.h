@@ -11,13 +11,9 @@
 #define FAAB_EXPORT_H
 
 #ifndef FAABAPI
-# if defined(_WIN32) && defined(FAAB_STATIC)
+# if defined(_WIN32)
+   /* Linked statically on Windows (see meson.build): no DLL boundary. */
 #  define FAABAPI
-# elif defined(_WIN32) && defined(FAAB_BUILDING)
-#  define FAABAPI __declspec(dllexport)
-# elif defined(_WIN32)
-   /* Data (the tables) only resolves across a DLL boundary when imported. */
-#  define FAABAPI __declspec(dllimport)
 # elif defined(__GNUC__) && (__GNUC__ >= 4)
 #  define FAABAPI __attribute__((visibility("default")))
 # else
