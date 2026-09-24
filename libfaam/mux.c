@@ -99,6 +99,15 @@ static inline void end_atom(faam_muxer *m, long pos) {
     }
 }
 
+/* With a gapless edit, tkhd/mvhd durations are the edited length (ISO
+ * 14496-12 8.3.2), not the media length including priming and padding. */
+static uint64_t presentation_samples(const faam_muxer *m, const faam_muxer_track *tr) {
+    if (tr->cfg.track_type == FAAM_TRACK_AUDIO && m->cfg.gapless.encoder_delay > 0 &&
+        m->cfg.gapless.total_samples)
+        return m->cfg.gapless.total_samples;
+    return tr->bitrate_window.samples;
+}
+
 static void put_descriptor(faam_muxer *m, uint8_t tag, uint32_t size) {
     uint8_t buf[5];
     buf[0] = tag;
@@ -261,21 +270,23 @@ faam_status faam_muxer_init(void *mem_buf, uint32_t mem_bytes, const faam_muxer_
         memset(tr->stss_entries, 0, tr->stss_capacity * sizeof(uint32_t));
     }
 
-    uint8_t ftyp[36] = {
-        0x00, 0x00, 0x00, 0x20, 'f', 't', 'y', 'p',
-        'i', 's', 'o', 'm', 0x00, 0x00, 0x00, 0x00,
-        'i', 's', 'o', 'm', 'i', 's', 'o', '2',
-        0x00, 0x00, 0x00, 0x08, 'w', 'i', 'd', 'e',
-        0x00, 0x00, 0x00, 0x00
-    };
-    if (m->cfg.is_m4b) {
-        ftyp[8] = 'M'; ftyp[9] = '4'; ftyp[10] = 'B'; ftyp[11] = ' ';
-    }
-    if (m->io.write) m->io.write(m->io.user_data, ftyp, 32);
+    /* Apple's decoders only honour iTunSMPB/edit-list gapless trimming in
+     * files branded M4A/M4B, so audio-only files carry that brand. */
+    bool audio_only = true;
+    for (uint32_t t = 0; t < m->num_tracks; t++)
+        if (m->tracks[t].cfg.track_type != FAAM_TRACK_AUDIO) audio_only = false;
+    const char *brands = !audio_only    ? "isom\0\0\0\0isomiso2mp41"
+                       : m->cfg.is_m4b  ? "M4B \0\0\0\0M4B mp42isom"
+                                        : "M4A \0\0\0\0M4A mp42isom";
+    uint8_t hdr[36] = { 0x00, 0x00, 0x00, 0x1c, 'f', 't', 'y', 'p' };
+    memcpy(hdr + 8, brands, 20);
+    /* 'wide' placeholder so a >4 GiB mdat header can later grow in place. */
+    memcpy(hdr + 28, "\0\0\0\x08wide", 8);
+    if (m->io.write) m->io.write(m->io.user_data, hdr, sizeof(hdr));
 
     uint8_t mdat_hdr[8] = { 0x00, 0x00, 0x00, 0x00, 'm', 'd', 'a', 't' };
     if (m->io.write) m->io.write(m->io.user_data, mdat_hdr, 8);
-    m->mdat_pos = m->io.tell ? m->io.tell(m->io.user_data) : 40;
+    m->mdat_pos = m->io.tell ? m->io.tell(m->io.user_data) : 44;
 
     *out_muxer = m;
     return FAAM_OK;
@@ -380,7 +391,15 @@ faam_status faam_muxer_finalize(faam_muxer *m)
     m->membuf = (uint8_t *)AllocMemory(m->memcap);
     if (!m->membuf) return FAAM_ERR_INSUFFICIENT_MEM;
 
+    /* The audio rate keeps the gapless edit sample-exact; milliseconds would
+     * truncate segment_duration. */
     uint32_t movie_timescale = 1000;
+    for (uint32_t t = 0; t < m->num_tracks; t++) {
+        if (m->tracks[t].cfg.track_type == FAAM_TRACK_AUDIO && m->tracks[t].cfg.timescale) {
+            movie_timescale = m->tracks[t].cfg.timescale;
+            break;
+        }
+    }
     uint64_t max_movie_dur = 0;
 
     long moov = start_atom(m, "moov");
@@ -390,7 +409,7 @@ faam_status faam_muxer_finalize(faam_muxer *m)
     for (uint32_t t = 0; t < m->num_tracks; t++) {
         faam_muxer_track *tr = &m->tracks[t];
         uint32_t ts = tr->cfg.timescale ? tr->cfg.timescale : (tr->cfg.track_type == FAAM_TRACK_AUDIO ? 44100 : 90000);
-        uint64_t dur_mv = (tr->bitrate_window.samples * (uint64_t)movie_timescale) / ts;
+        uint64_t dur_mv = (presentation_samples(m, tr) * (uint64_t)movie_timescale) / ts;
         if (dur_mv > max_movie_dur) max_movie_dur = dur_mv;
     }
 
@@ -410,7 +429,7 @@ faam_status faam_muxer_finalize(faam_muxer *m)
     for (uint32_t t = 0; t < m->num_tracks; t++) {
         faam_muxer_track *tr = &m->tracks[t];
         uint32_t ts = tr->cfg.timescale ? tr->cfg.timescale : (tr->cfg.track_type == FAAM_TRACK_AUDIO ? 44100 : 90000);
-        uint64_t track_dur_mv = (tr->bitrate_window.samples * (uint64_t)movie_timescale) / ts;
+        uint64_t track_dur_mv = (presentation_samples(m, tr) * (uint64_t)movie_timescale) / ts;
 
         long trak = start_atom(m, "trak");
         long tkhd = start_atom(m, "tkhd");
@@ -431,7 +450,7 @@ faam_status faam_muxer_finalize(faam_muxer *m)
             long elst = start_atom(m, "elst");
             put_u32(m, use64_time ? (1U << 24) : 0);
             put_u32(m, 1);
-            put_time(m, m->cfg.gapless.total_samples ? m->cfg.gapless.total_samples : tr->bitrate_window.samples, use64_time);
+            put_time(m, track_dur_mv, use64_time);
             put_time(m, m->cfg.gapless.encoder_delay, use64_time);
             put_u16(m, 1); put_u16(m, 0);
             end_atom(m, elst);
