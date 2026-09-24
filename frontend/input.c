@@ -23,7 +23,7 @@
 #endif
 
 #include "input.h"
-#include "charset.h"
+#include "cli_common.h"
 #include "endian.h"
 
 #define PCM_16BIT_FLOAT_SCALE 32768.0f
@@ -167,11 +167,7 @@ pcmfile_t *wav_open_read(const char *name, bool rawinput)
   }
   else
   {
-#ifdef _WIN32
-    wave_f = win32_fopen_utf8(name, "rb");
-#else
-    wave_f = fopen(name, "rb");
-#endif
+    wave_f = cli_fopen(name, "rb");
     if (!wave_f)
     {
       perror(name);
