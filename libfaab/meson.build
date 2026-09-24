@@ -32,7 +32,7 @@ if default_lib == 'shared' or default_lib == 'both'
         'faab',
         libfaab_sources,
         include_directories: libfaab_inc,
-        c_args: c_args,
+        c_args: c_args + ['-DFAAB_BUILDING'],
         dependencies: [libm],
         version: meson.project_version(),
         gnu_symbol_visibility: 'hidden',
@@ -45,7 +45,7 @@ if default_lib == 'static' or default_lib == 'both'
         'faab',
         libfaab_sources,
         include_directories: libfaab_inc,
-        c_args: c_args,
+        c_args: c_args + ['-DFAAB_STATIC'],
         dependencies: [libm],
         gnu_symbol_visibility: 'hidden',
         # Final static archive stays non-LTO/portable, matching the
@@ -62,6 +62,7 @@ endif
 if default_lib == 'static'
     faab_dep = declare_dependency(
         include_directories: libfaab_inc,
+        compile_args: ['-DFAAB_STATIC'],
         link_with: libfaab_static,
     )
 else
