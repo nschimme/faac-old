@@ -237,6 +237,54 @@ FAADAPI faad_status faad_decoder_flush(faad_decoder *dec)
     return FAAD_OK;
 }
 
+
+#ifdef FAAD_STATS
+/* Per-frame record of what the encoder chose, appended to the file named by
+ * FAAD_DUMP, so streams from different encoders can be diffed decision by
+ * decision. One line per record, first field the type, second the frame:
+ *   C frame ch bits win_seq max_sfb groups global_gain | cb:sf:nnz:ms ... / ...
+ *       one per ICS; bits is the whole element (both channels of a CPE, and
+ *       the second channel of a CPE carries ms_mask_present there instead)
+ *   H frame nch amp_res start stop xover freq_scale alter_scale noise_bands
+ *     limiter_bands limiter_gains interpol smoothing reset kx M n_low n_high n_q e1 e2
+ *   F frame ch class L_E L_Q freq_res amp_res invf harm_flag n_harm coupling -1 E_dB Q_dB
+ *   G frame ch class L_E pointer t_E...
+ *   P frame iid icc num_env */
+FILE *faad_dump_file(struct faad_decoder *dec)
+{
+    FaadDecStats *st = &dec->stats;
+    if (!st->dumpOpenTried) {
+        st->dumpOpenTried = true;
+        const char *path = getenv("FAAD_DUMP");
+        if (path && *path) st->dumpFile = fopen(path, "a");
+    }
+    return st->dumpFile;
+}
+
+static void core_dump_ics(struct faad_decoder *dec, int ch, const ICSInfo *ics, const float *spec,
+                          const uint8_t (*ms)[MAX_SFB], unsigned bits)
+{
+    FILE *df = faad_dump_file(dec);
+    if (!df) return;
+    fprintf(df, "C %u %d %u %u %u %u %u |", dec->stats.totalFrames, ch, bits, ics->window_sequence,
+            ics->max_sfb, ics->num_window_groups, ics->global_gain);
+    int wo = 0;
+    for (int g = 0; g < ics->num_window_groups && g < 8; g++) {
+        for (int sfb = 0; sfb < ics->max_sfb && sfb < MAX_SFB; sfb++) {
+            int nnz = 0;
+            for (int w = 0; w < ics->window_group_length[g]; w++)
+                for (int k = ics->sfb_offsets[sfb]; k < ics->sfb_offsets[sfb + 1] && k < 1024; k++)
+                    nnz += spec[(wo + w) * 128 + k] != 0.0f;
+            fprintf(df, " %u:%d:%d:%d", ics->sfb_cb[g][sfb], ics->scalefactors[g][sfb], nnz,
+                    ms ? ms[g][sfb] : 0);
+        }
+        fprintf(df, " /");
+        wo += ics->window_group_length[g];
+    }
+    fprintf(df, "\n");
+}
+#endif
+
 FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                                       const uint8_t *in_buf, uint32_t in_bytes,
                                       uint32_t *bytes_consumed,
@@ -315,7 +363,14 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
             } else if (syntax_id == ID_SCE || syntax_id == ID_LFE) {
                 if (ch_idx >= MAX_CHANNELS) break;
                 last_elem_type = syntax_id;
+#ifdef FAAD_STATS
+                unsigned b0 = bits_get_consumed(&bs);
+#endif
                 decode_sce(&bs, dec, &ics_list[ch_idx], ch_idx);
+#ifdef FAAD_STATS
+                core_dump_ics(dec, ch_idx, &ics_list[ch_idx], dec->spec[ch_idx], NULL,
+                              bits_get_consumed(&bs) - b0);
+#endif
                 apply_pns(&ics_list[ch_idx], dec->spec[ch_idx], &dec->pns_seed);
                 apply_tns(&ics_list[ch_idx], dec->spec[ch_idx]);
                 ch_idx += 1;
@@ -324,7 +379,18 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                 last_elem_type = ID_CPE;
                 CPEInfo cpe;
                 memset(&cpe, 0, sizeof(cpe));
+#ifdef FAAD_STATS
+                unsigned b0 = bits_get_consumed(&bs);
+#endif
                 decode_cpe(&bs, dec, &cpe, ch_idx);
+#ifdef FAAD_STATS
+                {
+                    unsigned nb = bits_get_consumed(&bs) - b0;
+                    const uint8_t (*ms)[MAX_SFB] = cpe.ms_mask_present ? (const uint8_t (*)[MAX_SFB])cpe.ms_used : NULL;
+                    core_dump_ics(dec, ch_idx, &cpe.ics[0], dec->spec[ch_idx], ms, nb);
+                    core_dump_ics(dec, ch_idx + 1, &cpe.ics[1], dec->spec[ch_idx + 1], ms, cpe.ms_mask_present);
+                }
+#endif
                 ics_list[ch_idx] = cpe.ics[0];
                 ics_list[ch_idx + 1] = cpe.ics[1];
 
