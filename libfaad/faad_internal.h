@@ -219,9 +219,16 @@ typedef struct FaadDecStats {
     unsigned int psIidBandsSum;
     unsigned int psIccBandsSum;
 
-    unsigned int huffEscapeHits[13]; /* 1..11 spectral books, 12 = scalefactor book */
-    unsigned int huffEscapeMisses;
-    unsigned int escbookMagnitudeEscapes;
+    /* Per-channel-band codebook mix, counted the way libfaac's FAAC_STATS
+     * counts them on the encode side (see libfaac/stats.h) so a stream
+     * decoded here and the same content run through faac report directly
+     * comparable percentages. */
+    unsigned long totalBands;
+    unsigned long msBands;
+    unsigned long isBands;
+    unsigned long pnsBands;
+
+    unsigned int escbookMagnitudeEscapes; /* book 11 values needing the >=16 escape path */
 
     unsigned int fillElementCount;
     unsigned int fillElementPadBitsSum;
@@ -418,7 +425,11 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
 #endif
 );
 void apply_pns(ICSInfo *ics, float *spec, uint32_t *pns_seed);
-void apply_ms_stereo(CPEInfo *cpe, float *spec_l, float *spec_r);
+void apply_ms_stereo(CPEInfo *cpe, float *spec_l, float *spec_r
+#ifdef FAAD_STATS
+    , FaadDecStats *stats
+#endif
+);
 void apply_is_stereo(CPEInfo *cpe, float *spec_l, float *spec_r);
 void apply_freq_downmix_mono(float *spec_l, const float *spec_r);
 void apply_tns(ICSInfo *ics, float *spec);

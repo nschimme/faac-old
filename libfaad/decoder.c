@@ -159,6 +159,12 @@ static void faad_print_stats(const struct faad_decoder *dec)
     double sbr_pct = s->totalFrames > 0 ? 100.0 * s->sbrActiveFrames / s->totalFrames : 0.0;
     double short_pct = s->icsCount > 0 ? 100.0 * s->shortBlockIcsCount / s->icsCount : 0.0;
     double pad_avg = s->fillElementCount > 0 ? (double)s->fillElementPadBitsSum / s->fillElementCount : 0.0;
+    /* Same definition libfaac's FAAC_STATS uses (see libfaac/stats.h) so
+     * decoding a reference encoder's output and running faac on the same
+     * content give directly comparable percentages. */
+    double ms_pct = s->totalBands > 0 ? 100.0 * s->msBands / s->totalBands : 0.0;
+    double is_pct = s->totalBands > 0 ? 100.0 * s->isBands / s->totalBands : 0.0;
+    double pns_pct = s->totalBands > 0 ? 100.0 * s->pnsBands / s->totalBands : 0.0;
 
     fprintf(stderr, "\n--- Decoder Diagnostics ---\n");
     fprintf(stderr, " Frames              : %u (non-END termination: %u)\n",
@@ -178,17 +184,8 @@ static void faad_print_stats(const struct faad_decoder *dec)
             s->sbrActiveFrames, s->totalFrames, sbr_pct);
     fprintf(stderr, " Short blocks        : %u/%u ics (%.1f%%)\n",
             s->shortBlockIcsCount, s->icsCount, short_pct);
-
-    fprintf(stderr, " Huffman escapes     : ");
-    bool any_esc = false;
-    for (int b = 1; b <= 12; b++) {
-        if (s->huffEscapeHits[b] > 0) {
-            fprintf(stderr, "%sbook%02u=%u", any_esc ? " " : "", b, s->huffEscapeHits[b]);
-            any_esc = true;
-        }
-    }
-    if (!any_esc) fprintf(stderr, "none");
-    fprintf(stderr, " (table misses: %u)\n", s->huffEscapeMisses);
+    fprintf(stderr, " M/S, IS, PNS bands  : %.1f%% / %.1f%% / %.1f%% of %lu total\n",
+            ms_pct, is_pct, pns_pct, s->totalBands);
 
     fprintf(stderr, " ESCBOOK magnitude   : %u values needed the >=16 escape path\n",
             s->escbookMagnitudeEscapes);
@@ -333,7 +330,11 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
 
                 apply_pns(&cpe.ics[0], dec->spec[ch_idx], &dec->pns_seed);
                 apply_pns(&cpe.ics[1], dec->spec[ch_idx + 1], &dec->pns_seed);
-                apply_ms_stereo(&cpe, dec->spec[ch_idx], dec->spec[ch_idx + 1]);
+                apply_ms_stereo(&cpe, dec->spec[ch_idx], dec->spec[ch_idx + 1]
+#ifdef FAAD_STATS
+                    , &dec->stats
+#endif
+                );
                 apply_is_stereo(&cpe, dec->spec[ch_idx], dec->spec[ch_idx + 1]);
                 apply_tns(&cpe.ics[0], dec->spec[ch_idx]);
                 apply_tns(&cpe.ics[1], dec->spec[ch_idx + 1]);

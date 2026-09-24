@@ -166,15 +166,10 @@ static inline uint32_t huff_decode(BitReader *bs, int book)
 #define DECODE_HUFF_SF(bs) ((int)huff_decode((bs), 12))
 #endif
 
-static inline void decode_quad(BitReader *bs, int book, int *v, int *w, int *x, int *y
-#ifdef FAAD_STATS
-    , FaadDecStats *stats
-#endif
-)
+static inline void decode_quad(BitReader *bs, int book, int *v, int *w, int *x, int *y)
 {
-#ifdef FAAD_STATS
-    (void)stats;
-#endif
+    /* Quad books (1..4) are bounded to {-1,0,1}; there is no escape path to
+     * instrument here, unlike decode_pair's book 11. */
     uint32_t t = huff_decode(bs, book);
     int v_val = (int)(t & 3), w_val = (int)((t >> 2) & 3), x_val = (int)((t >> 4) & 3), y_val = (int)((t >> 6) & 3);
     if (book <= 2) {
@@ -196,9 +191,6 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y
 #endif
 )
 {
-#ifdef FAAD_STATS
-    (void)stats;
-#endif
     uint32_t t = huff_decode(bs, book);
     *x = (int)(t & 63);
     *y = (int)(t >> 6);
@@ -217,11 +209,17 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y
             int prefix = 0;
             while (bits_get_1(bs) == 1) prefix++;
             abs_x = (1 << (prefix + 4)) + bits_get_fast(bs, prefix + 4);
+#ifdef FAAD_STATS
+            stats->escbookMagnitudeEscapes++;
+#endif
         }
         if (abs_y == 16) {
             int prefix = 0;
             while (bits_get_1(bs) == 1) prefix++;
             abs_y = (1 << (prefix + 4)) + bits_get_fast(bs, prefix + 4);
+#ifdef FAAD_STATS
+            stats->escbookMagnitudeEscapes++;
+#endif
         }
         *x = neg_x ? -abs_x : abs_x;
         *y = neg_y ? -abs_y : abs_y;
@@ -238,9 +236,6 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
 #endif
 )
 {
-#ifdef FAAD_STATS
-    (void)stats;
-#endif
     setup_sfb_offsets(ics, sample_rate);
 
     int sf = ics->global_gain;
@@ -253,9 +248,15 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
     for (int g = 0; g < ics->num_window_groups && g < 8; g++) {
         for (int sfb = 0; sfb < max_sfb; sfb++) {
             int cb = ics->sfb_cb[g][sfb];
+#ifdef FAAD_STATS
+            stats->totalBands++;
+#endif
             if (cb == 0) {
                 continue;
             } else if (cb == 13) { /* PNS */
+#ifdef FAAD_STATS
+                stats->pnsBands++;
+#endif
                 if (is_first_pns) {
                     pns_energy += (int)bits_get(bs, 9) - 256;
                     is_first_pns = false;
@@ -265,6 +266,9 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
                 }
                 ics->scalefactors[g][sfb] = (int16_t)pns_energy;
             } else if (cb == 14 || cb == 15) { /* Intensity stereo */
+#ifdef FAAD_STATS
+                stats->isBands++;
+#endif
                 int dis = DECODE_HUFF_SF(bs);
                 is_pos += dis - 60; /* signed: negative positions boost the right channel */
                 ics->scalefactors[g][sfb] = (int16_t)is_pos;
@@ -322,11 +326,7 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
                     if (cb <= 4) {
                         while (k < end_k) {
                             int v, w_val, x, y;
-                            decode_quad(bs, cb, &v, &w_val, &x, &y
-#ifdef FAAD_STATS
-                                , stats
-#endif
-                            );
+                            decode_quad(bs, cb, &v, &w_val, &x, &y);
                             ptr[0] = pow_4_3_fast(v) * scale;
                             ptr[1] = pow_4_3_fast(w_val) * scale;
                             ptr[2] = pow_4_3_fast(x) * scale;
