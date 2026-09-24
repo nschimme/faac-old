@@ -18,7 +18,11 @@ static void init_is_tables(void)
     is_tables_init = true;
 }
 
-void apply_ms_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spec_r)
+void apply_ms_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spec_r
+#ifdef FAAD_STATS
+    , FaadDecStats *stats
+#endif
+)
 {
     ICSInfo *ics = &cpe->ics[0];
 
@@ -35,6 +39,12 @@ void apply_ms_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spe
             if (!ms_flag) continue;
             bool pns_l = ics->sfb_cb[g][sfb] == 13, pns_r = cpe->ics[1].sfb_cb[g][sfb] == 13;
             if (pns_l != pns_r) continue;
+
+#ifdef FAAD_STATS
+            /* Counted per channel slot, same granularity as totalBands, so
+             * msBands/totalBands lines up with libfaac's own ratio. */
+            stats->msBands += 2;
+#endif
 
             int start_k = ics->sfb_offsets[sfb];
             int end_k = ics->sfb_offsets[sfb + 1];
