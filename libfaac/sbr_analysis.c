@@ -28,6 +28,89 @@ static inline int sbr_env_of_slot(int numEnvelopes, const int *envStart, int slo
     return e;
 }
 
+static int sbr_even_clamp(int x, int lo, int hi)
+{
+    x = clamp_int(x, lo, hi);
+    return x & ~1;
+}
+
+static void sbr_set_pointer(SbrGrid *grid, int transient)
+{
+    int p = 0;
+    while (p + 1 < grid->numEnvelopes && transient >= grid->tEnv[p + 1]) p++;
+    grid->bsPointer = p;
+}
+
+/* A late attack needs a border beyond this frame; its successor starts there. */
+static void sbr_choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int numSlots)
+{
+    SbrGrid grid = { 0 };
+    int t = sbr_even_clamp(ac->transientSlot * SBR_NUM_TIME_SLOTS / numSlots, 0, 14);
+    int carry = ac->trailingBorder > SBR_NUM_TIME_SLOTS ?
+                ac->trailingBorder - SBR_NUM_TIME_SLOTS : 0;
+    int tail = t >= 4; /* The final 3/4 leaves room for the attack's trailing envelope. */
+    /* 3.7 early / 3.05 late: an early split needs a 5.7 dB peak; a trailing attack has no later border. */
+    int transient = ac->transientStrength > (tail ? 3.05f : 3.7f);
+    tail &= transient;
+    /* 4.5/7.5: 6.5/8.8 dB peaks need one/two extra level changes. */
+    int n = 2 + (ac->transientStrength > 4.5f) + (ac->transientStrength > 7.5f);
+
+    if (!transient) {
+        if (carry) {
+            grid.frameClass = SBR_FRAME_CLASS_VARFIX;
+            grid.numEnvelopes = 2;
+            grid.tEnv[0] = carry; grid.tEnv[1] = 8; grid.tEnv[2] = SBR_NUM_TIME_SLOTS;
+        } else {
+            grid.frameClass = SBR_FRAME_CLASS_FIXFIX;
+            grid.numEnvelopes = numEnvFixFix;
+            for (int e = 0; e <= grid.numEnvelopes; e++)
+                grid.tEnv[e] = e * SBR_NUM_TIME_SLOTS / grid.numEnvelopes;
+        }
+    } else if (tail && carry) {
+        grid.frameClass = SBR_FRAME_CLASS_VARVAR;
+        /* 12: a 10.8 dB peak is the rare case that warrants all five envelopes. */
+        grid.numEnvelopes = n + (ac->transientStrength > 12.0f);
+        grid.tEnv[0] = 2;
+        if (grid.numEnvelopes == 2) grid.tEnv[1] = 10;
+        else if (grid.numEnvelopes == 3) { grid.tEnv[1] = 8; grid.tEnv[2] = 14; }
+        else if (grid.numEnvelopes == 4) { grid.tEnv[1] = 6; grid.tEnv[2] = 10; grid.tEnv[3] = 14; }
+        else { grid.tEnv[1] = 4; grid.tEnv[2] = 8; grid.tEnv[3] = 12; grid.tEnv[4] = 16; }
+        grid.tEnv[grid.numEnvelopes] = 18;
+    } else if (tail) {
+        grid.frameClass = SBR_FRAME_CLASS_FIXVAR;
+        grid.numEnvelopes = n;
+        grid.tEnv[0] = 0;
+        if (n == 2) grid.tEnv[1] = sbr_even_clamp(t, 10, 16);
+        else if (n == 3) { grid.tEnv[1] = 8; grid.tEnv[2] = sbr_even_clamp(t, 10, 16); }
+        else { grid.tEnv[1] = 4; grid.tEnv[2] = 8; grid.tEnv[3] = sbr_even_clamp(t, 10, 16); }
+        grid.tEnv[n] = 18;
+    } else {
+        int start = carry ? 2 : 0;
+        grid.frameClass = SBR_FRAME_CLASS_VARFIX;
+        grid.numEnvelopes = n;
+        grid.tEnv[0] = start;
+        if (n == 2) grid.tEnv[1] = sbr_even_clamp(t, start + 2, 8);
+        else if (n == 3) {
+            grid.tEnv[1] = sbr_even_clamp(t, start + 2, 6);
+            grid.tEnv[2] = grid.tEnv[1] + 4;
+        } else {
+            grid.tEnv[1] = sbr_even_clamp(t, start + 2, 6);
+            grid.tEnv[2] = grid.tEnv[1] + 2;
+            grid.tEnv[3] = grid.tEnv[1] + 6;
+        }
+        grid.tEnv[n] = SBR_NUM_TIME_SLOTS;
+    }
+
+    for (int e = 0; e < grid.numEnvelopes; e++)
+        /* Four slots is the shortest interval whose high-band detail repays its extra codes. */
+        grid.freqRes[e] = grid.tEnv[e + 1] - grid.tEnv[e] > 4;
+    if (grid.frameClass == SBR_FRAME_CLASS_FIXFIX)
+        grid.freqRes[0] = 1;
+    sbr_set_pointer(&grid, t);
+    ac->grid = grid;
+    ac->trailingBorder = grid.tEnv[grid.numEnvelopes];
+}
+
 /* Multi-pass signal analysis: transient detection, temporal grid selection,
  * and subband energy accumulation. */
 void SbrAnalyze(SignalAnalysis *sa, float *fullPtrs[], int nch, const bool *isLfe, int numSamples, struct SBRInfo *sbr)
@@ -67,74 +150,55 @@ void SbrAnalyze(SignalAnalysis *sa, float *fullPtrs[], int nch, const bool *isLf
         sa->ch[ch].transientSlot = smax_idx;
     }
 
-    /* Choose the temporal grid based on the strongest transient. Synchronizes
-     * envelope borders across all channels to maintain spatial imaging. The
-     * LFE carries no SBR, so it gets no vote. */
-    float frameStrength = 0.0f;
-    int frameSlot = 0;
-    for (int ch = 0; ch < nch; ch++) {
-        if (isLfe[ch]) continue;
-        if (sa->ch[ch].transientStrength > frameStrength) {
-            frameStrength = sa->ch[ch].transientStrength;
-            frameSlot = sa->ch[ch].transientSlot;
+    /* Each channel keeps its own border continuity. */
+    for (int ch = 0; ch < nch; ch++)
+        sbr_choose_grid(&sa->ch[ch], sbr->numEnvFixFix, num_slots);
+    if (nch == 2 && !isLfe[0] && !isLfe[1]) {
+        SignalAnalysisChannel *left = &sa->ch[0], *right = &sa->ch[1];
+        int d = left->transientSlot - right->transientSlot;
+        float lo = left->transientStrength < right->transientStrength ? left->transientStrength : right->transientStrength;
+        float hi = left->transientStrength > right->transientStrength ? left->transientStrength : right->transientStrength;
+        /* Two SBR slots and 3 dB describe one stereo attack, preserving coupling when it is unambiguous. */
+        if (d >= -4 && d <= 4 && lo * 2.0f >= hi) {
+            if (right->transientStrength > left->transientStrength) left->grid = right->grid;
+            else right->grid = left->grid;
+            left->trailingBorder = right->trailingBorder = left->grid.tEnv[left->grid.numEnvelopes];
         }
     }
 
-    if (frameStrength > SBR_TRANSIENT_THRESH_DEFAULT) {
-        int Ts = (num_slots > 0) ? frameSlot * SBR_NUM_TIME_SLOTS / num_slots : 0; /* 0..16 */
-        int rel = clamp_int((Ts - 2) / 2, 0, 3);
-        int innerSbr = 2 * rel + 2;                  /* {2,4,6,8} */
-        sa->numEnvelopes = 2;
-        sa->frameClass = SBR_FRAME_CLASS_VARFIX;
-        sa->tEnv[0] = 0;
-        sa->tEnv[1] = innerSbr;
-        sa->tEnv[2] = SBR_NUM_TIME_SLOTS;
-        sa->bsPointer = 0;
-    } else {
-        int ne = sbr->numEnvFixFix;
-        sa->numEnvelopes = ne;
-        sa->frameClass = SBR_FRAME_CLASS_FIXFIX;
-        for (int e = 0; e <= ne; e++)
-            sa->tEnv[e] = e * SBR_NUM_TIME_SLOTS / ne;
-        sa->bsPointer = 0;
-    }
-
-    /* Envelope borders in QMF slots, for binning the per-slot energies below. */
-    int envStart[SBR_MAX_ENVELOPES + 1];
-    for (int e = 0; e <= sa->numEnvelopes; e++)
-        envStart[e] = sa->tEnv[e] * num_slots / SBR_NUM_TIME_SLOTS;
-
-    /* Count slots per envelope for power normalization. */
-    for (int e = 0; e < sa->numEnvelopes; e++) sa->envSampled[e] = 0;
-    for (int slot = 0; slot < num_slots; slot++) {
+    /* Each channel bins against its own grid. */
+    for (int ch = 0; ch < nch; ch++) {
+        SbrGrid *grid = &sa->ch[ch].grid;
+        int envStart[SBR_MAX_ENVELOPES + 1];
+        for (int e = 0; e <= grid->numEnvelopes; e++)
+            envStart[e] = grid->tEnv[e] * num_slots / SBR_NUM_TIME_SLOTS;
+        for (int e = 0; e < grid->numEnvelopes; e++) sa->ch[ch].envSampled[e] = 0;
+        for (int slot = 0; slot < num_slots; slot++) {
 #if FAAC_SBR_DECIMATION > 1
-        if (slot % FAAC_SBR_DECIMATION != 0) continue;
+            if (slot % FAAC_SBR_DECIMATION != 0) continue;
 #endif
-        sa->envSampled[sbr_env_of_slot(sa->numEnvelopes, envStart, slot)]++;
-    }
-    for (int e = 0; e < sa->numEnvelopes; e++)
-        if (sa->envSampled[e] < 1) sa->envSampled[e] = 1;
+            sa->ch[ch].envSampled[sbr_env_of_slot(grid->numEnvelopes, envStart, slot)]++;
+        }
+        for (int e = 0; e < grid->numEnvelopes; e++)
+            if (sa->ch[ch].envSampled[e] < 1) sa->ch[ch].envSampled[e] = 1;
 
-    /* Pass 2: subband analysis, accumulating QMF band energy per envelope.
-     * Only [kx, k2) feeds the quantizer, so skip bands below kx. */
-    if (sbr) {
+        /* Pass 2: subband analysis, accumulating QMF band energy per envelope.
+         * Only [kx, k2) feeds the quantizer, so skip bands below kx. */
+        if (!sbr || isLfe[ch]) continue;
         int kx = sbr->kx;
         int kEnd = sbr->k2;
-        for (int ch = 0; ch < nch; ch++) {
-            if (isLfe[ch]) continue;
-            memset(sa->bandE[ch], 0, sizeof(sa->bandE[ch]));
+        memset(sa->bandE[ch], 0, sizeof(sa->bandE[ch]));
 
-            memcpy(workspace, sbr->ch[ch].qmfOvl64, SBR_QMF_HIST_LEN * sizeof(float));
-            memcpy(workspace + SBR_QMF_HIST_LEN, fullPtrs[ch], numSamples * sizeof(float));
+        memcpy(workspace, sbr->ch[ch].qmfOvl64, SBR_QMF_HIST_LEN * sizeof(float));
+        memcpy(workspace + SBR_QMF_HIST_LEN, fullPtrs[ch], numSamples * sizeof(float));
 
-            for (int slot = 0; slot < num_slots; slot++) {
+        for (int slot = 0; slot < num_slots; slot++) {
 #if FAAC_SBR_DECIMATION > 1
-                if (slot % FAAC_SBR_DECIMATION == 0)
+            if (slot % FAAC_SBR_DECIMATION == 0)
 #endif
-                {
-                    int e = sbr_env_of_slot(sa->numEnvelopes, envStart, slot);
-                    SbrQmfAnalysis(sbr, workspace + slot * SBR_QMF_BANDS_64, sa->bandE[ch][e], kx, kEnd);
-                }
+            {
+                int e = sbr_env_of_slot(grid->numEnvelopes, envStart, slot);
+                SbrQmfAnalysis(sbr, workspace + slot * SBR_QMF_BANDS_64, sa->bandE[ch][e], kx, kEnd);
             }
         }
     }

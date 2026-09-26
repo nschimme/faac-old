@@ -44,45 +44,86 @@ static int write_sbr_header(const SBRInfo *sbr, BitStream *bs, bool write)
 /* Width of the transient pointer field, indexed by number of envelopes. */
 static const int sbr_ceil_log2[] = { 0, 1, 2, 2, 3, 3 };
 
-static int write_sbr_grid(const SBRInfo *sbr, const SbrFrameData *fd, BitStream *bs, bool write)
+static int sbr_grid_varvar_split(const SbrGrid *grid)
 {
-    int num_env = fd->numEnvelopes;
+    int num_env = grid->numEnvelopes;
+    int first = num_env - 4;
+
+    if (first < 0) first = 0;
+    for (int n0 = first; n0 <= 3 && n0 < num_env; n0++) {
+        int n1 = num_env - 1 - n0;
+        int valid = n1 <= 3;
+        for (int i = 0; valid && i < n0; i++) {
+            int d = grid->tEnv[i + 1] - grid->tEnv[i];
+            valid = d >= 2 && d <= 8 && !(d & 1);
+        }
+        for (int i = 0; valid && i < n1; i++) {
+            int d = grid->tEnv[num_env - i] - grid->tEnv[num_env - i - 1];
+            valid = d >= 2 && d <= 8 && !(d & 1);
+        }
+        if (valid) return n0;
+    }
+    return -1;
+}
+
+static int write_sbr_grid(const SbrGrid *grid, BitStream *bs, bool write)
+{
+    int num_env = grid->numEnvelopes;
     int bits = 2;
 
-    if (write) PutBit(bs, fd->frameClass, 2);
-    if (fd->frameClass == SBR_FRAME_CLASS_VARFIX) {
-        /* VARFIX (§4.6.18.3.6): variable leading borders, fixed (untransmitted)
-         * trailing border at numTimeSlots, then bs_pointer and per-envelope
-         * bs_freq_res. */
+    if (write) PutBit(bs, grid->frameClass, 2);
+
+    if (grid->frameClass == SBR_FRAME_CLASS_FIXFIX) {
+        int bs_num_env = num_env == 1 ? 0 : num_env == 2 ? 1 : 2;
         if (write) {
-            PutBit(bs, fd->tEnv[0], 2);                 /* bs_var_bord_0 */
-            PutBit(bs, num_env - 1, 2);                  /* bs_num_rel_0   */
-            for (int i = 0; i < num_env - 1; i++)
-                PutBit(bs, (fd->tEnv[i + 1] - fd->tEnv[i] - 2) / 2, 2); /* bs_rel_bord */
-        }
-        int ptr_len = sbr_ceil_log2[num_env];
-        if (write) {
-            PutBit(bs, fd->bsPointer, ptr_len);
-            for (int i = 0; i < num_env; i++)
-                PutBit(bs, sbr->bs_freq_res, 1);
-        }
-        bits += 4 + 2 * (num_env - 1) + ptr_len + num_env;
-    } else {
-        /* FIXFIX: equal-spaced borders (not transmitted, the decoder derives
-         * them from the envelope count), one bs_freq_res for all envelopes. */
-        if (write) {
-            PutBit(bs, num_env > 1 ? 1 : 0, 2);         /* bs_num_env = 1 << this */
-            PutBit(bs, sbr->bs_freq_res, 1);
+            PutBit(bs, bs_num_env, 2);
+            PutBit(bs, grid->freqRes[0], 1);
         }
         bits += 3;
+    } else if (grid->frameClass == SBR_FRAME_CLASS_FIXVAR) {
+        if (write) {
+            PutBit(bs, grid->tEnv[num_env] - SBR_NUM_TIME_SLOTS, 2);
+            PutBit(bs, num_env - 1, 2);
+            for (int i = 0; i < num_env - 1; i++)
+                PutBit(bs, (grid->tEnv[num_env - i] - grid->tEnv[num_env - i - 1] - 2) / 2, 2);
+            PutBit(bs, grid->bsPointer, sbr_ceil_log2[num_env]);
+            for (int i = num_env - 1; i >= 0; i--) PutBit(bs, grid->freqRes[i], 1);
+        }
+        bits += 4 + 2 * (num_env - 1) + sbr_ceil_log2[num_env] + num_env;
+    } else if (grid->frameClass == SBR_FRAME_CLASS_VARFIX) {
+        if (write) {
+            PutBit(bs, grid->tEnv[0], 2);
+            PutBit(bs, num_env - 1, 2);
+            for (int i = 0; i < num_env - 1; i++)
+                PutBit(bs, (grid->tEnv[i + 1] - grid->tEnv[i] - 2) / 2, 2);
+            PutBit(bs, grid->bsPointer, sbr_ceil_log2[num_env]);
+            for (int i = 0; i < num_env; i++) PutBit(bs, grid->freqRes[i], 1);
+        }
+        bits += 4 + 2 * (num_env - 1) + sbr_ceil_log2[num_env] + num_env;
+    } else {
+        int n0 = sbr_grid_varvar_split(grid);
+        int n1 = num_env - 1 - n0;
+        if (write) {
+            PutBit(bs, grid->tEnv[0], 2);
+            PutBit(bs, grid->tEnv[num_env] - SBR_NUM_TIME_SLOTS, 2);
+            PutBit(bs, n0, 2);
+            PutBit(bs, n1, 2);
+            for (int i = 0; i < n0; i++)
+                PutBit(bs, (grid->tEnv[i + 1] - grid->tEnv[i] - 2) / 2, 2);
+            for (int i = 0; i < n1; i++)
+                PutBit(bs, (grid->tEnv[num_env - i] - grid->tEnv[num_env - i - 1] - 2) / 2, 2);
+            PutBit(bs, grid->bsPointer, sbr_ceil_log2[num_env]);
+            for (int i = 0; i < num_env; i++) PutBit(bs, grid->freqRes[i], 1);
+        }
+        bits += 8 + 2 * (num_env - 1) + sbr_ceil_log2[num_env] + num_env;
     }
     return bits;
 }
 
-static int write_sbr_dtdf(const SbrFrameData *fd, BitStream *bs, bool write)
+static int write_sbr_dtdf(const SbrGrid *grid, BitStream *bs, bool write)
 {
-    int n_q = fd->numEnvelopes > 1 ? 2 : 1;
-    int len = fd->numEnvelopes + n_q;
+    int n_q = grid->numEnvelopes > 1 ? 2 : 1;
+    int len = grid->numEnvelopes + n_q;
     if (write) PutBit(bs, 0, len);
     return len;
 }
@@ -102,32 +143,35 @@ static int put_huff(BitAccumulator *acc, bool write, const SBRHuffEntry *table, 
 }
 
 /* Same shape as writesf()'s per-band loop, so it gets the same BitAccumulator batching. */
-static int write_sbr_envelope(const SBRInfo *sbr, const SbrFrameData *fd, BitStream *bs, int ch, bool write)
+static int write_sbr_envelope(const SBRInfo *sbr, const SbrFrameData *fd, const SbrGrid *grid, BitStream *bs, int ch, bool write)
 {
-    const SBRHuffEntry *table = fd->eff_amp_res ? f_huff_env_3_0dB : f_huff_env_1_5dB;
-    int nsyms = fd->eff_amp_res ? F_HUFF_ENV_3_0DB_NSYMS : F_HUFF_ENV_1_5DB_NSYMS;
-    int offset = fd->eff_amp_res ? F_HUFF_ENV_3_0DB_OFFSET : F_HUFF_ENV_1_5DB_OFFSET;
-    int first_bits = fd->eff_amp_res ? 6 : 7;
+    int eff_amp_res = fd->ch[ch].eff_amp_res;
+    const SBRHuffEntry *table = eff_amp_res ? f_huff_env_3_0dB : f_huff_env_1_5dB;
+    int nsyms = eff_amp_res ? F_HUFF_ENV_3_0DB_NSYMS : F_HUFF_ENV_1_5DB_NSYMS;
+    int offset = eff_amp_res ? F_HUFF_ENV_3_0DB_OFFSET : F_HUFF_ENV_1_5DB_OFFSET;
+    int first_bits = eff_amp_res ? 6 : 7;
     int first_max = (1 << first_bits) - 1;
-    int nb = sbr_env_bands(sbr, fd);
     int bits = 0;
     BitAccumulator acc = {0};
 
     if (write) AccumBegin(&acc, bs);
-    for (int e = 0; e < fd->numEnvelopes; e++) {
+    for (int e = 0; e < grid->numEnvelopes; e++) {
+        int nb = sbr_env_bands(sbr, grid, e);
         const int *env_ch = fd->ch[ch].envData[e];
         if (write) AccumPutBits(&acc, (uint32_t)clamp_int(env_ch[0], 0, first_max), first_bits);
         bits += first_bits;
-        for (int b = 1; b < nb; b++)
-            bits += put_huff(&acc, write, table, nsyms, offset, env_ch[b]);
+        for (int b = 1; b < nb; b++) {
+            int delta = env_ch[b] - env_ch[b - 1];
+            bits += put_huff(&acc, write, table, nsyms, offset, delta);
+        }
     }
     if (write) AccumEnd(&acc);
     return bits;
 }
 
-static int write_sbr_noise(const SbrFrameData *fd, BitStream *bs, bool write)
+static int write_sbr_noise(const SbrGrid *grid, BitStream *bs, bool write)
 {
-    int n_q = fd->numEnvelopes > 1 ? 2 : 1;
+    int n_q = grid->numEnvelopes > 1 ? 2 : 1;
     if (write) {
         for (int ne = 0; ne < n_q; ne++)
             PutBit(bs, SBR_NOISE_LEVEL_DEFAULT, 5);
@@ -145,15 +189,15 @@ static int write_sbr_data(const SBRInfo *sbr, const SbrFrameData *fd, BitStream 
     if (write) PutBit(bs, 0, lead_len); /* bs_coupling / reserved */
 
     for (int ch = 0; ch < nch; ch++)
-        bits += write_sbr_grid(sbr, fd, bs, write);
+        bits += write_sbr_grid(&fd->ch[ch0 + ch].grid, bs, write);
     for (int ch = 0; ch < nch; ch++)
-        bits += write_sbr_dtdf(fd, bs, write);
+        bits += write_sbr_dtdf(&fd->ch[ch0 + ch].grid, bs, write);
     for (int ch = 0; ch < nch; ch++)
         bits += write_sbr_invf(bs, write);
     for (int ch = 0; ch < nch; ch++)
-        bits += write_sbr_envelope(sbr, fd, bs, ch0 + ch, write);
+        bits += write_sbr_envelope(sbr, fd, &fd->ch[ch0 + ch].grid, bs, ch0 + ch, write);
     for (int ch = 0; ch < nch; ch++)
-        bits += write_sbr_noise(fd, bs, write);
+        bits += write_sbr_noise(&fd->ch[ch0 + ch].grid, bs, write);
 
     if (write) PutBit(bs, 0, flags_len); /* add_harmonic / extended data flags */
 
