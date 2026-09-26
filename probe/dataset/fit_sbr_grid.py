@@ -5,7 +5,7 @@ import pandas as pd
 from sklearn.tree import DecisionTreeClassifier, export_text
 from sklearn.metrics import accuracy_score, mean_absolute_error, confusion_matrix, classification_report
 
-def compute_expanded_features(df):
+def compute_expanded_features_v2(df):
     slots = df[[f'slot{i}' for i in range(32)]].values.astype(np.float64)  # (N, 32)
     eps = 1e-9
     N = len(df)
@@ -32,15 +32,15 @@ def compute_expanded_features(df):
     h2 = q3 + q4
     h2_h1_ratio = h2 / h1
 
-    # 3. Late-slot energy ratios (slots 24..31 and slots 28..31)
+    # 3. Late-slot energy ratios
     late_8_frac = np.sum(slots[:, 24:], axis=1) / (total_energy + eps)
     late_4_frac = np.sum(slots[:, 28:], axis=1) / (total_energy + eps)
 
-    # 4. Energy-weighted slot centroid (spectral/temporal centroid)
+    # 4. Energy-weighted slot centroid
     slot_indices = np.arange(32, dtype=np.float64)
     centroid = np.sum(slots * slot_indices, axis=1) / (total_energy + eps)
 
-    # 5. Count of distinct local energy peaks > 0.5 * max_energy
+    # 5. Local energy peaks count
     num_peaks_05 = np.zeros(N, dtype=int)
     for i in range(N):
         s = slots[i]
@@ -62,6 +62,12 @@ def compute_expanded_features(df):
     max_onset_ratio = np.max(ratios, axis=1)
     max_onset_slot = np.argmax(ratios, axis=1)
 
+    # Cross-frame columns from v2 dataset
+    prev_ref_frameClass = df['prev_ref_frameClass']
+    prev_ref_numEnvelopes = df['prev_ref_numEnvelopes']
+    prev_ref_tEnv0 = df['prev_ref_tEnv0']
+    prev_ref_tEnv_last = df['prev_ref_tEnv_last']
+
     feats = pd.DataFrame({
         'total_energy': total_energy,
         'log_total_energy': np.log10(total_energy + 1.0),
@@ -79,14 +85,20 @@ def compute_expanded_features(df):
         'late_8_frac': late_8_frac,
         'late_4_frac': late_4_frac,
         'centroid': centroid,
-        'num_peaks_05': num_peaks_05
+        'num_peaks_05': num_peaks_05,
+        'prev_ref_frameClass': prev_ref_frameClass,
+        'prev_ref_numEnvelopes': prev_ref_numEnvelopes,
+        'prev_ref_tEnv0': prev_ref_tEnv0,
+        'prev_ref_tEnv_last': prev_ref_tEnv_last
     })
     return feats, slots
 
-def predict_sbr_grid_tree_separate(dt_class, dt_nenv, feats_row):
-    p_c = dt_class.predict(feats_row)[0]
-    p_ne = dt_nenv.predict(feats_row)[0]
+def predict_sbr_grid_v2(dt_c, dt_ne, feats_row):
+    p_c = dt_c.predict(feats_row)[0]
+    p_ne = dt_ne.predict(feats_row)[0]
     o_slot = feats_row['max_onset_slot'].values[0]
+
+    prev_last = feats_row['prev_ref_tEnv_last'].values[0]
 
     if p_c == 0: # FIXFIX
         p_tenv = [0, 8, 16] if p_ne == 2 else [0, 16]
@@ -105,11 +117,11 @@ def predict_sbr_grid_tree_separate(dt_class, dt_nenv, feats_row):
             p_tenv = [0, b1, 16]
             p_fres = [1, 1]
     elif p_c == 2: # VARFIX
-        t0 = max(0, min(3, int(o_slot)))
+        t0 = max(0, min(16, int(prev_last - 16))) if prev_last > 16 else max(0, min(3, int(o_slot)))
         p_tenv = [t0, 7, 16]
         p_fres = [1, 1]
     else: # VARVAR
-        b0 = max(0, min(2, int(o_slot) - 2))
+        b0 = max(0, min(16, int(prev_last - 16))) if prev_last > 16 else max(0, min(2, int(o_slot) - 2))
         b1 = int(o_slot)
         b2 = min(12, b1 + 4)
         b3 = min(15, b2 + 4)
@@ -118,28 +130,36 @@ def predict_sbr_grid_tree_separate(dt_class, dt_nenv, feats_row):
 
     return p_c, p_ne, p_tenv, p_fres
 
-def main():
-    df64 = pd.read_csv('probe/dataset/sbr_grid_dataset_64k.csv.gz')
-    feats, slots = compute_expanded_features(df64)
+def run_v2_evaluation(df_path):
+    df = pd.read_csv(df_path)
+    feats, slots = compute_expanded_features_v2(df)
 
-    unique_clips = sorted(df64['clip'].unique())
+    unique_clips = sorted(df['clip'].unique())
     np.random.seed(42)
     train_clips = set(np.random.choice(unique_clips, size=int(len(unique_clips)*0.8), replace=False))
     test_clips = set(unique_clips) - train_clips
 
-    train_mask = df64['clip'].isin(train_clips)
-    test_mask = df64['clip'].isin(test_clips)
+    train_mask = df['clip'].isin(train_clips)
+    test_mask = df['clip'].isin(test_clips)
 
     X_train = feats[train_mask]
     X_test = feats[test_mask]
 
-    y_train_c = df64.loc[train_mask, 'ref_frameClass']
-    y_test_c = df64.loc[test_mask, 'ref_frameClass']
+    y_train_c = df.loc[train_mask, 'ref_frameClass']
+    y_test_c = df.loc[test_mask, 'ref_frameClass']
 
-    y_train_ne = df64.loc[train_mask, 'ref_numEnvelopes']
-    y_test_ne = df64.loc[test_mask, 'ref_numEnvelopes']
+    y_train_ne = df.loc[train_mask, 'ref_numEnvelopes']
+    y_test_ne = df.loc[test_mask, 'ref_numEnvelopes']
 
-    print("=== Training Separate Decision Trees (Depths 3-8) ===")
+    print(f"\n==========================================")
+    print(f"Evaluating V2 Cross-Frame Dataset: {df_path}")
+    print(f"==========================================")
+    print("Depth Comparison on Test Split:")
+
+    best_dt_c = None
+    best_dt_ne = None
+    best_match_rate = 0.0
+
     for depth in range(3, 9):
         dt_c = DecisionTreeClassifier(max_depth=depth, random_state=42)
         dt_c.fit(X_train, y_train_c)
@@ -151,7 +171,7 @@ def main():
         te_acc_ne = accuracy_score(y_test_ne, dt_ne.predict(X_test))
 
         # Strict Full Match
-        sub_test_df = df64[test_mask].reset_index(drop=True)
+        sub_test_df = df[test_mask].reset_index(drop=True)
         sub_test_feats = feats[test_mask].reset_index(drop=True)
 
         full_matches = 0
@@ -159,7 +179,7 @@ def main():
             ref_c = sub_test_df.at[i, 'ref_frameClass']
             ref_ne = sub_test_df.at[i, 'ref_numEnvelopes']
 
-            p_c, p_ne, p_tenv, _ = predict_sbr_grid_tree_separate(dt_c, dt_ne, sub_test_feats.iloc[[i]])
+            p_c, p_ne, p_tenv, _ = predict_sbr_grid_v2(dt_c, dt_ne, sub_test_feats.iloc[[i]])
 
             if p_c == ref_c and p_ne == ref_ne:
                 ref_tenv = [sub_test_df.at[i, f'ref_tEnv{j}'] for j in range(ref_ne + 1)]
@@ -174,6 +194,28 @@ def main():
 
         full_match_rate = full_matches / len(sub_test_df)
         print(f"Depth {depth:2d} | frameClass Test Acc: {te_acc_c:.4f} | numEnvelopes Test Acc: {te_acc_ne:.4f} | Strict Full-Match Rate: {full_match_rate*100:.2f}%")
+
+        if depth == 6:
+            best_dt_c = dt_c
+            best_dt_ne = dt_ne
+
+    # Detailed report for depth 6
+    y_pred_c_best = best_dt_c.predict(X_test)
+    print("\n=== Depth 6 Classification Report (frameClass) ===")
+    print(classification_report(y_test_c, y_pred_c_best, target_names=['FIXFIX (0)', 'FIXVAR (1)', 'VARFIX (2)', 'VARVAR (3)']))
+
+    print("=== Depth 6 Confusion Matrix ===")
+    print(confusion_matrix(y_test_c, y_pred_c_best))
+
+    print("\n=== Depth 6 Top Feature Importances (frameClass) ===")
+    importances = sorted(zip(X_train.columns, best_dt_c.feature_importances_), key=lambda x: x[1], reverse=True)
+    for name, imp in importances:
+        if imp > 0.001:
+            print(f"  {name:25s}: {imp*100:.2f}%")
+
+def main():
+    run_v2_evaluation('probe/dataset/sbr_grid_dataset_v2_64k.csv.gz')
+    run_v2_evaluation('probe/dataset/sbr_grid_dataset_v2_96k.csv.gz')
 
 if __name__ == '__main__':
     main()
