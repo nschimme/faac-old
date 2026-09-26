@@ -23,12 +23,20 @@ concurrency:
 jobs:
   benchmark:
     name: Benchmark ${{ matrix.arch }} (${{ matrix.rate_control }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        arch: [amd64]
-        rate_control: [abr, vbr, cbr]
+        include:
+          - rate_control: abr
+            arch: amd64
+            os: ubuntu-24.04
+          - rate_control: vbr
+            arch: amd64
+            os: ubuntu-24.04
+          - rate_control: cbr
+            arch: arm64
+            os: ubuntu-24.04-arm
 
     steps:
       - name: Install build dependencies
@@ -171,7 +179,7 @@ jobs:
 
   footprint:
     name: Footprint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Install build dependencies
         run: |
@@ -225,15 +233,29 @@ jobs:
           for pair in "baseline:base" "candidate:cand"; do
             d=${pair%%:*}; tag=${pair##*:}
             python3 bench/phase1_encode.py \
-              $d/build/frontend/faac $d/build/libfaac/libfaac.so \
-              lc results/lc_$tag.json --skip-mos --build-dir $d/build
+              lc results/lc_$tag.json \
+              --encoder-bin $d/build/frontend/faac \
+              --encoder-lib $d/build/libfaac/libfaac.so \
+              --skip-mos --build-dir $d/build
           done
+          python3 -c '
+          import sys
+          sys.path.append("bench")
+          import compare_results
+          pair_data = compare_results.analyze_pair("results/lc_base.json", "results/lc_cand.json")
+          if pair_data and "gates" in pair_data:
+              for g in pair_data["gates"]:
+                  if g.get("name") == "footprint":
+                      st = g.get("status", "pass")
+                      dt = g.get("detail", "")
+                      print(f"::notice title=Code Footprint Status ({st})::{dt}")
+          '
           python3 bench/compare_results.py results --gates footprint
 
   report:
     name: Consolidated Report
     needs: benchmark
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: always() && github.event_name == 'pull_request'
     permissions:
       pull-requests: write
@@ -262,7 +284,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-report-full
-          path: report.md
+          path: |
+            report.md
+            cases.md
 
       - name: Post Summary to PR
         if: always() && github.event_name == 'pull_request'
