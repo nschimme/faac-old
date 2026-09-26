@@ -460,15 +460,15 @@ static void sbr_quantize_envelopes(const SBRInfo *sbr, int nch, const bool *isLf
             int nb = sbr_env_bands(sbr, grid, e);
             const int *edges = sbr_env_edges(sbr, grid, e);
             int prevLevel = -1;
+            int e_slots = sa->ch[ch].envSampled[e];
+            float inv_e_slots = 1.0f / (float)(e_slots < 1 ? 1 : e_slots);
             for (int b = 0; b < nb; b++) {
                 int k_lo = edges[b], k_hi = edges[b+1];
                 /* Weight energy by the number of QMF slots per envelope to
                  * maintain normalized power levels across variable borders. */
-                int e_slots = sa->ch[ch].envSampled[e];
-                if (e_slots < 1) e_slots = 1;
-                float E = 0;
+                float E = 0.0f;
                 for (int k = k_lo; k < k_hi; k++) E += bandE[e][k];
-                E /= (float)(e_slots * (k_hi - k_lo));
+                E *= inv_e_slots / (float)(k_hi - k_lo);
                 float factor = eff_amp_res ? 1.0f : 2.0f;
                 int level = lrintf(factor * (fast_log2(E + SBR_LOG_ENERGY_FLOOR) - SBR_ENV_LEVEL_LOG2_OFFSET));
                 int raw_level = clamp_int(level, 0, 127);

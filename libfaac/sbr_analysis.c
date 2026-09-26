@@ -19,15 +19,6 @@
 #include "util.h"
 #include <string.h>
 
-/* Which envelope a QMF slot falls in; slots before tEnv[0] fold into
- * envelope 0 rather than dropping their energy. */
-static inline int sbr_env_of_slot(int numEnvelopes, const int *envStart, int slot)
-{
-    int e = 0;
-    while (e + 1 < numEnvelopes && slot >= envStart[e + 1]) e++;
-    return e;
-}
-
 static int sbr_even_clamp(int x, int lo, int hi)
 {
     x = clamp_int(x, lo, hi);
@@ -170,14 +161,21 @@ void SbrAnalyze(SignalAnalysis *sa, float *fullPtrs[], int nch, const bool *isLf
     for (int ch = 0; ch < nch; ch++) {
         SbrGrid *grid = &sa->ch[ch].grid;
         int envStart[SBR_MAX_ENVELOPES + 1];
+        int slot_env[32];
         for (int e = 0; e <= grid->numEnvelopes; e++)
             envStart[e] = grid->tEnv[e] * num_slots / SBR_NUM_TIME_SLOTS;
+
         for (int e = 0; e < grid->numEnvelopes; e++) sa->ch[ch].envSampled[e] = 0;
+
+        int e_idx = 0;
         for (int slot = 0; slot < num_slots; slot++) {
+            while (e_idx + 1 < grid->numEnvelopes && slot >= envStart[e_idx + 1])
+                e_idx++;
+            slot_env[slot] = e_idx;
 #if FAAC_SBR_DECIMATION > 1
-            if (slot % FAAC_SBR_DECIMATION != 0) continue;
+            if (slot % FAAC_SBR_DECIMATION == 0)
 #endif
-            sa->ch[ch].envSampled[sbr_env_of_slot(grid->numEnvelopes, envStart, slot)]++;
+                sa->ch[ch].envSampled[e_idx]++;
         }
         for (int e = 0; e < grid->numEnvelopes; e++)
             if (sa->ch[ch].envSampled[e] < 1) sa->ch[ch].envSampled[e] = 1;
@@ -197,7 +195,7 @@ void SbrAnalyze(SignalAnalysis *sa, float *fullPtrs[], int nch, const bool *isLf
             if (slot % FAAC_SBR_DECIMATION == 0)
 #endif
             {
-                int e = sbr_env_of_slot(grid->numEnvelopes, envStart, slot);
+                int e = slot_env[slot];
                 SbrQmfAnalysis(sbr, workspace + slot * SBR_QMF_BANDS_64, sa->bandE[ch][e], kx, kEnd);
             }
         }
