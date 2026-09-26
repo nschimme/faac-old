@@ -5,7 +5,7 @@ import pandas as pd
 from sklearn.tree import DecisionTreeClassifier, export_text
 from sklearn.metrics import accuracy_score, mean_absolute_error, confusion_matrix, classification_report
 
-def compute_expanded_features_v2(df):
+def compute_expanded_features_v3(df):
     slots = df[[f'slot{i}' for i in range(32)]].values.astype(np.float64)  # (N, 32)
     eps = 1e-9
     N = len(df)
@@ -68,7 +68,7 @@ def compute_expanded_features_v2(df):
     prev_ref_tEnv0 = df['prev_ref_tEnv0']
     prev_ref_tEnv_last = df['prev_ref_tEnv_last']
 
-    feats = pd.DataFrame({
+    base_feats = pd.DataFrame({
         'total_energy': total_energy,
         'log_total_energy': np.log10(total_energy + 1.0),
         'mean_energy': mean_energy,
@@ -89,8 +89,32 @@ def compute_expanded_features_v2(df):
         'prev_ref_frameClass': prev_ref_frameClass,
         'prev_ref_numEnvelopes': prev_ref_numEnvelopes,
         'prev_ref_tEnv0': prev_ref_tEnv0,
-        'prev_ref_tEnv_last': prev_ref_tEnv_last
+        'prev_ref_tEnv_last': prev_ref_tEnv_last,
+        'clip': df['clip'],
+        'channel': df['channel']
     })
+
+    # 7. Compute 1-frame Future QMF Look-Ahead features per (clip, channel) sequence
+    grouped = base_feats.groupby(['clip', 'channel'], sort=False)
+
+    next_max_energy = grouped['max_energy'].shift(-1).fillna(base_feats['max_energy'])
+    next_total_energy = grouped['total_energy'].shift(-1).fillna(base_feats['total_energy'])
+    next_max_onset_ratio = grouped['max_onset_ratio'].shift(-1).fillna(1.0)
+    next_h2_h1_ratio = grouped['h2_h1_ratio'].shift(-1).fillna(1.0)
+    next_q1_frac = grouped['q1_frac'].shift(-1).fillna(0.25)
+    next_centroid = grouped['centroid'].shift(-1).fillna(16.0)
+    next_energy_ratio = next_total_energy / (base_feats['total_energy'] + eps)
+
+    feats = base_feats.drop(columns=['clip', 'channel']).copy()
+
+    feats['next_max_energy'] = next_max_energy
+    feats['next_total_energy'] = next_total_energy
+    feats['next_max_onset_ratio'] = next_max_onset_ratio
+    feats['next_h2_h1_ratio'] = next_h2_h1_ratio
+    feats['next_q1_frac'] = next_q1_frac
+    feats['next_centroid'] = next_centroid
+    feats['next_energy_ratio'] = next_energy_ratio
+
     return feats, slots
 
 def derive_tenv_and_fres(p_c, p_ne, o_slot, prev_last):
@@ -123,11 +147,10 @@ def derive_tenv_and_fres(p_c, p_ne, o_slot, prev_last):
         p_fres = [1, 0, 0, 1]
     return p_tenv, p_fres
 
-def run_recursive_simulation(df, feats_df, dt_c, dt_ne, test_mask):
+def run_recursive_simulation_v3(df, feats_df, dt_c, dt_ne, test_mask):
     """
-    Simulate stateful encoder execution per (clip, channel) sequence.
-    Frame 0 uses sentinel -1 for prev state.
-    Subsequent frames use the model's own predictions from the preceding frame.
+    Sequential simulation feeding model's OWN previous frame predictions
+    while utilizing 1-frame future QMF slot energy look-ahead.
     """
     test_df = df[test_mask].copy().reset_index(drop=True)
     test_feats = feats_df[test_mask].copy().reset_index(drop=True)
@@ -136,7 +159,6 @@ def run_recursive_simulation(df, feats_df, dt_c, dt_ne, test_mask):
     pred_nenvs = []
     pred_tenvs = []
 
-    # Group by clip and channel
     groups = test_df.groupby(['clip', 'channel'], sort=False)
 
     for (clip_id, ch), group in groups:
@@ -151,7 +173,7 @@ def run_recursive_simulation(df, feats_df, dt_c, dt_ne, test_mask):
         for idx in indices:
             row_feat = test_feats.iloc[[idx]].copy()
 
-            # Override cross-frame columns with model's own previous predictions
+            # Override prior-state columns with model's own predictions
             row_feat['prev_ref_frameClass'] = prev_p_c
             row_feat['prev_ref_numEnvelopes'] = prev_p_ne
             row_feat['prev_ref_tEnv0'] = prev_p_t0
@@ -178,9 +200,9 @@ def run_recursive_simulation(df, feats_df, dt_c, dt_ne, test_mask):
 
     return test_df, pred_tenvs
 
-def evaluate_recursive_and_ceiling(df_path):
+def evaluate_lookahead_v3(df_path):
     df = pd.read_csv(df_path)
-    feats_df, slots_all = compute_expanded_features_v2(df)
+    feats_df, slots_all = compute_expanded_features_v3(df)
 
     unique_clips = sorted(df['clip'].unique())
     np.random.seed(42)
@@ -199,91 +221,72 @@ def evaluate_recursive_and_ceiling(df_path):
     y_train_ne = df.loc[train_mask, 'ref_numEnvelopes']
     y_test_ne = df.loc[test_mask, 'ref_numEnvelopes']
 
-    dt_c = DecisionTreeClassifier(max_depth=6, random_state=42)
-    dt_c.fit(X_train, y_train_c)
-
-    dt_ne = DecisionTreeClassifier(max_depth=6, random_state=42)
-    dt_ne.fit(X_train, y_train_ne)
-
-    # 1. Ground-Truth Ceiling Evaluation (v2 Ceiling)
-    ceil_pred_c = dt_c.predict(X_test)
-    ceil_pred_ne = dt_ne.predict(X_test)
-    ceil_class_acc = accuracy_score(y_test_c, ceil_pred_c)
-    ceil_nenv_acc = accuracy_score(y_test_ne, ceil_pred_ne)
-
-    sub_test_df = df[test_mask].reset_index(drop=True)
-    sub_test_feats = feats_df[test_mask].reset_index(drop=True)
-
-    ceil_matches = 0
-    for i in range(len(sub_test_df)):
-        ref_c = sub_test_df.at[i, 'ref_frameClass']
-        ref_ne = sub_test_df.at[i, 'ref_numEnvelopes']
-        if ceil_pred_c[i] == ref_c and ceil_pred_ne[i] == ref_ne:
-            o_slot = sub_test_feats.at[i, 'max_onset_slot']
-            prev_last = sub_test_feats.at[i, 'prev_ref_tEnv_last']
-            p_tenv, _ = derive_tenv_and_fres(ceil_pred_c[i], ceil_pred_ne[i], o_slot, prev_last)
-            ref_tenv = [sub_test_df.at[i, f'ref_tEnv{j}'] for j in range(ref_ne + 1)]
-            borders_ok = True
-            for j in range(min(len(p_tenv), len(ref_tenv))):
-                if ref_tenv[j] != -1:
-                    if abs(p_tenv[j] - ref_tenv[j]) > 2:
-                        borders_ok = False
-                        break
-            if borders_ok:
-                ceil_matches += 1
-    ceil_full_match = ceil_matches / len(sub_test_df)
-
-    # 2. Recursive/Self-Consistent Simulation Evaluation
-    rec_test_df, rec_pred_tenvs = run_recursive_simulation(df, feats_df, dt_c, dt_ne, test_mask)
-    rec_pred_c = rec_test_df['pred_frameClass'].values
-    rec_pred_ne = rec_test_df['pred_numEnvelopes'].values
-
-    rec_class_acc = accuracy_score(rec_test_df['ref_frameClass'], rec_pred_c)
-    rec_nenv_acc = accuracy_score(rec_test_df['ref_numEnvelopes'], rec_pred_ne)
-
-    rec_matches = 0
-    for i in range(len(rec_test_df)):
-        ref_c = rec_test_df.at[i, 'ref_frameClass']
-        ref_ne = rec_test_df.at[i, 'ref_numEnvelopes']
-        if rec_pred_c[i] == ref_c and rec_pred_ne[i] == ref_ne:
-            p_tenv = rec_pred_tenvs[i]
-            ref_tenv = [rec_test_df.at[i, f'ref_tEnv{j}'] for j in range(ref_ne + 1)]
-            borders_ok = True
-            for j in range(min(len(p_tenv), len(ref_tenv))):
-                if ref_tenv[j] != -1:
-                    if abs(p_tenv[j] - ref_tenv[j]) > 2:
-                        borders_ok = False
-                        break
-            if borders_ok:
-                rec_matches += 1
-    rec_full_match = rec_matches / len(rec_test_df)
-
     print(f"\n==========================================")
-    print(f"Dataset Evaluation: {df_path}")
+    print(f"Evaluating V3 Look-Ahead Dataset: {df_path}")
     print(f"==========================================")
-    print(f"Ground-Truth Ceiling | frameClass Acc: {ceil_class_acc*100:.2f}% | numEnvelopes Acc: {ceil_nenv_acc*100:.2f}% | Strict Full-Match: {ceil_full_match*100:.2f}%")
-    print(f"Recursive Simulation | frameClass Acc: {rec_class_acc*100:.2f}% | numEnvelopes Acc: {rec_nenv_acc*100:.2f}% | Strict Full-Match: {rec_full_match*100:.2f}%")
 
-    print("\n=== Recursive Simulation Classification Report (frameClass) ===")
-    print(classification_report(rec_test_df['ref_frameClass'], rec_pred_c, target_names=['FIXFIX (0)', 'FIXVAR (1)', 'VARFIX (2)', 'VARVAR (3)']))
+    for depth in range(3, 9):
+        dt_c = DecisionTreeClassifier(max_depth=depth, random_state=42)
+        dt_c.fit(X_train, y_train_c)
 
-    print("=== Recursive Simulation Confusion Matrix ===")
-    cm_rec = confusion_matrix(rec_test_df['ref_frameClass'], rec_pred_c)
-    print(cm_rec)
+        dt_ne = DecisionTreeClassifier(max_depth=depth, random_state=42)
+        dt_ne.fit(X_train, y_train_ne)
 
-    # Drift analysis
-    print("\n=== Latching / Drift Analysis ===")
-    rec_test_df['prev_pred_c'] = rec_test_df.groupby(['clip', 'channel'])['pred_frameClass'].shift(1).fillna(-1)
+        # Ground-truth prior state + 1-frame future look-ahead (ceiling)
+        ceil_pred_c = dt_c.predict(X_test)
+        ceil_pred_ne = dt_ne.predict(X_test)
+        ceil_class_acc = accuracy_score(y_test_c, ceil_pred_c)
 
-    # Consecutive non-FIXFIX prediction streaks
-    non_fix_mask = rec_test_df['pred_frameClass'] != 0
-    ref_fix_mask = rec_test_df['ref_frameClass'] == 0
-    false_pos_streak = non_fix_mask & ref_fix_mask
-    print(f"False non-FIXFIX predictions on FIXFIX ground truth: {false_pos_streak.sum()} / {ref_fix_mask.sum()} ({false_pos_streak.mean()*100:.1f}%)")
+        # Real recursive simulation + 1-frame future look-ahead
+        rec_test_df, rec_pred_tenvs = run_recursive_simulation_v3(df, feats_df, dt_c, dt_ne, test_mask)
+        rec_pred_c = rec_test_df['pred_frameClass'].values
+        rec_pred_ne = rec_test_df['pred_numEnvelopes'].values
+
+        rec_class_acc = accuracy_score(rec_test_df['ref_frameClass'], rec_pred_c)
+        rec_nenv_acc = accuracy_score(rec_test_df['ref_numEnvelopes'], rec_pred_ne)
+
+        # Strict full match on recursive simulation
+        rec_matches = 0
+        for i in range(len(rec_test_df)):
+            ref_c = rec_test_df.at[i, 'ref_frameClass']
+            ref_ne = rec_test_df.at[i, 'ref_numEnvelopes']
+            if rec_pred_c[i] == ref_c and rec_pred_ne[i] == ref_ne:
+                p_tenv = rec_pred_tenvs[i]
+                ref_tenv = [rec_test_df.at[i, f'ref_tEnv{j}'] for j in range(ref_ne + 1)]
+                borders_ok = True
+                for j in range(min(len(p_tenv), len(ref_tenv))):
+                    if ref_tenv[j] != -1:
+                        if abs(p_tenv[j] - ref_tenv[j]) > 2:
+                            borders_ok = False
+                            break
+                if borders_ok:
+                    rec_matches += 1
+        rec_full_match = rec_matches / len(rec_test_df)
+
+        print(f"Depth {depth:2d} | Ceiling Acc: {ceil_class_acc*100:.2f}% | Recursive Acc: {rec_class_acc*100:.2f}% | Recursive NumEnv Acc: {rec_nenv_acc*100:.2f}% | Strict Full-Match Rate: {rec_full_match*100:.2f}%")
+
+    # Detailed report for depth 6
+    dt_c_6 = DecisionTreeClassifier(max_depth=6, random_state=42).fit(X_train, y_train_c)
+    dt_ne_6 = DecisionTreeClassifier(max_depth=6, random_state=42).fit(X_train, y_train_ne)
+
+    rec_test_df6, _ = run_recursive_simulation_v3(df, feats_df, dt_c_6, dt_ne_6, test_mask)
+
+    print("\n=== Depth 6 Recursive Simulation Classification Report ===")
+    print(classification_report(rec_test_df6['ref_frameClass'], rec_test_df6['pred_frameClass'], target_names=['FIXFIX (0)', 'FIXVAR (1)', 'VARFIX (2)', 'VARVAR (3)']))
+
+    print("=== Depth 6 Recursive Confusion Matrix ===")
+    cm = confusion_matrix(rec_test_df6['ref_frameClass'], rec_test_df6['pred_frameClass'])
+    print(cm)
+
+    print("\n=== Depth 6 Top Feature Importances (frameClass) ===")
+    importances = sorted(zip(X_train.columns, dt_c_6.feature_importances_), key=lambda x: x[1], reverse=True)
+    for name, imp in importances:
+        if imp > 0.001:
+            print(f"  {name:25s}: {imp*100:.2f}%")
 
 def main():
-    evaluate_recursive_and_ceiling('probe/dataset/sbr_grid_dataset_v2_64k.csv.gz')
-    evaluate_recursive_and_ceiling('probe/dataset/sbr_grid_dataset_v2_96k.csv.gz')
+    evaluate_lookahead_v3('probe/dataset/sbr_grid_dataset_v2_64k.csv.gz')
+    evaluate_lookahead_v3('probe/dataset/sbr_grid_dataset_v2_96k.csv.gz')
 
 if __name__ == '__main__':
     main()
