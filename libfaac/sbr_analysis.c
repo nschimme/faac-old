@@ -36,12 +36,31 @@ static void sbr_set_pointer(SbrGrid *grid, int transient)
 static void sbr_choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int numSlots)
 {
     SbrGrid grid = { 0 };
+    /* The one-envelope bitrate tier cannot afford several independent SBR
+     * envelopes. Keep its transient grid compact while choosing per channel. */
+    if (numEnvFixFix == 1) {
+        grid.numEnvelopes = 1;
+        grid.tEnv[1] = SBR_NUM_TIME_SLOTS;
+        grid.freqRes[0] = 1;
+        if (ac->transientStrength > SBR_TRANSIENT_THRESH_DEFAULT) {
+            int ts = ac->transientSlot * SBR_NUM_TIME_SLOTS / numSlots;
+            int rel = clamp_int((ts - 2) / 2, 0, 3);
+            grid.frameClass = SBR_FRAME_CLASS_VARFIX;
+            grid.numEnvelopes = 2;
+            grid.tEnv[1] = 2 * rel + 2;
+            grid.tEnv[2] = SBR_NUM_TIME_SLOTS;
+            grid.freqRes[1] = 1;
+        }
+        ac->grid = grid;
+        ac->trailingBorder = SBR_NUM_TIME_SLOTS;
+        return;
+    }
     int t = sbr_even_clamp(ac->transientSlot * SBR_NUM_TIME_SLOTS / numSlots, 0, 14);
     int carry = ac->trailingBorder > SBR_NUM_TIME_SLOTS ?
                 ac->trailingBorder - SBR_NUM_TIME_SLOTS : 0;
     int tail = t >= 4; /* The final 3/4 leaves room for the attack's trailing envelope. */
-    /* 3.7 early / 3.05 late: an early split needs a 5.7 dB peak; a trailing attack has no later border. */
-    int transient = ac->transientStrength > (tail ? 3.05f : 3.7f);
+    /* Require a stronger attack before adding temporal side information. */
+    int transient = ac->transientStrength > (tail ? 3.5f : 4.0f);
     tail &= transient;
     /* 4.5/7.5: 6.5/8.8 dB peaks need one/two extra level changes. */
     int n = 2 + (ac->transientStrength > 4.5f) + (ac->transientStrength > 7.5f);
@@ -141,7 +160,6 @@ void SbrAnalyze(SignalAnalysis *sa, float *fullPtrs[], int nch, const bool *isLf
         sa->ch[ch].transientSlot = smax_idx;
     }
 
-    /* Each channel keeps its own border continuity. */
     for (int ch = 0; ch < nch; ch++)
         sbr_choose_grid(&sa->ch[ch], sbr->numEnvFixFix, num_slots);
     if (nch == 2 && !isLfe[0] && !isLfe[1]) {
