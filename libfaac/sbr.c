@@ -470,15 +470,12 @@ static void sbr_quantize_envelopes(const SBRInfo *sbr, int nch, const bool *isLf
                 float factor = fd->eff_amp_res ? 1.0f : 2.0f;
                 int level = lrintf(factor * (fast_log2(E + SBR_LOG_ENERGY_FLOOR) - SBR_ENV_LEVEL_LOG2_OFFSET));
                 int raw_level = clamp_int(level, 0, 127);
-                if (prevLevel < 0) {
+                /* Clamped so the frequency-delta chain stays codable. */
+                if (prevLevel < 0)
                     raw_level = clamp_int(raw_level, 0, fd->eff_amp_res ? 63 : 127);
-                    fd->ch[ch].envData[e][b] = raw_level;
-                    prevLevel = raw_level;
-                } else {
-                    int delta = clamp_int(raw_level - prevLevel, -dlav, dlav);
-                    fd->ch[ch].envData[e][b] = delta;
-                    prevLevel += delta;
-                }
+                else
+                    raw_level = clamp_int(raw_level, prevLevel - dlav, prevLevel + dlav);
+                fd->ch[ch].envData[e][b] = prevLevel = raw_level;
             }
         }
     }
