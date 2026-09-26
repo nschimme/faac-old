@@ -69,55 +69,58 @@ static int sbr_grid_varvar_split(const SbrGrid *grid)
 static int write_sbr_grid(const SbrGrid *grid, BitStream *bs)
 {
     int num_env = grid->numEnvelopes;
-    int bits = 2;
+    int ptr_len = sbr_ceil_log2[num_env];
 
     if (bs) PutBit(bs, grid->frameClass, 2);
 
     if (grid->frameClass == SBR_FRAME_CLASS_FIXFIX) {
-        int bs_num_env = num_env == 1 ? 0 : num_env == 2 ? 1 : 2;
         if (bs) {
-            PutBit(bs, bs_num_env, 2);
+            PutBit(bs, num_env == 1 ? 0 : (num_env == 2 ? 1 : 2), 2);
             PutBit(bs, grid->freqRes[0], 1);
         }
-        bits += 3;
-    } else if (grid->frameClass == SBR_FRAME_CLASS_FIXVAR) {
+        return 5;
+    }
+
+    if (grid->frameClass == SBR_FRAME_CLASS_FIXVAR) {
         if (bs) {
             PutBit(bs, grid->tEnv[num_env] - SBR_NUM_TIME_SLOTS, 2);
             PutBit(bs, num_env - 1, 2);
             for (int i = 0; i < num_env - 1; i++)
-                PutBit(bs, (grid->tEnv[num_env - i] - grid->tEnv[num_env - i - 1] - 2) / 2, 2);
-            PutBit(bs, grid->bsPointer, sbr_ceil_log2[num_env]);
+                PutBit(bs, (grid->tEnv[num_env - i] - grid->tEnv[num_env - i - 1] - 2) >> 1, 2);
+            PutBit(bs, grid->bsPointer, ptr_len);
             for (int i = num_env - 1; i >= 0; i--) PutBit(bs, grid->freqRes[i], 1);
         }
-        bits += 4 + 2 * (num_env - 1) + sbr_ceil_log2[num_env] + num_env;
-    } else if (grid->frameClass == SBR_FRAME_CLASS_VARFIX) {
+        return 2 + 3 * num_env + ptr_len;
+    }
+
+    if (grid->frameClass == SBR_FRAME_CLASS_VARFIX) {
         if (bs) {
             PutBit(bs, grid->tEnv[0], 2);
             PutBit(bs, num_env - 1, 2);
             for (int i = 0; i < num_env - 1; i++)
-                PutBit(bs, (grid->tEnv[i + 1] - grid->tEnv[i] - 2) / 2, 2);
-            PutBit(bs, grid->bsPointer, sbr_ceil_log2[num_env]);
+                PutBit(bs, (grid->tEnv[i + 1] - grid->tEnv[i] - 2) >> 1, 2);
+            PutBit(bs, grid->bsPointer, ptr_len);
             for (int i = 0; i < num_env; i++) PutBit(bs, grid->freqRes[i], 1);
         }
-        bits += 4 + 2 * (num_env - 1) + sbr_ceil_log2[num_env] + num_env;
-    } else {
-        int n0 = sbr_grid_varvar_split(grid);
-        int n1 = num_env - 1 - n0;
-        if (bs) {
-            PutBit(bs, grid->tEnv[0], 2);
-            PutBit(bs, grid->tEnv[num_env] - SBR_NUM_TIME_SLOTS, 2);
-            PutBit(bs, n0, 2);
-            PutBit(bs, n1, 2);
-            for (int i = 0; i < n0; i++)
-                PutBit(bs, (grid->tEnv[i + 1] - grid->tEnv[i] - 2) / 2, 2);
-            for (int i = 0; i < n1; i++)
-                PutBit(bs, (grid->tEnv[num_env - i] - grid->tEnv[num_env - i - 1] - 2) / 2, 2);
-            PutBit(bs, grid->bsPointer, sbr_ceil_log2[num_env]);
-            for (int i = 0; i < num_env; i++) PutBit(bs, grid->freqRes[i], 1);
-        }
-        bits += 8 + 2 * (num_env - 1) + sbr_ceil_log2[num_env] + num_env;
+        return 2 + 3 * num_env + ptr_len;
     }
-    return bits;
+
+    /* VARVAR */
+    int n0 = sbr_grid_varvar_split(grid);
+    int n1 = num_env - 1 - n0;
+    if (bs) {
+        PutBit(bs, grid->tEnv[0], 2);
+        PutBit(bs, grid->tEnv[num_env] - SBR_NUM_TIME_SLOTS, 2);
+        PutBit(bs, n0, 2);
+        PutBit(bs, n1, 2);
+        for (int i = 0; i < n0; i++)
+            PutBit(bs, (grid->tEnv[i + 1] - grid->tEnv[i] - 2) >> 1, 2);
+        for (int i = 0; i < n1; i++)
+            PutBit(bs, (grid->tEnv[num_env - i] - grid->tEnv[num_env - i - 1] - 2) >> 1, 2);
+        PutBit(bs, grid->bsPointer, ptr_len);
+        for (int i = 0; i < num_env; i++) PutBit(bs, grid->freqRes[i], 1);
+    }
+    return 6 + 3 * num_env + ptr_len;
 }
 
 static int write_sbr_dtdf(const SbrGrid *grid, BitStream *bs)
