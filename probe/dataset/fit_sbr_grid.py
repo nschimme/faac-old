@@ -93,13 +93,7 @@ def compute_expanded_features_v2(df):
     })
     return feats, slots
 
-def predict_sbr_grid_v2(dt_c, dt_ne, feats_row):
-    p_c = dt_c.predict(feats_row)[0]
-    p_ne = dt_ne.predict(feats_row)[0]
-    o_slot = feats_row['max_onset_slot'].values[0]
-
-    prev_last = feats_row['prev_ref_tEnv_last'].values[0]
-
+def derive_tenv_and_fres(p_c, p_ne, o_slot, prev_last):
     if p_c == 0: # FIXFIX
         p_tenv = [0, 8, 16] if p_ne == 2 else [0, 16]
         p_fres = [1, 1] if p_ne == 2 else [1]
@@ -127,12 +121,66 @@ def predict_sbr_grid_v2(dt_c, dt_ne, feats_row):
         b3 = min(15, b2 + 4)
         p_tenv = [b0, b1, b2, b3, 18]
         p_fres = [1, 0, 0, 1]
+    return p_tenv, p_fres
 
-    return p_c, p_ne, p_tenv, p_fres
+def run_recursive_simulation(df, feats_df, dt_c, dt_ne, test_mask):
+    """
+    Simulate stateful encoder execution per (clip, channel) sequence.
+    Frame 0 uses sentinel -1 for prev state.
+    Subsequent frames use the model's own predictions from the preceding frame.
+    """
+    test_df = df[test_mask].copy().reset_index(drop=True)
+    test_feats = feats_df[test_mask].copy().reset_index(drop=True)
 
-def run_v2_evaluation(df_path):
+    pred_classes = []
+    pred_nenvs = []
+    pred_tenvs = []
+
+    # Group by clip and channel
+    groups = test_df.groupby(['clip', 'channel'], sort=False)
+
+    for (clip_id, ch), group in groups:
+        indices = group.index.tolist()
+
+        # Sentinels for frame 0
+        prev_p_c = -1
+        prev_p_ne = -1
+        prev_p_t0 = -1
+        prev_p_tlast = -1
+
+        for idx in indices:
+            row_feat = test_feats.iloc[[idx]].copy()
+
+            # Override cross-frame columns with model's own previous predictions
+            row_feat['prev_ref_frameClass'] = prev_p_c
+            row_feat['prev_ref_numEnvelopes'] = prev_p_ne
+            row_feat['prev_ref_tEnv0'] = prev_p_t0
+            row_feat['prev_ref_tEnv_last'] = prev_p_tlast
+
+            p_c = dt_c.predict(row_feat)[0]
+            p_ne = dt_ne.predict(row_feat)[0]
+
+            o_slot = row_feat['max_onset_slot'].values[0]
+            p_tenv, p_fres = derive_tenv_and_fres(p_c, p_ne, o_slot, prev_p_tlast)
+
+            pred_classes.append(p_c)
+            pred_nenvs.append(p_ne)
+            pred_tenvs.append(p_tenv)
+
+            # Update state for next frame
+            prev_p_c = p_c
+            prev_p_ne = p_ne
+            prev_p_t0 = p_tenv[0]
+            prev_p_tlast = p_tenv[-1]
+
+    test_df['pred_frameClass'] = pred_classes
+    test_df['pred_numEnvelopes'] = pred_nenvs
+
+    return test_df, pred_tenvs
+
+def evaluate_recursive_and_ceiling(df_path):
     df = pd.read_csv(df_path)
-    feats, slots = compute_expanded_features_v2(df)
+    feats_df, slots_all = compute_expanded_features_v2(df)
 
     unique_clips = sorted(df['clip'].unique())
     np.random.seed(42)
@@ -142,8 +190,8 @@ def run_v2_evaluation(df_path):
     train_mask = df['clip'].isin(train_clips)
     test_mask = df['clip'].isin(test_clips)
 
-    X_train = feats[train_mask]
-    X_test = feats[test_mask]
+    X_train = feats_df[train_mask]
+    X_test = feats_df[test_mask]
 
     y_train_c = df.loc[train_mask, 'ref_frameClass']
     y_test_c = df.loc[test_mask, 'ref_frameClass']
@@ -151,71 +199,91 @@ def run_v2_evaluation(df_path):
     y_train_ne = df.loc[train_mask, 'ref_numEnvelopes']
     y_test_ne = df.loc[test_mask, 'ref_numEnvelopes']
 
+    dt_c = DecisionTreeClassifier(max_depth=6, random_state=42)
+    dt_c.fit(X_train, y_train_c)
+
+    dt_ne = DecisionTreeClassifier(max_depth=6, random_state=42)
+    dt_ne.fit(X_train, y_train_ne)
+
+    # 1. Ground-Truth Ceiling Evaluation (v2 Ceiling)
+    ceil_pred_c = dt_c.predict(X_test)
+    ceil_pred_ne = dt_ne.predict(X_test)
+    ceil_class_acc = accuracy_score(y_test_c, ceil_pred_c)
+    ceil_nenv_acc = accuracy_score(y_test_ne, ceil_pred_ne)
+
+    sub_test_df = df[test_mask].reset_index(drop=True)
+    sub_test_feats = feats_df[test_mask].reset_index(drop=True)
+
+    ceil_matches = 0
+    for i in range(len(sub_test_df)):
+        ref_c = sub_test_df.at[i, 'ref_frameClass']
+        ref_ne = sub_test_df.at[i, 'ref_numEnvelopes']
+        if ceil_pred_c[i] == ref_c and ceil_pred_ne[i] == ref_ne:
+            o_slot = sub_test_feats.at[i, 'max_onset_slot']
+            prev_last = sub_test_feats.at[i, 'prev_ref_tEnv_last']
+            p_tenv, _ = derive_tenv_and_fres(ceil_pred_c[i], ceil_pred_ne[i], o_slot, prev_last)
+            ref_tenv = [sub_test_df.at[i, f'ref_tEnv{j}'] for j in range(ref_ne + 1)]
+            borders_ok = True
+            for j in range(min(len(p_tenv), len(ref_tenv))):
+                if ref_tenv[j] != -1:
+                    if abs(p_tenv[j] - ref_tenv[j]) > 2:
+                        borders_ok = False
+                        break
+            if borders_ok:
+                ceil_matches += 1
+    ceil_full_match = ceil_matches / len(sub_test_df)
+
+    # 2. Recursive/Self-Consistent Simulation Evaluation
+    rec_test_df, rec_pred_tenvs = run_recursive_simulation(df, feats_df, dt_c, dt_ne, test_mask)
+    rec_pred_c = rec_test_df['pred_frameClass'].values
+    rec_pred_ne = rec_test_df['pred_numEnvelopes'].values
+
+    rec_class_acc = accuracy_score(rec_test_df['ref_frameClass'], rec_pred_c)
+    rec_nenv_acc = accuracy_score(rec_test_df['ref_numEnvelopes'], rec_pred_ne)
+
+    rec_matches = 0
+    for i in range(len(rec_test_df)):
+        ref_c = rec_test_df.at[i, 'ref_frameClass']
+        ref_ne = rec_test_df.at[i, 'ref_numEnvelopes']
+        if rec_pred_c[i] == ref_c and rec_pred_ne[i] == ref_ne:
+            p_tenv = rec_pred_tenvs[i]
+            ref_tenv = [rec_test_df.at[i, f'ref_tEnv{j}'] for j in range(ref_ne + 1)]
+            borders_ok = True
+            for j in range(min(len(p_tenv), len(ref_tenv))):
+                if ref_tenv[j] != -1:
+                    if abs(p_tenv[j] - ref_tenv[j]) > 2:
+                        borders_ok = False
+                        break
+            if borders_ok:
+                rec_matches += 1
+    rec_full_match = rec_matches / len(rec_test_df)
+
     print(f"\n==========================================")
-    print(f"Evaluating V2 Cross-Frame Dataset: {df_path}")
+    print(f"Dataset Evaluation: {df_path}")
     print(f"==========================================")
-    print("Depth Comparison on Test Split:")
+    print(f"Ground-Truth Ceiling | frameClass Acc: {ceil_class_acc*100:.2f}% | numEnvelopes Acc: {ceil_nenv_acc*100:.2f}% | Strict Full-Match: {ceil_full_match*100:.2f}%")
+    print(f"Recursive Simulation | frameClass Acc: {rec_class_acc*100:.2f}% | numEnvelopes Acc: {rec_nenv_acc*100:.2f}% | Strict Full-Match: {rec_full_match*100:.2f}%")
 
-    best_dt_c = None
-    best_dt_ne = None
-    best_match_rate = 0.0
+    print("\n=== Recursive Simulation Classification Report (frameClass) ===")
+    print(classification_report(rec_test_df['ref_frameClass'], rec_pred_c, target_names=['FIXFIX (0)', 'FIXVAR (1)', 'VARFIX (2)', 'VARVAR (3)']))
 
-    for depth in range(3, 9):
-        dt_c = DecisionTreeClassifier(max_depth=depth, random_state=42)
-        dt_c.fit(X_train, y_train_c)
+    print("=== Recursive Simulation Confusion Matrix ===")
+    cm_rec = confusion_matrix(rec_test_df['ref_frameClass'], rec_pred_c)
+    print(cm_rec)
 
-        dt_ne = DecisionTreeClassifier(max_depth=depth, random_state=42)
-        dt_ne.fit(X_train, y_train_ne)
+    # Drift analysis
+    print("\n=== Latching / Drift Analysis ===")
+    rec_test_df['prev_pred_c'] = rec_test_df.groupby(['clip', 'channel'])['pred_frameClass'].shift(1).fillna(-1)
 
-        te_acc_c = accuracy_score(y_test_c, dt_c.predict(X_test))
-        te_acc_ne = accuracy_score(y_test_ne, dt_ne.predict(X_test))
-
-        # Strict Full Match
-        sub_test_df = df[test_mask].reset_index(drop=True)
-        sub_test_feats = feats[test_mask].reset_index(drop=True)
-
-        full_matches = 0
-        for i in range(len(sub_test_df)):
-            ref_c = sub_test_df.at[i, 'ref_frameClass']
-            ref_ne = sub_test_df.at[i, 'ref_numEnvelopes']
-
-            p_c, p_ne, p_tenv, _ = predict_sbr_grid_v2(dt_c, dt_ne, sub_test_feats.iloc[[i]])
-
-            if p_c == ref_c and p_ne == ref_ne:
-                ref_tenv = [sub_test_df.at[i, f'ref_tEnv{j}'] for j in range(ref_ne + 1)]
-                borders_ok = True
-                for j in range(min(len(p_tenv), len(ref_tenv))):
-                    if ref_tenv[j] != -1:
-                        if abs(p_tenv[j] - ref_tenv[j]) > 2:
-                            borders_ok = False
-                            break
-                if borders_ok:
-                    full_matches += 1
-
-        full_match_rate = full_matches / len(sub_test_df)
-        print(f"Depth {depth:2d} | frameClass Test Acc: {te_acc_c:.4f} | numEnvelopes Test Acc: {te_acc_ne:.4f} | Strict Full-Match Rate: {full_match_rate*100:.2f}%")
-
-        if depth == 6:
-            best_dt_c = dt_c
-            best_dt_ne = dt_ne
-
-    # Detailed report for depth 6
-    y_pred_c_best = best_dt_c.predict(X_test)
-    print("\n=== Depth 6 Classification Report (frameClass) ===")
-    print(classification_report(y_test_c, y_pred_c_best, target_names=['FIXFIX (0)', 'FIXVAR (1)', 'VARFIX (2)', 'VARVAR (3)']))
-
-    print("=== Depth 6 Confusion Matrix ===")
-    print(confusion_matrix(y_test_c, y_pred_c_best))
-
-    print("\n=== Depth 6 Top Feature Importances (frameClass) ===")
-    importances = sorted(zip(X_train.columns, best_dt_c.feature_importances_), key=lambda x: x[1], reverse=True)
-    for name, imp in importances:
-        if imp > 0.001:
-            print(f"  {name:25s}: {imp*100:.2f}%")
+    # Consecutive non-FIXFIX prediction streaks
+    non_fix_mask = rec_test_df['pred_frameClass'] != 0
+    ref_fix_mask = rec_test_df['ref_frameClass'] == 0
+    false_pos_streak = non_fix_mask & ref_fix_mask
+    print(f"False non-FIXFIX predictions on FIXFIX ground truth: {false_pos_streak.sum()} / {ref_fix_mask.sum()} ({false_pos_streak.mean()*100:.1f}%)")
 
 def main():
-    run_v2_evaluation('probe/dataset/sbr_grid_dataset_v2_64k.csv.gz')
-    run_v2_evaluation('probe/dataset/sbr_grid_dataset_v2_96k.csv.gz')
+    evaluate_recursive_and_ceiling('probe/dataset/sbr_grid_dataset_v2_64k.csv.gz')
+    evaluate_recursive_and_ceiling('probe/dataset/sbr_grid_dataset_v2_96k.csv.gz')
 
 if __name__ == '__main__':
     main()
