@@ -244,6 +244,7 @@ static int sbr_master_log(SBRElement *el, int k0, int k2)
     for (int i = 0; i < nb0; i++)
         dk0[i] = (uint8_t)(sbr_round(k0 * pow((double)k1 / k0, (i + 1.0) / nb0)) - sbr_round(k0 * pow((double)k1 / k0, (double)i / nb0)));
     qsort(dk0, nb0, 1, cmp_u8);
+    if (dk0[0] == 0) return -1;
     el->f_master[0] = (uint8_t)k0;
     for (int i = 0; i < nb0; i++) el->f_master[i + 1] = (uint8_t)(el->f_master[i] + dk0[i]);
     int n = nb0;
@@ -262,6 +263,8 @@ static int sbr_master_log(SBRElement *el, int k0, int k2)
             dk1[0] = (uint8_t)(dk1[0] + change);
             dk1[nb1 - 1] = (uint8_t)(dk1[nb1 - 1] - change);
         }
+        qsort(dk1, nb1, 1, cmp_u8);
+        if (dk1[0] == 0) return -1;
         for (int i = 0; i < nb1; i++) el->f_master[n + i + 1] = (uint8_t)(el->f_master[n + i] + dk1[i]);
         n += nb1;
     }
