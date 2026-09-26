@@ -19,6 +19,18 @@ reference actually chose.
 
 ## Files
 
+- `sbr_grid_dataset_v2_64k.csv.gz`, `sbr_grid_dataset_v2_96k.csv.gz`: same rows as
+  the v1 files below, PLUS four cross-frame columns: `prev_ref_frameClass`,
+  `prev_ref_numEnvelopes`, `prev_ref_tEnv0`, `prev_ref_tEnv_last` (the previous
+  frame's own last envelope border, i.e. `ref_tEnv[prev_numEnvelopes]`) for the
+  same (clip, channel), sorted by frame. Sentinel `-1` for the first frame of
+  each (clip, channel) pair (no previous frame). These are ground-truth
+  *reference* history (not FAAC's own encoder state), added because round-1
+  fitting (see FIT_RESULT.md) found the missing piece is cross-frame state:
+  SBR grid classes like VARFIX depend on whether the *preceding* frame left a
+  trailing border, which no single-frame feature can see. Use these v2 files
+  for feature engineering that includes prior-frame context; this doesn't
+  change the join/alignment, only adds columns.
 - `sbr_grid_dataset_64k.csv.gz`, `sbr_grid_dataset_96k.csv.gz`: 14,752 rows
   each (49 clips, both stereo channels, ~150 frames/clip). Columns:
   - `clip`, `rate`, `channel`, `frame`: identifiers.
