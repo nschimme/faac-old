@@ -233,21 +233,25 @@ static int emit_sbr_channels(SBRInfo *sbr, const SbrFrameData *fd, BitStream *bs
 }
 
 /* A pair is coupled when that codes smaller. The sizing pass costs both
- * layouts and ends on the chosen one, so the channel caches match it. */
+ * layouts and ends on the chosen one, so the channel caches match it.
+ * One call site in a loop, so -O3 has no constant nch to clone on. */
 static int choose_sbr_data(SBRInfo *sbr, const SbrFrameData *fd, int id_aac, int ch0, int sendHeader, SbrDecision *d)
 {
     int nch = (id_aac == ID_CPE) ? 2 : 1;
-    if (nch != 2) {
-        d->coupled = 0;
-        d->bits = choose_sbr_channels(sbr, fd, nch, ch0, sendHeader, d);
-        return d->bits;
+    SbrDecision cand[2] = { { .coupled = 0 } };
+    int n = 1;
+
+    if (nch == 2) {
+        cand[1] = (SbrDecision){ .coupled = 1 };
+        couple_envelopes(sbr, fd, ch0);
+        n = 2;
     }
-    /* Keep both decisions: the old third pass only rebuilt the coupled one. */
-    SbrDecision coupled = { .coupled = 1 }, independent = { .coupled = 0 };
-    couple_envelopes(sbr, fd, ch0);
-    coupled.bits = choose_sbr_channels(sbr, fd, nch, ch0, sendHeader, &coupled);
-    independent.bits = choose_sbr_channels(sbr, fd, nch, ch0, sendHeader, &independent);
-    *d = independent.bits >= coupled.bits ? coupled : independent;
+    int best = 0;
+    for (int i = 0; i < n; i++) {
+        cand[i].bits = choose_sbr_channels(sbr, fd, nch, ch0, sendHeader, &cand[i]);
+        if (i && cand[i].bits <= cand[best].bits) best = i; /* ties favor coupled */
+    }
+    *d = cand[best];
     return d->bits;
 }
 
