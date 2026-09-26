@@ -95,8 +95,10 @@ static void sbr_choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int num
     for (int e = 0; e < grid.numEnvelopes; e++)
         /* Four slots is the shortest interval whose high-band detail repays its extra codes. */
         grid.freqRes[e] = grid.tEnv[e + 1] - grid.tEnv[e] > 4;
-    if (grid.frameClass == SBR_FRAME_CLASS_FIXFIX)
-        grid.freqRes[0] = 1;
+    if (grid.frameClass == SBR_FRAME_CLASS_FIXFIX) {
+        for (int e = 0; e < grid.numEnvelopes; e++)
+            grid.freqRes[e] = 1;
+    }
     sbr_set_pointer(&grid, t);
     ac->grid = grid;
     ac->trailingBorder = grid.tEnv[grid.numEnvelopes];
