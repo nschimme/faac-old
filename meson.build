@@ -18,7 +18,7 @@ config_h = configuration_data()
 config_h.set_quoted('PACKAGE', meson.project_name())
 config_h.set_quoted('PACKAGE_VERSION', meson.project_version())
 
-foreach h: ['getopt.h', 'immintrin.h', 'arm_sve.h']
+foreach h: ['getopt.h', 'immintrin.h']
     config_h.set('HAVE_' + h.underscorify().to_upper(), cc.has_header(h))
 endforeach
 
@@ -45,22 +45,6 @@ if (cpu_family in ['x86', 'x86_64']) and config_h.get('HAVE_IMMINTRIN_H')
     config_h.set('HAVE_AVX2', have_avx2)
 else
     config_h.set('HAVE_AVX2', false)
-endif
-
-# ARM SVE compile test
-if (cpu_family in ['aarch64']) and config_h.get('HAVE_ARM_SVE_H')
-    sve_arg = ['-march=armv8-a+sve']
-    have_sve = cc.compiles('''
-        #include <arm_sve.h>
-        int main(void) {
-            svbool_t pg = svptrue_b32();
-            svfloat32_t v = svdup_n_f32(1.0f);
-            return 0;
-        }
-    ''', args: sve_arg, name: 'SVE intrinsics')
-    config_h.set('HAVE_ARM_SVE', have_sve)
-else
-    config_h.set('HAVE_ARM_SVE', false)
 endif
 
 config_h.set('FAAC_SBR_DECIMATION', get_option('sbr-decimation'))

@@ -34,10 +34,6 @@ extern int quantize_avx2(const float * __restrict xr, int * __restrict xi, int n
 extern int quantize_sse2(const float * __restrict xr, int * __restrict xi, int n4, float sfacfix);
 #endif
 
-#if defined(HAVE_ARM_SVE)
-extern int quantize_sve(const float * __restrict xr, int * __restrict xi, int n4, float sfacfix);
-#endif
-
 /* Written so the loop auto-vectorizes: fabsf() makes the sqrtf() argument
  * provably non-negative (no errno path), the sign is re-applied as a
  * two's-complement mask, and the width is a known multiple of four. */
@@ -84,11 +80,6 @@ void QuantizeInit(void)
 #if defined(HAVE_SSE2)
     if (caps & CPU_CAP_SSE2)
         qfunc = quantize_sse2;
-    else
-#endif
-#if defined(HAVE_ARM_SVE)
-    if (caps & CPU_CAP_SVE)
-        qfunc = quantize_sve;
     else
 #endif
         qfunc = quantize_scalar;
