@@ -50,15 +50,43 @@ static int write_sbr_grid(const SBRInfo *sbr, const SbrFrameData *fd, BitStream 
     int bits = 2;
 
     if (write) PutBit(bs, fd->frameClass, 2);
-    if (fd->frameClass == SBR_FRAME_CLASS_VARFIX) {
-        /* VARFIX (§4.6.18.3.6): variable leading borders, fixed (untransmitted)
-         * trailing border at numTimeSlots, then bs_pointer and per-envelope
-         * bs_freq_res. */
+
+    if (fd->frameClass == SBR_FRAME_CLASS_FIXFIX) {
+        /* FIXFIX (§4.6.18.3.3): equal-spaced borders (derived by decoder from bs_num_env) */
         if (write) {
-            PutBit(bs, fd->tEnv[0], 2);                 /* bs_var_bord_0 */
-            PutBit(bs, num_env - 1, 2);                  /* bs_num_rel_0   */
-            for (int i = 0; i < num_env - 1; i++)
-                PutBit(bs, (fd->tEnv[i + 1] - fd->tEnv[i] - 2) / 2, 2); /* bs_rel_bord */
+            PutBit(bs, num_env > 1 ? 1 : 0, 2);         /* bs_num_env = 1 << this */
+            PutBit(bs, sbr->bs_freq_res, 1);
+        }
+        bits += 3;
+    } else if (fd->frameClass == SBR_FRAME_CLASS_FIXVAR) {
+        /* FIXVAR (§4.6.18.3.4): fixed leading border at 0, variable trailing border.
+         * Relative border distances counted backwards from right. */
+        int bord1 = fd->tEnv[num_env] - SBR_NUM_TIME_SLOTS; /* 0..3 relative to 16 */
+        if (write) {
+            PutBit(bs, clamp_int(bord1, 0, 3), 2);       /* bs_var_bord_1 */
+            PutBit(bs, num_env - 1, 2);                  /* bs_num_rel_1 */
+            for (int i = num_env - 1; i >= 1; i--) {
+                int rel = (fd->tEnv[i + 1] - fd->tEnv[i] - 2) / 2;
+                PutBit(bs, clamp_int(rel, 0, 3), 2);     /* bs_rel_bord_1 */
+            }
+        }
+        int ptr_len = sbr_ceil_log2[num_env];
+        if (write) {
+            PutBit(bs, fd->bsPointer, ptr_len);
+            for (int i = 0; i < num_env; i++)
+                PutBit(bs, sbr->bs_freq_res, 1);
+        }
+        bits += 4 + 2 * (num_env - 1) + ptr_len + num_env;
+    } else if (fd->frameClass == SBR_FRAME_CLASS_VARFIX) {
+        /* VARFIX (§4.6.18.3.6): variable leading border, fixed trailing border at 16.
+         * Relative border distances counted forward from left. */
+        if (write) {
+            PutBit(bs, clamp_int(fd->tEnv[0], 0, 3), 2); /* bs_var_bord_0 */
+            PutBit(bs, num_env - 1, 2);                  /* bs_num_rel_0 */
+            for (int i = 0; i < num_env - 1; i++) {
+                int rel = (fd->tEnv[i + 1] - fd->tEnv[i] - 2) / 2;
+                PutBit(bs, clamp_int(rel, 0, 3), 2);     /* bs_rel_bord_0 */
+            }
         }
         int ptr_len = sbr_ceil_log2[num_env];
         if (write) {
@@ -68,13 +96,35 @@ static int write_sbr_grid(const SBRInfo *sbr, const SbrFrameData *fd, BitStream 
         }
         bits += 4 + 2 * (num_env - 1) + ptr_len + num_env;
     } else {
-        /* FIXFIX: equal-spaced borders (not transmitted, the decoder derives
-         * them from the envelope count), one bs_freq_res for all envelopes. */
+        /* VARVAR (§4.6.18.3.7): variable leading and trailing borders. */
+        int bord0 = clamp_int(fd->tEnv[0], 0, 3);
+        int bord1 = clamp_int(fd->tEnv[num_env] - SBR_NUM_TIME_SLOTS, 0, 3);
+        int num_rel_0 = (num_env > 1) ? 1 : 0;
+        int num_rel_1 = num_env - 1 - num_rel_0;
+
         if (write) {
-            PutBit(bs, num_env > 1 ? 1 : 0, 2);         /* bs_num_env = 1 << this */
-            PutBit(bs, sbr->bs_freq_res, 1);
+            PutBit(bs, bord0, 2);                        /* bs_var_bord_0 */
+            PutBit(bs, bord1, 2);                        /* bs_var_bord_1 */
+            PutBit(bs, num_rel_0, 2);                    /* bs_num_rel_0 */
+            PutBit(bs, num_rel_1, 2);                    /* bs_num_rel_1 */
+            /* Left relative borders */
+            for (int i = 0; i < num_rel_0; i++) {
+                int rel = (fd->tEnv[i + 1] - fd->tEnv[i] - 2) / 2;
+                PutBit(bs, clamp_int(rel, 0, 3), 2);
+            }
+            /* Right relative borders */
+            for (int i = num_env - 1; i >= num_env - num_rel_1; i--) {
+                int rel = (fd->tEnv[i + 1] - fd->tEnv[i] - 2) / 2;
+                PutBit(bs, clamp_int(rel, 0, 3), 2);
+            }
         }
-        bits += 3;
+        int ptr_len = sbr_ceil_log2[num_env];
+        if (write) {
+            PutBit(bs, fd->bsPointer, ptr_len);
+            for (int i = 0; i < num_env; i++)
+                PutBit(bs, sbr->bs_freq_res, 1);
+        }
+        bits += 8 + 2 * (num_rel_0 + num_rel_1) + ptr_len + num_env;
     }
     return bits;
 }

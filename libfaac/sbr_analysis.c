@@ -30,6 +30,7 @@ static inline int sbr_env_of_slot(int numEnvelopes, const int *envStart, int slo
 
 /* Multi-pass signal analysis: transient detection, temporal grid selection,
  * and subband energy accumulation. */
+#include "blockswitch.h"
 void SbrAnalyze(SignalAnalysis *sa, float *fullPtrs[], int nch, const bool *isLfe, int numSamples, struct SBRInfo *sbr)
 {
     int num_slots = numSamples / SBR_QMF_BANDS_64;
@@ -80,23 +81,124 @@ void SbrAnalyze(SignalAnalysis *sa, float *fullPtrs[], int nch, const bool *isLf
         }
     }
 
-    if (frameStrength > SBR_TRANSIENT_THRESH_DEFAULT) {
-        int Ts = (num_slots > 0) ? frameSlot * SBR_NUM_TIME_SLOTS / num_slots : 0; /* 0..16 */
-        int rel = clamp_int((Ts - 2) / 2, 0, 3);
-        int innerSbr = 2 * rel + 2;                  /* {2,4,6,8} */
-        sa->numEnvelopes = 2;
-        sa->frameClass = SBR_FRAME_CLASS_VARFIX;
-        sa->tEnv[0] = 0;
-        sa->tEnv[1] = innerSbr;
-        sa->tEnv[2] = SBR_NUM_TIME_SLOTS;
-        sa->bsPointer = 0;
-    } else {
+    /* Option A: Direct PCM Time-Domain High-Pass Transient Detection */
+    int primary_ch = 0;
+    for (int ch = 0; ch < nch; ch++) {
+        if (!isLfe[ch]) { primary_ch = ch; break; }
+    }
+
+    float max_pcm_ratio = 0.0f;
+    int max_pcm_slot = 0;
+
+    for (int ch = 0; ch < nch; ch++) {
+        if (isLfe[ch]) continue;
+        const float *pcm = fullPtrs[ch];
+        float level = sbr->ch[ch].pcmLevel;
+        if (level < 1e-6f) level = 1e-6f;
+
+        /* Analyze high-pass energy across SBR_NUM_TIME_SLOTS (16 sub-blocks) */
+        int samples_per_slot = numSamples / SBR_NUM_TIME_SLOTS;
+        for (int s = 0; s < SBR_NUM_TIME_SLOTS; s++) {
+            int start_n = s * samples_per_slot;
+            float e = 0.0f;
+            for (int n = start_n; n < start_n + samples_per_slot; n++) {
+                float d = (n > 0) ? (pcm[n] - pcm[n - 1]) : pcm[n];
+                e += d * d;
+            }
+            float ratio = e / level;
+            if (ratio > max_pcm_ratio) {
+                max_pcm_ratio = ratio;
+                max_pcm_slot = s;
+            }
+            level = 0.3f * e + 0.7f * level;
+        }
+        sbr->ch[ch].pcmLevel = level;
+    }
+
+    /* Attack threshold: PCM high-pass energy jump > 40.0x running level for conservative, optimal MOS transient splitting */
+    bool attack = (max_pcm_ratio > 40.0f);
+    int A = max_pcm_slot;
+
+    SbrFrameClass prev_c = sbr->ch[primary_ch].prev_class;
+    int spread = sbr->ch[primary_ch].spread;
+    SbrFrameClass curr_c;
+
+    /* Transition Table Rules */
+    if (prev_c == SBR_FRAME_CLASS_FIXFIX) {
+        curr_c = attack ? SBR_FRAME_CLASS_FIXVAR : SBR_FRAME_CLASS_FIXFIX;
+    } else if (prev_c == SBR_FRAME_CLASS_FIXVAR) {
+        if (attack) {
+            curr_c = SBR_FRAME_CLASS_VARVAR;
+            spread = 0;
+        } else {
+            curr_c = spread ? SBR_FRAME_CLASS_VARVAR : SBR_FRAME_CLASS_VARFIX;
+            spread = 0;
+        }
+    } else if (prev_c == SBR_FRAME_CLASS_VARFIX) {
+        curr_c = attack ? SBR_FRAME_CLASS_FIXVAR : SBR_FRAME_CLASS_FIXFIX;
+    } else { /* VARVAR */
+        if (attack) {
+            curr_c = SBR_FRAME_CLASS_VARVAR;
+            spread = 0;
+        } else {
+            curr_c = spread ? SBR_FRAME_CLASS_VARVAR : SBR_FRAME_CLASS_VARFIX;
+            spread = 0;
+        }
+    }
+
+    int tEnvPrev_next = SBR_NUM_TIME_SLOTS;
+
+    if (curr_c == SBR_FRAME_CLASS_FIXFIX) {
         int ne = sbr->numEnvFixFix;
         sa->numEnvelopes = ne;
         sa->frameClass = SBR_FRAME_CLASS_FIXFIX;
         for (int e = 0; e <= ne; e++)
             sa->tEnv[e] = e * SBR_NUM_TIME_SLOTS / ne;
         sa->bsPointer = 0;
+        tEnvPrev_next = SBR_NUM_TIME_SLOTS;
+    } else if (curr_c == SBR_FRAME_CLASS_FIXVAR) {
+        sa->frameClass = SBR_FRAME_CLASS_FIXVAR;
+        sa->numEnvelopes = 2;
+        sa->tEnv[0] = 0;
+        int b1 = clamp_int(A, 2, 14);
+        sa->tEnv[1] = b1;
+        sa->tEnv[2] = SBR_NUM_TIME_SLOTS;
+        sa->bsPointer = 0;
+        tEnvPrev_next = SBR_NUM_TIME_SLOTS;
+    } else if (curr_c == SBR_FRAME_CLASS_VARFIX) {
+        sa->frameClass = SBR_FRAME_CLASS_VARFIX;
+        int t0 = (sbr->ch[primary_ch].tEnvPrev > SBR_NUM_TIME_SLOTS) ? (sbr->ch[primary_ch].tEnvPrev - SBR_NUM_TIME_SLOTS) : 0;
+        t0 = clamp_int(t0, 0, 12);
+        sa->numEnvelopes = 2;
+        sa->tEnv[0] = t0;
+        sa->tEnv[1] = (t0 + SBR_NUM_TIME_SLOTS) / 2;
+        sa->tEnv[2] = SBR_NUM_TIME_SLOTS;
+        sa->bsPointer = 0;
+        tEnvPrev_next = SBR_NUM_TIME_SLOTS;
+    } else { /* VARVAR */
+        sa->frameClass = SBR_FRAME_CLASS_VARVAR;
+        int t0 = (sbr->ch[primary_ch].tEnvPrev > SBR_NUM_TIME_SLOTS) ? (sbr->ch[primary_ch].tEnvPrev - SBR_NUM_TIME_SLOTS) : 0;
+        t0 = clamp_int(t0, 0, 8);
+        sa->numEnvelopes = 4;
+        int b1 = clamp_int(A, t0 + 2, 12);
+        int b2 = clamp_int(b1 + 2, b1 + 1, 14);
+        int b3 = clamp_int(b2 + 2, b2 + 1, 15);
+        sa->tEnv[0] = t0;
+        sa->tEnv[1] = b1;
+        sa->tEnv[2] = b2;
+        sa->tEnv[3] = b3;
+        sa->tEnv[4] = SBR_NUM_TIME_SLOTS;
+        sa->bsPointer = 0;
+        tEnvPrev_next = SBR_NUM_TIME_SLOTS;
+    }
+
+    /* Synchronize channel state across all non-LFE channels */
+    for (int ch = 0; ch < nch; ch++) {
+        if (!isLfe[ch]) {
+            sbr->ch[ch].prev_class = curr_c;
+            sbr->ch[ch].spread = spread;
+            sbr->ch[ch].tEnvPrev = tEnvPrev_next;
+        }
     }
 
     /* Envelope borders in QMF slots, for binning the per-slot energies below. */

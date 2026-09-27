@@ -23,6 +23,10 @@
 /* Per-channel SBR analysis state. Everything indexed [ch] in SBRInfo lives here. */
 typedef struct SBRChannel {
     float qmfOvl64[SBR_QMF_HIST_LEN]; /* QMF overlap plus analysis delay (carries across frames) */
+    SbrFrameClass prev_class;          /* Previously emitted SBR frame class */
+    int           spread;              /* Spread flag: short-tail transient requires extra follow-up */
+    int           tEnvPrev;            /* Trailing border position of previous frame in QMF slots */
+    float         pcmLevel;            /* Running smoothed PCM high-pass energy level */
 } SBRChannel;
 
 /* One frame's coded SBR payload: every field SbrWrite reads that varies per
