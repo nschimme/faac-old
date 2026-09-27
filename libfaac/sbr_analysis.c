@@ -339,7 +339,6 @@ static void measure(SignalAnalysisChannel *ac, const SbrAnalysisFrame *f, const 
 
 void SbrFinalizeFrame(SignalAnalysis *sa, const SbrAnalysisFrame *f, const SbrAnalysisFrame *next, const SbrAnalysisFrame *ahead, int nch, const bool *lfe, const int *coreBlockType, struct SBRInfo *sbr, struct SbrFrameData *fd)
 {
-    (void)coreBlockType;
     int attack[MAX_CHANNELS] = {0};
     int pos[MAX_CHANNELS] = {0};
     int split[MAX_CHANNELS] = {0};
@@ -349,6 +348,10 @@ void SbrFinalizeFrame(SignalAnalysis *sa, const SbrAnalysisFrame *f, const SbrAn
     for (int ch = 0; ch < nch; ch++) {
         if (lfe[ch]) continue;
         measure(&sa->ch[ch], f, next, ahead, ch, &attack[ch], &pos[ch], &split[ch]);
+        if (coreBlockType && (coreBlockType[ch] == ONLY_SHORT_WINDOW || coreBlockType[ch] == LONG_SHORT_WINDOW || coreBlockType[ch] == SHORT_LONG_WINDOW)) {
+            attack[ch] = 1;
+            if (pos[ch] == 0) pos[ch] = 2;
+        }
     }
 
     if (nch == 2 && !lfe[0] && !lfe[1]) {
