@@ -18,12 +18,11 @@
 #include <math.h>
 #include "quantize.h"
 
-int quantize_sve(const float * __restrict xr, int * __restrict xi, int n4, float sfacfix)
+int quantize_sve(const float * __restrict xr, int * __restrict xi, int len, float sfacfix)
 {
-    int total = 4 * n4;
     int i = 0;
     svbool_t pg_all = svptrue_b32();
-    svbool_t pg = svwhilelt_b32(i, total);
+    svbool_t pg = svwhilelt_b32(i, len);
     svfloat32_t sfac = svdup_n_f32(sfacfix);
     svfloat32_t magic = svdup_n_f32(MAGIC_NUMBER);
     svint32_t max_vec = svdup_n_s32(0);
@@ -46,7 +45,7 @@ int quantize_sve(const float * __restrict xr, int * __restrict xi, int n4, float
         svst1_s32(pg, &xi[i], q);
 
         i += (int)svcntw();
-        pg = svwhilelt_b32(i, total);
+        pg = svwhilelt_b32(i, len);
     }
 
     return svmaxv_s32(pg_all, max_vec);

@@ -24,27 +24,27 @@
 #include "cpu_compute.h"
 #include "stats.h"
 
-typedef int (*QuantizeFunc)(const float * __restrict xr, int * __restrict xi, int n4, float sfacfix);
+typedef int (*QuantizeFunc)(const float * __restrict xr, int * __restrict xi, int len, float sfacfix);
 
 #if defined(HAVE_AVX2)
-extern int quantize_avx2(const float * __restrict xr, int * __restrict xi, int n4, float sfacfix);
+extern int quantize_avx2(const float * __restrict xr, int * __restrict xi, int len, float sfacfix);
 #endif
 
 #if defined(HAVE_SSE2)
-extern int quantize_sse2(const float * __restrict xr, int * __restrict xi, int n4, float sfacfix);
+extern int quantize_sse2(const float * __restrict xr, int * __restrict xi, int len, float sfacfix);
 #endif
 
 #if defined(HAVE_ARM_SVE)
-extern int quantize_sve(const float * __restrict xr, int * __restrict xi, int n4, float sfacfix);
+extern int quantize_sve(const float * __restrict xr, int * __restrict xi, int len, float sfacfix);
 #endif
 
 /* Written so the loop auto-vectorizes: fabsf() makes the sqrtf() argument
  * provably non-negative (no errno path), the sign is re-applied as a
  * two's-complement mask, and the width is a known multiple of four. */
-static int quantize_scalar(const float * __restrict xr, int * __restrict xi, int n4, float sfacfix)
+static int quantize_scalar(const float * __restrict xr, int * __restrict xi, int len, float sfacfix)
 {
     int i, maxq = 0;
-    for (i = 0; i < 4 * n4; i++)
+    for (i = 0; i < len; i++)
     {
         float val = xr[i];
         float tmp = fabsf(val * sfacfix);
@@ -401,7 +401,7 @@ static void assign_band_codebooks(CoderInfo * __restrict ci, const float * __res
 
             for (win = 0; win < gsize; win++)
             {
-                int qm = qfunc(xr0 + win * BLOCK_LEN_SHORT + lo, xi + win * width, width >> 2, gain);
+                int qm = qfunc(xr0 + win * BLOCK_LEN_SHORT + lo, xi + win * width, width, gain);
                 if (qm > maxq) maxq = qm;
             }
             /* huffbook picks the final book; record the lowest that covers maxq */

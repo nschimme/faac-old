@@ -17,7 +17,7 @@
 #include <math.h>
 #include "quantize.h"
 
-int quantize_sse2(const float * __restrict xr, int * __restrict xi, int n4, float sfacfix)
+int quantize_sse2(const float * __restrict xr, int * __restrict xi, int len, float sfacfix)
 {
     const __m128 sfac = _mm_set1_ps(sfacfix);
     const __m128 magic = _mm_set1_ps(MAGIC_NUMBER);
@@ -27,8 +27,8 @@ int quantize_sse2(const float * __restrict xr, int * __restrict xi, int n4, floa
     int maxq_arr[4];
     int cnt, maxq;
 
-    // Process 4 elements per iteration; band widths are multiples of 4
-    for (cnt = 0; cnt < 4 * n4; cnt += 4)
+    // Process 4 elements per iteration
+    for (cnt = 0; cnt < len; cnt += 4)
     {
         __m128 x_orig = _mm_loadu_ps(&xr[cnt]);
         // Absolute value of the scaled input

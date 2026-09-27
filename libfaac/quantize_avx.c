@@ -17,7 +17,7 @@
 #include <math.h>
 #include "quantize.h"
 
-int quantize_avx2(const float * __restrict xr, int * __restrict xi, int n4, float sfacfix)
+int quantize_avx2(const float * __restrict xr, int * __restrict xi, int len, float sfacfix)
 {
     const __m256 sfac = _mm256_set1_ps(sfacfix);
     const __m256 magic = _mm256_set1_ps(MAGIC_NUMBER);
@@ -25,12 +25,11 @@ int quantize_avx2(const float * __restrict xr, int * __restrict xi, int n4, floa
     __m256i max_vec0 = _mm256_setzero_si256();
     __m256i max_vec1 = _mm256_setzero_si256();
     __m128i max128;
-    int total = 4 * n4;
     int cnt = 0;
 
     // Main loop: 2x unrolled AVX2 processing 16 elements (4 quads) per iteration.
     // Overlaps multi-cycle sqrt latency and FMA execution ports.
-    for (; cnt + 16 <= total; cnt += 16)
+    for (; cnt + 16 <= len; cnt += 16)
     {
         __m256 x0_orig = _mm256_loadu_ps(&xr[cnt]);
         __m256 x1_orig = _mm256_loadu_ps(&xr[cnt + 8]);
@@ -67,7 +66,7 @@ int quantize_avx2(const float * __restrict xr, int * __restrict xi, int n4, floa
     max_vec0 = _mm256_max_epi32(max_vec0, max_vec1);
 
     // Single 8-element AVX2 iteration if 8 elements remain
-    if (cnt + 8 <= total)
+    if (cnt + 8 <= len)
     {
         __m256 x_orig = _mm256_loadu_ps(&xr[cnt]);
         __m256 x = _mm256_and_ps(_mm256_mul_ps(x_orig, sfac), abs_mask);
@@ -90,7 +89,7 @@ int quantize_avx2(const float * __restrict xr, int * __restrict xi, int n4, floa
     max128 = _mm_max_epi32(_mm256_castsi256_si128(max_vec0), _mm256_extracti128_si256(max_vec0, 1));
 
     // Tail processing for remaining 4 elements if total is odd number of quads
-    if (cnt < total)
+    if (cnt < len)
     {
         __m128 sfac128 = _mm256_castps256_ps128(sfac);
         __m128 magic128 = _mm256_castps256_ps128(magic);
