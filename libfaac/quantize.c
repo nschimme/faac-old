@@ -26,8 +26,16 @@
 
 typedef int (*QuantizeFunc)(const float * __restrict xr, int * __restrict xi, int n4, float sfacfix);
 
+#if defined(HAVE_AVX2)
+extern int quantize_avx2(const float * __restrict xr, int * __restrict xi, int n4, float sfacfix);
+#endif
+
 #if defined(HAVE_SSE2)
 extern int quantize_sse2(const float * __restrict xr, int * __restrict xi, int n4, float sfacfix);
+#endif
+
+#if defined(HAVE_ARM_SVE)
+extern int quantize_sve(const float * __restrict xr, int * __restrict xi, int n4, float sfacfix);
 #endif
 
 /* Written so the loop auto-vectorizes: fabsf() makes the sqrtf() argument
@@ -66,10 +74,21 @@ static float log10_width_sf_lut[128];
 void QuantizeInit(void)
 {
     int i;
-#if defined(HAVE_SSE2)
     CPUCaps caps = get_cpu_caps();
+
+#if defined(HAVE_AVX2)
+    if (caps & CPU_CAP_AVX2)
+        qfunc = quantize_avx2;
+    else
+#endif
+#if defined(HAVE_SSE2)
     if (caps & CPU_CAP_SSE2)
         qfunc = quantize_sse2;
+    else
+#endif
+#if defined(HAVE_ARM_SVE)
+    if (caps & CPU_CAP_SVE)
+        qfunc = quantize_sve;
     else
 #endif
         qfunc = quantize_scalar;

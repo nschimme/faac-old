@@ -20,9 +20,15 @@
 # define SSE2_ARCH
 #endif
 
+#if defined(__aarch64__) || defined(_M_ARM64)
+# define AARCH64_ARCH
+#endif
+
 typedef enum {
     CPU_CAP_NONE = 0,
-    CPU_CAP_SSE2 = (1 << 0)
+    CPU_CAP_SSE2 = (1 << 0),
+    CPU_CAP_AVX2 = (1 << 1),
+    CPU_CAP_SVE  = (1 << 2)
 } CPUCaps;
 
 CPUCaps get_cpu_caps(void);
