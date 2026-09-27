@@ -21,6 +21,17 @@
 # elif defined(__GNUC__) || defined(__clang__)
 #  include <cpuid.h>
 # endif
+
+static inline unsigned long long xgetbv(unsigned int ecx_val)
+{
+# ifdef _MSC_VER
+    return _xgetbv(ecx_val);
+# else
+    unsigned int eax, edx;
+    __asm__ volatile("xgetbv" : "=a"(eax), "=d"(edx) : "c"(ecx_val));
+    return ((unsigned long long)edx << 32) | eax;
+# endif
+}
 #elif defined(AARCH64_ARCH)
 # if defined(__linux__)
 #  include <sys/auxv.h>
@@ -35,6 +46,7 @@ CPUCaps get_cpu_caps(void)
 #if defined(SSE2_ARCH)
     unsigned int eax = 0, ebx = 0, ecx = 0, edx = 0;
     unsigned int max_leaf = 0;
+    int osxsave = 0;
 
 # ifdef _MSC_VER
     int cpu_info[4] = {0};
@@ -56,9 +68,15 @@ CPUCaps get_cpu_caps(void)
 # endif
         if (edx & (1 << 26)) // SSE2
             caps |= CPU_CAP_SSE2;
+
+        if (ecx & (1 << 27)) { // OSXSAVE
+            unsigned long long xcr0 = xgetbv(0);
+            if ((xcr0 & 0x6) == 0x6) // SSE and AVX states enabled by OS
+                osxsave = 1;
+        }
     }
 
-    if (max_leaf >= 7) {
+    if (max_leaf >= 7 && osxsave) {
 # ifdef _MSC_VER
         __cpuidex(cpu_info, 7, 0);
         ebx = (unsigned int)cpu_info[1];

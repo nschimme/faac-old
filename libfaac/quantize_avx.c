@@ -22,37 +22,72 @@ int quantize_avx2(const float * __restrict xr, int * __restrict xi, int n4, floa
     const __m256 sfac = _mm256_set1_ps(sfacfix);
     const __m256 magic = _mm256_set1_ps(MAGIC_NUMBER);
     const __m256 abs_mask = _mm256_castsi256_ps(_mm256_set1_epi32(0x7FFFFFFF));
-    __m256i max_vec = _mm256_setzero_si256();
+    __m256i max_vec0 = _mm256_setzero_si256();
+    __m256i max_vec1 = _mm256_setzero_si256();
     __m128i max128;
     int total = 4 * n4;
-    int cnt;
+    int cnt = 0;
 
-    // Process 8 elements (2 quads) per iteration
-    for (cnt = 0; cnt + 8 <= total; cnt += 8)
+    // Main loop: 2x unrolled AVX2 processing 16 elements (4 quads) per iteration.
+    // Overlaps multi-cycle sqrt latency and FMA execution ports.
+    for (; cnt + 16 <= total; cnt += 16)
+    {
+        __m256 x0_orig = _mm256_loadu_ps(&xr[cnt]);
+        __m256 x1_orig = _mm256_loadu_ps(&xr[cnt + 8]);
+
+        __m256 x0 = _mm256_and_ps(_mm256_mul_ps(x0_orig, sfac), abs_mask);
+        __m256 x1 = _mm256_and_ps(_mm256_mul_ps(x1_orig, sfac), abs_mask);
+
+        // x^0.75 = sqrt(x * sqrt(x))
+        x0 = _mm256_mul_ps(x0, _mm256_sqrt_ps(x0));
+        x1 = _mm256_mul_ps(x1, _mm256_sqrt_ps(x1));
+
+        x0 = _mm256_sqrt_ps(x0);
+        x1 = _mm256_sqrt_ps(x1);
+
+        x0 = _mm256_add_ps(x0, magic);
+        x1 = _mm256_add_ps(x1, magic);
+
+        __m256i q0 = _mm256_cvttps_epi32(x0);
+        __m256i q1 = _mm256_cvttps_epi32(x1);
+
+        max_vec0 = _mm256_max_epi32(max_vec0, q0);
+        max_vec1 = _mm256_max_epi32(max_vec1, q1);
+
+        __m256i mask0 = _mm256_srai_epi32(_mm256_castps_si256(x0_orig), 31);
+        __m256i mask1 = _mm256_srai_epi32(_mm256_castps_si256(x1_orig), 31);
+
+        q0 = _mm256_sub_epi32(_mm256_xor_si256(q0, mask0), mask0);
+        q1 = _mm256_sub_epi32(_mm256_xor_si256(q1, mask1), mask1);
+
+        _mm256_storeu_si256((__m256i*)&xi[cnt], q0);
+        _mm256_storeu_si256((__m256i*)&xi[cnt + 8], q1);
+    }
+
+    max_vec0 = _mm256_max_epi32(max_vec0, max_vec1);
+
+    // Single 8-element AVX2 iteration if 8 elements remain
+    if (cnt + 8 <= total)
     {
         __m256 x_orig = _mm256_loadu_ps(&xr[cnt]);
-        // Absolute value of the scaled input
         __m256 x = _mm256_and_ps(_mm256_mul_ps(x_orig, sfac), abs_mask);
 
-        // Math: (x * sfac)^0.75 + magic
-        // Logic: sqrt( (x*sfac) * sqrt(x*sfac) )
         x = _mm256_mul_ps(x, _mm256_sqrt_ps(x));
         x = _mm256_sqrt_ps(x);
         x = _mm256_add_ps(x, magic);
 
-        // Convert to integer
         __m256i q = _mm256_cvttps_epi32(x);
-        max_vec = _mm256_max_epi32(max_vec, q);
+        max_vec0 = _mm256_max_epi32(max_vec0, q);
 
-        // Bitwise Sign Fix: (val ^ mask) - mask, mask = sign bit of the input
         __m256i mask = _mm256_srai_epi32(_mm256_castps_si256(x_orig), 31);
         q = _mm256_sub_epi32(_mm256_xor_si256(q, mask), mask);
 
         _mm256_storeu_si256((__m256i*)&xi[cnt], q);
+        cnt += 8;
     }
 
-    // Fold 256-bit max_vec into 128-bit
-    max128 = _mm_max_epi32(_mm256_castsi256_si128(max_vec), _mm256_extracti128_si256(max_vec, 1));
+    // Fold 256-bit max_vec0 into 128-bit
+    max128 = _mm_max_epi32(_mm256_castsi256_si128(max_vec0), _mm256_extracti128_si256(max_vec0, 1));
 
     // Tail processing for remaining 4 elements if total is odd number of quads
     if (cnt < total)
