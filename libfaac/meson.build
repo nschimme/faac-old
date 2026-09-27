@@ -10,24 +10,12 @@ if config_h.get('HAVE_SSE2')
     quantize_simd_libs += quantize_sse
 endif
 
-if config_h.get('HAVE_AVX2')
-    avx2_flag = (cc.get_argument_syntax() == 'msvc') ? ['/arch:AVX2'] : ['-mavx2']
-    quantize_avx = static_library('quantize_avx', 'quantize_avx.c',
+if config_h.get('HAVE_NEON')
+    quantize_neon = static_library('quantize_neon', 'quantize_neon.c',
         include_directories: ['..', '../include'],
-        c_args: c_args + avx2_flag,
         gnu_symbol_visibility: 'hidden'
     )
-    quantize_simd_libs += quantize_avx
-endif
-
-if config_h.get('HAVE_ARM_SVE')
-    sve_flag = ['-march=armv8-a+sve']
-    quantize_sve = static_library('quantize_sve', 'quantize_sve.c',
-        include_directories: ['..', '../include'],
-        c_args: c_args + sve_flag,
-        gnu_symbol_visibility: 'hidden'
-    )
-    quantize_simd_libs += quantize_sve
+    quantize_simd_libs += quantize_neon
 endif
 
 common_src = [
