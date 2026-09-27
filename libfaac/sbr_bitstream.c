@@ -23,9 +23,9 @@
 #include "util.h"
 #include "faac_internal.h"
 
-static int write_sbr_header(const SBRInfo *sbr, BitStream *bs, bool write)
+static int write_sbr_header(const SBRInfo *sbr, BitStream *bs)
 {
-    if (write) {
+    if (bs) {
         /* ISO 14496-3:2009 §4.6.18.5 sbr_header() (21 bits) */
         PutBit(bs, SBR_AMP_RES,         1); /* bs_amp_res: 0=1.5dB, 1=3dB */
         PutBit(bs, sbr->bs_start_freq,  4); /* bs_start_freq: crossover index */
@@ -44,130 +44,141 @@ static int write_sbr_header(const SBRInfo *sbr, BitStream *bs, bool write)
 /* Width of the transient pointer field, indexed by number of envelopes. */
 static const int sbr_ceil_log2[] = { 0, 1, 2, 2, 3, 3 };
 
-static int write_sbr_grid(const SBRInfo *sbr, const SbrFrameData *fd, BitStream *bs, bool write)
+static int write_sbr_grid(const SbrGrid *grid, BitStream *bs)
 {
-    int num_env = fd->numEnvelopes;
+    int num_env = grid->numEnvelopes;
     int bits = 2;
 
-    if (write) PutBit(bs, fd->frameClass, 2);
-    if (fd->frameClass == SBR_FRAME_CLASS_VARFIX) {
-        /* VARFIX (§4.6.18.3.6): variable leading borders, fixed (untransmitted)
-         * trailing border at numTimeSlots, then bs_pointer and per-envelope
-         * bs_freq_res. */
-        if (write) {
-            PutBit(bs, fd->tEnv[0], 2);                 /* bs_var_bord_0 */
-            PutBit(bs, num_env - 1, 2);                  /* bs_num_rel_0   */
-            for (int i = 0; i < num_env - 1; i++)
-                PutBit(bs, (fd->tEnv[i + 1] - fd->tEnv[i] - 2) / 2, 2); /* bs_rel_bord */
-        }
-        int ptr_len = sbr_ceil_log2[num_env];
-        if (write) {
-            PutBit(bs, fd->bsPointer, ptr_len);
-            for (int i = 0; i < num_env; i++)
-                PutBit(bs, sbr->bs_freq_res, 1);
-        }
-        bits += 4 + 2 * (num_env - 1) + ptr_len + num_env;
-    } else {
-        /* FIXFIX: equal-spaced borders (not transmitted, the decoder derives
-         * them from the envelope count), one bs_freq_res for all envelopes. */
-        if (write) {
-            PutBit(bs, num_env > 1 ? 1 : 0, 2);         /* bs_num_env = 1 << this */
-            PutBit(bs, sbr->bs_freq_res, 1);
+    if (bs) PutBit(bs, grid->frameClass, 2);
+
+    if (grid->frameClass == SBR_FRAME_CLASS_FIXFIX) {
+        int bs_num_env = num_env == 1 ? 0 : num_env == 2 ? 1 : 2;
+        if (bs) {
+            PutBit(bs, bs_num_env, 2);
+            PutBit(bs, grid->freqRes[0], 1);
         }
         bits += 3;
+    } else {
+        int frame_class = grid->frameClass;
+        int varvar = frame_class == SBR_FRAME_CLASS_VARVAR;
+        int reverse = frame_class == SBR_FRAME_CLASS_FIXVAR;
+        /* sbr_choose_grid emits 2-4 VARVAR envelopes with at most three
+         * trailing relative borders; five envelopes need one leading border. */
+        int n0 = varvar ? num_env == 5 : reverse ? 0 : num_env - 1;
+        int n1 = num_env - 1 - n0;
+        if (bs) {
+            if (!reverse) PutBit(bs, grid->tEnv[0], 2);
+            if (reverse || varvar) PutBit(bs, grid->tEnv[num_env] - SBR_NUM_TIME_SLOTS, 2);
+            if (!reverse) PutBit(bs, n0, 2);
+            if (reverse || varvar) PutBit(bs, n1, 2);
+            for (int i = 0; i < n0; i++)
+                PutBit(bs, (grid->tEnv[i + 1] - grid->tEnv[i] - 2) / 2, 2);
+            for (int i = 0; i < n1; i++)
+                PutBit(bs, (grid->tEnv[num_env - i] - grid->tEnv[num_env - i - 1] - 2) / 2, 2);
+            PutBit(bs, grid->bsPointer, sbr_ceil_log2[num_env]);
+            for (int i = 0; i < num_env; i++)
+                PutBit(bs, grid->freqRes[reverse ? num_env - i - 1 : i], 1);
+        }
+        bits += 4 + 4 * varvar + 2 * (num_env - 1) + sbr_ceil_log2[num_env] + num_env;
     }
     return bits;
 }
 
-static int write_sbr_dtdf(const SbrFrameData *fd, BitStream *bs, bool write)
+static int write_sbr_dtdf(const SbrGrid *grid, BitStream *bs)
 {
-    int n_q = fd->numEnvelopes > 1 ? 2 : 1;
-    int len = fd->numEnvelopes + n_q;
-    if (write) PutBit(bs, 0, len);
+    int n_q = grid->numEnvelopes > 1 ? 2 : 1;
+    int len = grid->numEnvelopes + n_q;
+    if (bs) PutBit(bs, 0, len);
     return len;
 }
 
-static int write_sbr_invf(BitStream *bs, bool write)
+static int write_sbr_invf(BitStream *bs)
 {
-    if (write) PutBit(bs, SBR_INVF_MODE, 2);
+    if (bs) PutBit(bs, SBR_INVF_MODE, 2);
     return 2;
 }
 
 /* count-and-write helper, matching channels.c's WriteElement/WriteICS style. */
-static int put_huff(BitAccumulator *acc, bool write, const SBRHuffEntry *table, int nsyms, int offset, int delta)
+static inline int put_huff(BitAccumulator *acc, const SBRHuffEntry *table, int nsyms, int offset, int delta)
 {
     int sym = clamp_int(delta + offset, 0, nsyms - 1);
-    if (write) AccumPutBits(acc, (uint32_t)table[sym].code, table[sym].len);
+    if (acc) AccumPutBits(acc, (uint32_t)table[sym].code, table[sym].len);
     return table[sym].len;
 }
 
 /* Same shape as writesf()'s per-band loop, so it gets the same BitAccumulator batching. */
-static int write_sbr_envelope(const SBRInfo *sbr, const SbrFrameData *fd, BitStream *bs, int ch, bool write)
+static int write_sbr_envelope(const SBRInfo *sbr, const SbrFrameData *fd, const SbrGrid *grid, BitStream *bs, int ch)
 {
-    const SBRHuffEntry *table = fd->eff_amp_res ? f_huff_env_3_0dB : f_huff_env_1_5dB;
-    int nsyms = fd->eff_amp_res ? F_HUFF_ENV_3_0DB_NSYMS : F_HUFF_ENV_1_5DB_NSYMS;
-    int offset = fd->eff_amp_res ? F_HUFF_ENV_3_0DB_OFFSET : F_HUFF_ENV_1_5DB_OFFSET;
-    int first_bits = fd->eff_amp_res ? 6 : 7;
+    int eff_amp_res = fd->ch[ch].eff_amp_res;
+    const SBRHuffEntry *table = eff_amp_res ? f_huff_env_3_0dB : f_huff_env_1_5dB;
+    int nsyms = eff_amp_res ? F_HUFF_ENV_3_0DB_NSYMS : F_HUFF_ENV_1_5DB_NSYMS;
+    int offset = eff_amp_res ? F_HUFF_ENV_3_0DB_OFFSET : F_HUFF_ENV_1_5DB_OFFSET;
+    int first_bits = eff_amp_res ? 6 : 7;
     int first_max = (1 << first_bits) - 1;
-    int nb = sbr_env_bands(sbr, fd);
     int bits = 0;
-    BitAccumulator acc = {0};
+    BitAccumulator acc_struct, *acc = NULL;
 
-    if (write) AccumBegin(&acc, bs);
-    for (int e = 0; e < fd->numEnvelopes; e++) {
-        const int *env_ch = fd->ch[ch].envData[e];
-        if (write) AccumPutBits(&acc, (uint32_t)clamp_int(env_ch[0], 0, first_max), first_bits);
-        bits += first_bits;
-        for (int b = 1; b < nb; b++)
-            bits += put_huff(&acc, write, table, nsyms, offset, env_ch[b]);
+    if (bs) {
+        acc = &acc_struct;
+        AccumBegin(acc, bs);
     }
-    if (write) AccumEnd(&acc);
+    for (int e = 0; e < grid->numEnvelopes; e++) {
+        int nb = sbr_env_bands(sbr, grid, e);
+        const int *env_ch = fd->ch[ch].envData[e];
+        if (acc) AccumPutBits(acc, (uint32_t)clamp_int(env_ch[0], 0, first_max), first_bits);
+        bits += first_bits;
+        for (int b = 1; b < nb; b++) {
+            int delta = env_ch[b] - env_ch[b - 1];
+            bits += put_huff(acc, table, nsyms, offset, delta);
+        }
+    }
+    if (acc) AccumEnd(acc);
     return bits;
 }
 
-static int write_sbr_noise(const SbrFrameData *fd, BitStream *bs, bool write)
+static int write_sbr_noise(const SbrGrid *grid, BitStream *bs)
 {
-    int n_q = fd->numEnvelopes > 1 ? 2 : 1;
-    if (write) {
+    int n_q = grid->numEnvelopes > 1 ? 2 : 1;
+    if (bs) {
         for (int ne = 0; ne < n_q; ne++)
             PutBit(bs, SBR_NOISE_LEVEL_DEFAULT, 5);
     }
     return n_q * 5;
 }
 
-static int write_sbr_data(const SBRInfo *sbr, const SbrFrameData *fd, BitStream *bs, int id_aac, int ch0, bool write)
+static int write_sbr_data(const SBRInfo *sbr, const SbrFrameData *fd, BitStream *bs, int id_aac, int ch0)
 {
     int nch = (id_aac == ID_CPE) ? 2 : 1;
     int flags_len = (id_aac == ID_CPE) ? 3 : 2;
     int lead_len = (id_aac == ID_CPE) ? 2 : 1;
     int bits = lead_len + flags_len;
 
-    if (write) PutBit(bs, 0, lead_len); /* bs_coupling / reserved */
+    if (bs) PutBit(bs, 0, lead_len); /* bs_coupling / reserved */
 
     for (int ch = 0; ch < nch; ch++)
-        bits += write_sbr_grid(sbr, fd, bs, write);
+        bits += write_sbr_grid(&fd->ch[ch0 + ch].grid, bs);
     for (int ch = 0; ch < nch; ch++)
-        bits += write_sbr_dtdf(fd, bs, write);
+        bits += write_sbr_dtdf(&fd->ch[ch0 + ch].grid, bs);
     for (int ch = 0; ch < nch; ch++)
-        bits += write_sbr_invf(bs, write);
+        bits += write_sbr_invf(bs);
     for (int ch = 0; ch < nch; ch++)
-        bits += write_sbr_envelope(sbr, fd, bs, ch0 + ch, write);
+        bits += write_sbr_envelope(sbr, fd, &fd->ch[ch0 + ch].grid, bs, ch0 + ch);
     for (int ch = 0; ch < nch; ch++)
-        bits += write_sbr_noise(fd, bs, write);
+        bits += write_sbr_noise(&fd->ch[ch0 + ch].grid, bs);
 
-    if (write) PutBit(bs, 0, flags_len); /* add_harmonic / extended data flags */
+    if (bs) PutBit(bs, 0, flags_len); /* add_harmonic / extended data flags */
 
     return bits;
 }
 
 /* Emit the full extension_payload body for EXT_SBR_DATA: the 4-bit extension
  * type, the 1-bit header flag, the optional header, and the channel data. */
-static int emit_sbr_payload(const SBRInfo *sbr, const SbrFrameData *fd, BitStream *bs, int id_aac, int ch0, int sendHeader, bool write)
+static int emit_sbr_payload(const SBRInfo *sbr, const SbrFrameData *fd, BitStream *bs, int id_aac, int ch0, int sendHeader)
 {
     int bits = 5;
-    if (write) PutBit(bs, (SBR_EXT_TYPE_SBR << 1) | (sendHeader & 1), 5);
-    if (sendHeader) bits += write_sbr_header(sbr, bs, write);
-    bits += write_sbr_data(sbr, fd, bs, id_aac, ch0, write);
+    if (bs) PutBit(bs, (SBR_EXT_TYPE_SBR << 1) | (sendHeader & 1), 5);
+    if (sendHeader) bits += write_sbr_header(sbr, bs);
+    bits += write_sbr_data(sbr, fd, bs, id_aac, ch0);
     return bits;
 }
 
@@ -182,7 +193,7 @@ static int SbrWrite(const SBRInfo *sbr, const SbrFrameData *fd, BitStream *bs, i
      * dry (write=false) pass is cheap -- a few hundred fixed-width/Huffman
      * fields, not a hot loop -- re-deriving it from sbr's already-quantized
      * envelope/noise data. */
-    int payloadBits = emit_sbr_payload(sbr, fd, NULL, id_aac, ch0, sendHeader, false);
+    int payloadBits = emit_sbr_payload(sbr, fd, NULL, id_aac, ch0, sendHeader);
     int fillBytes = (payloadBits + 7) / 8;
     int padBits = fillBytes * 8 - payloadBits;
 
@@ -204,7 +215,7 @@ static int SbrWrite(const SBRInfo *sbr, const SbrFrameData *fd, BitStream *bs, i
         PutBit(bs, fillBytes - 14, 8);
         totalBits = 15;
     }
-    emit_sbr_payload(sbr, fd, bs, id_aac, ch0, sendHeader, true);
+    emit_sbr_payload(sbr, fd, bs, id_aac, ch0, sendHeader);
     if (padBits > 0) PutBit(bs, 0, padBits);
 
     return totalBits + payloadBits + padBits;

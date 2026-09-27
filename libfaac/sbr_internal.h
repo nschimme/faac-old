@@ -33,15 +33,11 @@ typedef struct SBRChannel {
  * slot and SbrWrite reads an older one, so the delay costs a ring index. Caching
  * a copy anywhere else reintroduces the skew this ring exists to remove. */
 typedef struct SbrFrameData {
-    int numEnvelopes;
-    int eff_amp_res;
-    SbrFrameClass frameClass;
-    int tEnv[SBR_MAX_ENVELOPES + 1];
-    int bsPointer;
-    int freqRes; /* 1 = high-res band table, 0 = low-res (half the bands) */
     /* The noise floor and inverse-filter mode are stream constants
      * (SBR_NOISE_LEVEL_DEFAULT, SBR_INVF_MODE), so only the envelope is carried. */
     struct {
+        SbrGrid grid;
+        int eff_amp_res;
         int envData[SBR_MAX_ENVELOPES][SBR_MAX_BANDS];
     } ch[MAX_CHANNELS];
 } SbrFrameData;
@@ -95,6 +91,12 @@ struct SBRContext {
 
     /* Shared signal analysis */
     SignalAnalysis  signalAnalysis;
+    /* Three analysed frames: target, N+1 and N+2.  The target is finalized
+       into its already-reserved payload FIFO slot only after the latter two
+       exist. */
+    SbrAnalysisFrame analysisFIFO[LOOKAHEAD_DEPTH + 1];
+    int              analysisHead;
+    int              analysisCount;
     /* Coded-payload delay ring; see SBR_FRAME_FIFO. frameHead is the newest
        entry, so its successor (frameHead + 1) % SBR_FRAME_FIFO is the oldest --
        the payload the current access unit emits. */
@@ -104,14 +106,14 @@ struct SBRContext {
 
 /* The envelope band table this frame codes over. The quantizer and the writer
  * must agree on it, and the decoder picks the same one from bs_freq_res. */
-static inline int sbr_env_bands(const SBRInfo *sbr, const SbrFrameData *fd)
+static inline int sbr_env_bands(const SBRInfo *sbr, const SbrGrid *grid, int e)
 {
-    return fd->freqRes ? sbr->numBands : sbr->numBandsLow;
+    return grid->freqRes[e] ? sbr->numBands : sbr->numBandsLow;
 }
 
-static inline const int *sbr_env_edges(const SBRInfo *sbr, const SbrFrameData *fd)
+static inline const int *sbr_env_edges(const SBRInfo *sbr, const SbrGrid *grid, int e)
 {
-    return fd->freqRes ? sbr->bandEdges : sbr->bandEdgesLow;
+    return grid->freqRes[e] ? sbr->bandEdges : sbr->bandEdgesLow;
 }
 
 SBRInfo *SbrInit(int channels, int sampleRate, unsigned long bitRate);
@@ -121,7 +123,8 @@ void SbrUpdate(SBRInfo *sbr, unsigned long bitRate);
 void SbrEnd(SBRInfo *sbr);
 
 void SbrQmfAnalysis(SBRInfo *sbr, const float * restrict ovl_pos, float * restrict energy, int kx, int k2);
-/* Quantizes this frame's payload directly into *fd (a delay-line slot). */
-void SbrEncode(SBRInfo *sbr, float *timeDomain[MAX_CHANNELS], int numChannels, const bool *isLfe, int numSamples, struct SignalAnalysis *sa, SbrFrameData *fd);
+/* Quantizes a finalized analysis frame directly into its payload-FIFO slot. */
+void SbrEncode(SBRInfo *sbr, int numChannels, const bool *isLfe,
+               const SbrAnalysisFrame *frame, SbrFrameData *fd);
 
 #endif

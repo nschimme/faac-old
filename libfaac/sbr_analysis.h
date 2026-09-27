@@ -27,37 +27,55 @@ extern "C" {
 #endif
 
 #ifndef SBR_MAX_ENVELOPES
-#define SBR_MAX_ENVELOPES 2
+#define SBR_MAX_ENVELOPES 5
 #endif
 
 struct SBRInfo;
+struct SbrFrameData;
+
+typedef struct {
+    SbrFrameClass frameClass;
+    int numEnvelopes;
+    int tEnv[SBR_MAX_ENVELOPES + 1];
+    int bsPointer;
+    int freqRes[SBR_MAX_ENVELOPES];
+} SbrGrid;
 
 typedef struct SignalAnalysisChannel {
     int       transientSlot;
     float transientStrength;
+    int       trailingBorder;
+    SbrGrid grid;
+    int envSampled[SBR_MAX_ENVELOPES];
 } SignalAnalysisChannel;
+
+/* Raw SBR measurements for one input frame.  These are deliberately slot
+ * energies, rather than PCM or QMF samples: grid selection happens two frames
+ * later, when enough context exists, and can then re-bin them without an
+ * allocation or a second QMF transform. */
+typedef struct SbrAnalysisFrame {
+    int numSlots;
+    int sampled[32];
+    float totalE[MAX_CHANNELS][32];
+    float bandE[MAX_CHANNELS][32][SBR_QMF_BANDS_64];
+} SbrAnalysisFrame;
 
 typedef struct SignalAnalysis {
     int numSlots;
     int sampled;
 
-    /* Frame envelope grid configuration. Synchronized across all channels. */
-    SbrFrameClass frameClass;
-    int numEnvelopes;
-    int tEnv[SBR_MAX_ENVELOPES + 1];
-    int bsPointer;
-    int envSampled[SBR_MAX_ENVELOPES];
-
     /* Block switching needs a decision for every core channel, so pass 1 runs
        full width. */
     SignalAnalysisChannel ch[MAX_CHANNELS];
 
-    /* Per-envelope QMF band energy, binned over the grid above; only the first
-       numEnvelopes rows are written. */
-    float bandE[MAX_CHANNELS][SBR_MAX_ENVELOPES][SBR_QMF_BANDS_64];
 } SignalAnalysis;
 
-void SbrAnalyze(SignalAnalysis *sa, float *fullPtrs[], int nch, const bool *isLfe, int numSamples, struct SBRInfo *sbr);
+void SbrAnalyzeFrame(SbrAnalysisFrame *frame, float *fullPtrs[], int nch,
+                     const bool *isLfe, int numSamples, struct SBRInfo *sbr);
+void SbrFinalizeFrame(SignalAnalysis *sa, const SbrAnalysisFrame *frame,
+                      const SbrAnalysisFrame *next, const SbrAnalysisFrame *ahead,
+                      int nch, const bool *isLfe, struct SBRInfo *sbr,
+                      struct SbrFrameData *fd);
 
 #ifdef __cplusplus
 }
