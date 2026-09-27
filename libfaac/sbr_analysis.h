@@ -27,7 +27,7 @@ extern "C" {
 #endif
 
 #ifndef SBR_MAX_ENVELOPES
-#define SBR_MAX_ENVELOPES 5
+#define SBR_MAX_ENVELOPES 2
 #endif
 
 struct SBRInfo;
@@ -57,7 +57,6 @@ typedef struct SignalAnalysis {
     float bandE[MAX_CHANNELS][SBR_MAX_ENVELOPES][SBR_QMF_BANDS_64];
 } SignalAnalysis;
 
-#include "blockswitch.h"
 void SbrAnalyze(SignalAnalysis *sa, float *fullPtrs[], int nch, const bool *isLfe, int numSamples, struct SBRInfo *sbr);
 
 #ifdef __cplusplus
