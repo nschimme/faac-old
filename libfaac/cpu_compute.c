@@ -25,8 +25,6 @@
 # if defined(__linux__)
 #  include <sys/auxv.h>
 #  include <asm/hwcap.h>
-# elif defined(__APPLE__)
-#  include <sys/sysctl.h>
 # endif
 #endif
 
@@ -74,11 +72,6 @@ CPUCaps get_cpu_caps(void)
 # if defined(__linux__) && defined(HWCAP_SVE)
     unsigned long hwcap = getauxval(AT_HWCAP);
     if (hwcap & HWCAP_SVE)
-        caps |= CPU_CAP_SVE;
-# elif defined(__APPLE__)
-    int val = 0;
-    size_t len = sizeof(val);
-    if (sysctlbyname("hw.optional.arm.FEAT_SVE", &val, &len, NULL, 0) == 0 && val == 1)
         caps |= CPU_CAP_SVE;
 # endif
 #endif
