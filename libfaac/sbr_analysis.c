@@ -29,11 +29,53 @@ void SbrAnalyzeFrame(SbrAnalysisFrame *f, float *in[], int nch, const bool *lfe,
     }
 }
 
+typedef struct {
+    int numBorders;
+    int borders[16];
+    int freqRes[16];
+    int transientBorderIdx;
+} WorkingGrid;
+
+static int get_detector_offset(int T)
+{
+    return (T == 18) ? 8 : 4;
+}
+
+static int get_min_join(int T)
+{
+    return (T == 9) ? 2 : 4;
+}
+
+static int get_max_join(int T)
+{
+    if (T == 9) return 8;
+    if (T == 18) return 15;
+    return 12;
+}
+
+static int get_overlap_cap(int T, int pos)
+{
+    if (T == 16) {
+        if (pos < 4) return 6;
+        if (pos == 4 || pos == 5) return 4;
+        return 8;
+    }
+    if (T == 15) {
+        if (pos < 4) return 5;
+        if (pos == 4 || pos == 5) return 3;
+        return 7;
+    }
+    return 8;
+}
+
 static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, int attack, int pos, int split, int fixedRightBorder)
 {
     SbrGrid g = { 0 };
     int T = slots;
-    int det_offset = (T == 18) ? 8 : 4;
+    int det_offset = get_detector_offset(T);
+    int min_join = get_min_join(T);
+    int max_join = get_max_join(T);
+    int ovl_cap = get_overlap_cap(T, pos);
 
     /* Fixed right border request suppresses attack flag and clears spread BEFORE applying transition table */
     if (fixedRightBorder) {
@@ -89,60 +131,181 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
             g.freqRes[1] = 1;
         }
         g.bsPointer = 0;
-    } else if (curr == SBR_FRAME_CLASS_FIXVAR) {
+    } else if (curr == SBR_FRAME_CLASS_FIXVAR || (curr == SBR_FRAME_CLASS_VARVAR && attack)) {
         int A = pos + det_offset;
-        int rel = (A < T && A > 0) ? A : (T / 2);
-        rel = (rel + 1) & ~1;
-        if (rel < 2) rel = 2;
-        if (rel > T - 2) rel = T - 2;
+        WorkingGrid wg = { 0 };
 
-        g.numEnvelopes = 2;
-        g.tEnv[0] = 0;
-        g.tEnv[1] = rel;
-        g.tEnv[2] = T;
-        g.freqRes[0] = 1;
-        g.freqRes[1] = 1;
-        g.bsPointer = 1;
-        ac->spread = false;
+        if (curr == SBR_FRAME_CLASS_VARVAR && attack && ac->followUp.numBorders > 0) {
+            /* Join retained old borders to new attack design */
+            int last_old = ac->followUp.borders[0];
+            if (last_old < A - min_join) {
+                wg.borders[wg.numBorders] = last_old;
+                wg.freqRes[wg.numBorders] = ac->followUp.freqRes[0];
+                wg.numBorders++;
+            }
+        } else {
+            /* Gap before A */
+            int cur_b = 0;
+            while (A - cur_b > max_join) {
+                int seg = (A - cur_b > 8) ? 8 : (A - cur_b);
+                seg = (seg + 1) & ~1;
+                if (seg < 2) seg = 2;
+                cur_b += seg;
+                wg.borders[wg.numBorders] = cur_b;
+                wg.freqRes[wg.numBorders] = 1;
+                wg.numBorders++;
+            }
+        }
 
+        /* Attack mandatory initial borders: A, A+2, A+6 */
+        wg.borders[wg.numBorders] = A;
+        wg.freqRes[wg.numBorders] = 0;
+        wg.transientBorderIdx = wg.numBorders;
+        wg.numBorders++;
+
+        wg.borders[wg.numBorders] = A + 2;
+        wg.freqRes[wg.numBorders] = 0;
+        wg.numBorders++;
+
+        wg.borders[wg.numBorders] = A + 6;
+        wg.freqRes[wg.numBorders] = 1;
+        wg.numBorders++;
+
+        /* Region after A+6 */
+        int last_b = A + 6;
+        int post_cap = (ovl_cap < max_join) ? ovl_cap : max_join;
+
+        /* Find last border strictly before T */
+        int last_inside = 0;
+        for (int i = 0; i < wg.numBorders; i++) {
+            if (wg.borders[i] < T) {
+                last_inside = wg.borders[i];
+            }
+        }
+
+        int remainder = T - last_inside;
+        if (remainder > 0 && remainder < min_join) {
+            /* Spreading trigger: append high-resolution border 8 slots later */
+            wg.borders[wg.numBorders] = last_inside + 8;
+            wg.freqRes[wg.numBorders] = 1;
+            wg.numBorders++;
+            ac->spread = true;
+        } else {
+            while (last_b < T + min_join) {
+                last_b += post_cap;
+                wg.borders[wg.numBorders] = last_b;
+                wg.freqRes[wg.numBorders] = 1;
+                wg.numBorders++;
+            }
+            ac->spread = false;
+        }
+
+        /* Find common border at or after T */
+        int c_idx = 0;
+        while (c_idx < wg.numBorders && wg.borders[c_idx] < T) {
+            c_idx++;
+        }
+        if (c_idx >= wg.numBorders) {
+            wg.borders[wg.numBorders] = T;
+            wg.freqRes[wg.numBorders] = 1;
+            c_idx = wg.numBorders;
+            wg.numBorders++;
+        }
+
+        int common_border = wg.borders[c_idx];
+
+        /* Build current frame grid */
+        if (curr == SBR_FRAME_CLASS_FIXVAR) {
+            g.numEnvelopes = c_idx;
+            g.tEnv[0] = 0;
+            for (int i = 1; i <= c_idx; i++) {
+                g.tEnv[i] = wg.borders[i - 1];
+            }
+            /* Transmit frequency flags in reverse order for FIXVAR */
+            for (int e = 0; e < g.numEnvelopes; e++) {
+                g.freqRes[g.numEnvelopes - 1 - e] = wg.freqRes[e];
+            }
+            /* Pointer counts backward from trailing edge toward transient border */
+            int p = 0;
+            for (int e = g.numEnvelopes; e >= 1; e--) {
+                if (e - 1 == wg.transientBorderIdx) {
+                    p = g.numEnvelopes - e + 1;
+                    break;
+                }
+            }
+            g.bsPointer = p;
+        } else { /* VARVAR new attack */
+            int leading = (ac->followUp.numBorders > 0) ? ac->followUp.borders[0] : 0;
+            g.tEnv[0] = leading;
+            g.numEnvelopes = c_idx;
+            for (int i = 1; i < c_idx; i++) {
+                g.tEnv[i] = wg.borders[i - 1];
+            }
+            g.tEnv[g.numEnvelopes] = common_border;
+            for (int e = 0; e < g.numEnvelopes; e++) {
+                g.freqRes[e] = wg.freqRes[e];
+            }
+            g.bsPointer = (wg.transientBorderIdx >= 0) ? (wg.transientBorderIdx + 1) : 0;
+        }
+
+        /* Save follow-up state for next frame (subtracting T) */
         ac->followUp.numBorders = 0;
-        ac->followUp.transientIdx = -1;
+        for (int i = c_idx; i < wg.numBorders; i++) {
+            ac->followUp.borders[ac->followUp.numBorders] = wg.borders[i] - T;
+            ac->followUp.freqRes[ac->followUp.numBorders] = wg.freqRes[i];
+            ac->followUp.numBorders++;
+        }
+
     } else if (curr == SBR_FRAME_CLASS_VARFIX) {
-        int leading = (ac->followUp.numBorders > 0) ? ac->followUp.borders[0] : 0;
-        int rel = (leading + T) / 2;
-        rel = (rel + 1) & ~1;
-        if (rel <= leading) rel = leading + 2;
-        if (rel >= T) rel = T - 2;
-
-        g.numEnvelopes = 2;
-        g.tEnv[0] = leading;
-        g.tEnv[1] = rel;
-        g.tEnv[2] = T;
-        g.freqRes[0] = 1;
-        g.freqRes[1] = 1;
-        g.bsPointer = 0;
         ac->spread = false;
-
+        if (ac->followUp.numBorders > 0) {
+            g.numEnvelopes = ac->followUp.numBorders;
+            g.tEnv[0] = ac->followUp.borders[0];
+            for (int e = 1; e < g.numEnvelopes; e++) {
+                g.tEnv[e] = ac->followUp.borders[e];
+            }
+            g.tEnv[g.numEnvelopes] = T;
+            for (int e = 0; e < g.numEnvelopes; e++) {
+                g.freqRes[e] = ac->followUp.freqRes[e];
+            }
+            g.bsPointer = 0;
+        } else {
+            g.numEnvelopes = 2;
+            g.tEnv[0] = 0;
+            g.tEnv[1] = (T + 1) / 2;
+            g.tEnv[2] = T;
+            g.freqRes[0] = 1;
+            g.freqRes[1] = 1;
+            g.bsPointer = 0;
+        }
         ac->followUp.numBorders = 0;
-        ac->followUp.transientIdx = -1;
-    } else if (curr == SBR_FRAME_CLASS_VARVAR) {
+
+    } else if (curr == SBR_FRAME_CLASS_VARVAR && ac->spread) {
+        /* Consume spread VARVAR */
         ac->spread = false;
-        int A = pos + det_offset;
-        int rel = (A < T && A > 0) ? A : (T / 2);
-        rel = (rel + 1) & ~1;
-        if (rel < 2) rel = 2;
-        if (rel > T - 2) rel = T - 2;
-
-        g.numEnvelopes = 2;
-        g.tEnv[0] = 0;
-        g.tEnv[1] = rel;
-        g.tEnv[2] = T;
-        g.freqRes[0] = 1;
-        g.freqRes[1] = 1;
-        g.bsPointer = 1;
-
-        ac->followUp.numBorders = 0;
-        ac->followUp.transientIdx = -1;
+        if (ac->followUp.numBorders > 0) {
+            g.numEnvelopes = ac->followUp.numBorders;
+            g.tEnv[0] = ac->followUp.borders[0];
+            for (int e = 1; e <= g.numEnvelopes; e++) {
+                g.tEnv[e] = (e < ac->followUp.numBorders) ? ac->followUp.borders[e] : T;
+            }
+            for (int e = 0; e < g.numEnvelopes; e++) {
+                g.freqRes[e] = ac->followUp.freqRes[e];
+            }
+            g.bsPointer = 0;
+        } else {
+            g.numEnvelopes = 2;
+            g.tEnv[0] = 0;
+            g.tEnv[1] = 8;
+            g.tEnv[2] = 16;
+            g.freqRes[0] = 1;
+            g.freqRes[1] = 1;
+            g.bsPointer = 0;
+        }
+        /* Save single high-resolution leading border for final VARFIX */
+        ac->followUp.numBorders = 1;
+        ac->followUp.borders[0] = 0;
+        ac->followUp.freqRes[0] = 1;
     }
 
     ac->grid = g;
@@ -152,30 +315,51 @@ static void measure(SignalAnalysisChannel *ac, const SbrAnalysisFrame *f, const 
 {
     (void)next; (void)ahead;
     int slots = f->numSlots;
-    float mean_e = 0.0f;
-    for (int s = 0; s < slots; s++) mean_e += f->totalE[ch][s];
-    mean_e /= (float)(slots ? slots : 1);
+    float band_thresh[SBR_QMF_BANDS_64] = { 0 };
+    float scores[32] = { 0 };
 
-    int at = -1;
-    float max_jump = 0.0f;
+    /* Calculate QMF band thresholds and score accumulation */
+    for (int k = 0; k < SBR_QMF_BANDS_64; k++) {
+        float mean = 0.0f;
+        for (int s = 0; s < slots; s++) mean += f->bandE[ch][s][k];
+        mean /= (float)(slots ? slots : 1);
 
-    for (int s = 1; s < slots; s++) {
-        float prev = f->totalE[ch][s - 1];
-        float curr = f->totalE[ch][s];
-        float ratio = curr / (prev + SBR_ENERGY_FLOOR);
-        float jump = (curr - prev) / (mean_e + SBR_ENERGY_FLOOR);
+        float var = 0.0f;
+        for (int s = 0; s < slots; s++) {
+            float d = f->bandE[ch][s][k] - mean;
+            var += d * d;
+        }
+        float stddev = sqrtf(var / (float)(slots ? slots : 1));
+        band_thresh[k] = 0.34f * stddev + 1e-4f;
+    }
 
-        if (ratio > 8.0f && jump > 8.0f && jump > max_jump) {
-            max_jump = jump;
-            at = s;
+    /* Accumulate position scores */
+    for (int s = 1; s < slots - 1; s++) {
+        float score = 0.0f;
+        for (int k = 0; k < SBR_QMF_BANDS_64; k++) {
+            float r_sum = f->bandE[ch][s][k] + f->bandE[ch][s + 1][k];
+            float l_sum = f->bandE[ch][s - 1][k];
+            float diff = r_sum - l_sum;
+            if (diff > band_thresh[k]) score += (diff - band_thresh[k]);
+        }
+        scores[s] = score;
+    }
+
+    /* Report first position where score drops below 90% of preceding score and preceding score > thresh */
+    float norm_thresh = (float)SBR_TRANSIENT_THRESH_DEFAULT / (float)SBR_QMF_BANDS_64;
+    int reported_slot = -1;
+    for (int s = 1; s < slots - 1; s++) {
+        if (scores[s] > norm_thresh && scores[s + 1] < 0.90f * scores[s]) {
+            reported_slot = s;
+            break;
         }
     }
 
-    if (at >= 0) {
+    if (reported_slot >= 0) {
         *attack = 1;
-        *pos = at;
-        ac->transientPos = at;
-        ac->transientStrength = max_jump;
+        *pos = reported_slot;
+        ac->transientPos = reported_slot;
+        ac->transientStrength = scores[reported_slot];
         *split = 0;
     } else {
         *attack = 0;
@@ -193,6 +377,20 @@ static void measure(SignalAnalysisChannel *ac, const SbrAnalysisFrame *f, const 
     }
 }
 
+static bool check_grid_equal(const SbrGrid *g1, const SbrGrid *g2)
+{
+    if (g1->frameClass != g2->frameClass) return false;
+    if (g1->numEnvelopes != g2->numEnvelopes) return false;
+    if (g1->bsPointer != g2->bsPointer) return false;
+    for (int e = 0; e <= g1->numEnvelopes; e++) {
+        if (g1->tEnv[e] != g2->tEnv[e]) return false;
+    }
+    for (int e = 0; e < g1->numEnvelopes; e++) {
+        if (g1->freqRes[e] != g2->freqRes[e]) return false;
+    }
+    return true;
+}
+
 void SbrFinalizeFrame(SignalAnalysis *sa, const SbrAnalysisFrame *f, const SbrAnalysisFrame *next, const SbrAnalysisFrame *ahead, int nch, const bool *lfe, const int *coreBlockType, struct SBRInfo *sbr, struct SbrFrameData *fd)
 {
     (void)coreBlockType;
@@ -208,14 +406,17 @@ void SbrFinalizeFrame(SignalAnalysis *sa, const SbrAnalysisFrame *f, const SbrAn
     }
 
     if (nch == 2 && !lfe[0] && !lfe[1]) {
-        int shared_attack = attack[0] || attack[1];
-        int shared_pos = (attack[0] && attack[1]) ? ((pos[0] < pos[1]) ? pos[0] : pos[1]) : (attack[0] ? pos[0] : pos[1]);
-        int shared_split = !shared_attack && (split[0] || split[1]);
-        choose_grid(&sa->ch[0], sbr->numEnvFixFix, f->numSlots, shared_attack, shared_pos, shared_split, 0);
-        sa->ch[1].grid = sa->ch[0].grid;
-        sa->ch[1].prevClass = sa->ch[0].prevClass;
-        sa->ch[1].spread = sa->ch[0].spread;
-        sa->ch[1].followUp = sa->ch[0].followUp;
+        /* Construct individual channel grids first */
+        choose_grid(&sa->ch[0], sbr->numEnvFixFix, f->numSlots, attack[0], pos[0], split[0], 0);
+        choose_grid(&sa->ch[1], sbr->numEnvFixFix, f->numSlots, attack[1], pos[1], split[1], 0);
+
+        /* In coupled stereo, if grids match, share channel 0's grid */
+        if (check_grid_equal(&sa->ch[0].grid, &sa->ch[1].grid)) {
+            sa->ch[1].grid = sa->ch[0].grid;
+            sa->ch[1].prevClass = sa->ch[0].prevClass;
+            sa->ch[1].spread = sa->ch[0].spread;
+            sa->ch[1].followUp = sa->ch[0].followUp;
+        }
     } else {
         for (int ch = 0; ch < nch; ch++) {
             if (lfe[ch]) continue;
