@@ -117,43 +117,42 @@ def compute_expanded_features_v3(df):
 
     return feats, slots
 
-def derive_tenv_and_fres(p_c, p_ne, o_slot, prev_last):
-    if p_c == 0: # FIXFIX
-        p_tenv = [0, 8, 16] if p_ne == 2 else [0, 16]
-        p_fres = [1, 1] if p_ne == 2 else [1]
-    elif p_c == 1: # FIXVAR
+def derive_ref_spec_grid(curr_class, o_slot, prev_tlast):
+    """
+    Constructs grid parameters matching canonical SBR spec:
+    T=16 slots.
+    """
+    if curr_class == 0: # FIXFIX
+        num_env = 2
+        t_env = [0, 8, 16]
+        f_res = [1, 1]
+    elif curr_class == 1: # FIXVAR
+        num_env = 2
         b1 = int(o_slot)
-        b2 = min(15, b1 + 4)
-        b3 = min(16, b2 + 4)
-        if p_ne == 4:
-            p_tenv = [0, b1, b2, b3, 18]
-            p_fres = [1, 0, 0, 1]
-        elif p_ne == 3:
-            p_tenv = [0, b1, b2, 16]
-            p_fres = [1, 0, 1]
-        else:
-            p_tenv = [0, b1, 16]
-            p_fres = [1, 1]
-    elif p_c == 2: # VARFIX
-        t0 = max(0, min(16, int(prev_last - 16))) if prev_last > 16 else max(0, min(3, int(o_slot)))
-        p_tenv = [t0, 7, 16]
-        p_fres = [1, 1]
+        t_env = [0, b1, 16]
+        f_res = [1, 1]
+    elif curr_class == 2: # VARFIX
+        num_env = 2
+        t0 = max(0, min(16, int(prev_tlast - 16))) if prev_tlast > 16 else 0
+        t_env = [t0, 7, 16]
+        f_res = [1, 1]
     else: # VARVAR
-        b0 = max(0, min(16, int(prev_last - 16))) if prev_last > 16 else max(0, min(2, int(o_slot) - 2))
+        num_env = 4
+        t0 = max(0, min(16, int(prev_tlast - 16))) if prev_tlast > 16 else 0
         b1 = int(o_slot)
         b2 = min(12, b1 + 4)
         b3 = min(15, b2 + 4)
-        p_tenv = [b0, b1, b2, b3, 18]
-        p_fres = [1, 0, 0, 1]
-    return p_tenv, p_fres
+        t_env = [t0, b1, b2, b3, 18]
+        f_res = [1, 0, 0, 1]
 
-def run_recursive_simulation_v3(df, feats_df, dt_c, dt_ne, test_mask):
+    return num_env, t_env, f_res
+
+def run_canonical_spec_state_machine(df, test_mask, pred_attacks):
     """
-    Sequential simulation feeding model's OWN previous frame predictions
-    while utilizing 1-frame future QMF slot energy look-ahead.
+    Executes canonical reference SBR state transition table.
     """
     test_df = df[test_mask].copy().reset_index(drop=True)
-    test_feats = feats_df[test_mask].copy().reset_index(drop=True)
+    test_df['pred_attack'] = pred_attacks
 
     pred_classes = []
     pred_nenvs = []
@@ -161,48 +160,57 @@ def run_recursive_simulation_v3(df, feats_df, dt_c, dt_ne, test_mask):
 
     groups = test_df.groupby(['clip', 'channel'], sort=False)
 
-    for (clip_id, ch), group in groups:
+    for (clip, ch), group in groups:
         indices = group.index.tolist()
 
-        # Sentinels for frame 0
-        prev_p_c = -1
-        prev_p_ne = -1
-        prev_p_t0 = -1
-        prev_p_tlast = -1
+        prev_class = 0 # FIXFIX
+        spread = False
+        prev_tlast = 16
 
         for idx in indices:
-            row_feat = test_feats.iloc[[idx]].copy()
+            attack = test_df.at[idx, 'pred_attack']
+            o_slot = test_df.at[idx, 'faac_transientSlot']
 
-            # Override prior-state columns with model's own predictions
-            row_feat['prev_ref_frameClass'] = prev_p_c
-            row_feat['prev_ref_numEnvelopes'] = prev_p_ne
-            row_feat['prev_ref_tEnv0'] = prev_p_t0
-            row_feat['prev_ref_tEnv_last'] = prev_p_tlast
+            # Canonical Reference Transition Table
+            if prev_class == 0: # FIXFIX
+                curr_class = 1 if attack else 0
+            elif prev_class == 1: # FIXVAR
+                if attack:
+                    curr_class = 3
+                    spread = False
+                else:
+                    curr_class = 3 if spread else 2
+                    spread = False
+            elif prev_class == 2: # VARFIX
+                curr_class = 1 if attack else 0
+            elif prev_class == 3: # VARVAR
+                if attack:
+                    curr_class = 3
+                    spread = False
+                else:
+                    curr_class = 3 if spread else 2
+                    spread = False
 
-            p_c = dt_c.predict(row_feat)[0]
-            p_ne = dt_ne.predict(row_feat)[0]
+            p_ne, p_tenv, p_fres = derive_ref_spec_grid(curr_class, o_slot, prev_tlast)
 
-            o_slot = row_feat['max_onset_slot'].values[0]
-            p_tenv, p_fres = derive_tenv_and_fres(p_c, p_ne, o_slot, prev_p_tlast)
-
-            pred_classes.append(p_c)
+            pred_classes.append(curr_class)
             pred_nenvs.append(p_ne)
             pred_tenvs.append(p_tenv)
 
-            # Update state for next frame
-            prev_p_c = p_c
-            prev_p_ne = p_ne
-            prev_p_t0 = p_tenv[0]
-            prev_p_tlast = p_tenv[-1]
+            prev_class = curr_class
+            prev_tlast = p_tenv[-1]
 
     test_df['pred_frameClass'] = pred_classes
     test_df['pred_numEnvelopes'] = pred_nenvs
 
     return test_df, pred_tenvs
 
-def evaluate_lookahead_v3(df_path):
+def evaluate_canonical_spec(df_path):
     df = pd.read_csv(df_path)
-    feats_df, slots_all = compute_expanded_features_v3(df)
+    feats_df, _ = compute_expanded_features_v3(df)
+
+    # Ground Truth Attack flag:
+    gt_attack = (df['ref_frameClass'] == 1) | ((df['ref_frameClass'] == 3) & (df['prev_ref_frameClass'].isin([1, 3])))
 
     unique_clips = sorted(df['clip'].unique())
     np.random.seed(42)
@@ -212,81 +220,79 @@ def evaluate_lookahead_v3(df_path):
     train_mask = df['clip'].isin(train_clips)
     test_mask = df['clip'].isin(test_clips)
 
-    X_train = feats_df[train_mask]
-    X_test = feats_df[test_mask]
+    # Features for Attack classifier (including current & next-frame look-ahead)
+    X_cols = ['total_energy', 'log_total_energy', 'max_energy', 'peak_to_mean', 'max_onset_ratio', 'max_onset_slot', 'h2_h1_ratio', 'centroid', 'next_max_energy', 'next_total_energy', 'next_max_onset_ratio', 'next_energy_ratio']
 
-    y_train_c = df.loc[train_mask, 'ref_frameClass']
-    y_test_c = df.loc[test_mask, 'ref_frameClass']
+    X_train, y_train_att = feats_df.loc[train_mask, X_cols], gt_attack[train_mask]
+    X_test, y_test_att = feats_df.loc[test_mask, X_cols], gt_attack[test_mask]
 
-    y_train_ne = df.loc[train_mask, 'ref_numEnvelopes']
-    y_test_ne = df.loc[test_mask, 'ref_numEnvelopes']
+    dt_attack = DecisionTreeClassifier(max_depth=5, random_state=42)
+    dt_attack.fit(X_train, y_train_att)
+
+    pred_att_test = dt_attack.predict(X_test)
 
     print(f"\n==========================================")
-    print(f"Evaluating V3 Look-Ahead Dataset: {df_path}")
+    print(f"Evaluating Canonical Reference Spec on {df_path}")
     print(f"==========================================")
+    print(f"Attack Classifier Test Acc: {accuracy_score(y_test_att, pred_att_test)*100:.2f}%")
+    print(classification_report(y_test_att, pred_att_test, target_names=['No Attack', 'Attack']))
 
-    for depth in range(3, 9):
-        dt_c = DecisionTreeClassifier(max_depth=depth, random_state=42)
-        dt_c.fit(X_train, y_train_c)
+    # 1. State Machine with PREDICTED Attack flags
+    spec_pred_df, spec_pred_tenvs = run_canonical_spec_state_machine(df, test_mask, pred_att_test)
+    pred_class_acc = accuracy_score(spec_pred_df['ref_frameClass'], spec_pred_df['pred_frameClass'])
 
-        dt_ne = DecisionTreeClassifier(max_depth=depth, random_state=42)
-        dt_ne.fit(X_train, y_train_ne)
+    pred_matches = 0
+    for i in range(len(spec_pred_df)):
+        ref_c = spec_pred_df.at[i, 'ref_frameClass']
+        ref_ne = spec_pred_df.at[i, 'ref_numEnvelopes']
+        if spec_pred_df.at[i, 'pred_frameClass'] == ref_c and spec_pred_df.at[i, 'pred_numEnvelopes'] == ref_ne:
+            p_tenv = spec_pred_tenvs[i]
+            ref_tenv = [spec_pred_df.at[i, f'ref_tEnv{j}'] for j in range(ref_ne + 1)]
+            borders_ok = True
+            for j in range(min(len(p_tenv), len(ref_tenv))):
+                if ref_tenv[j] != -1:
+                    if abs(p_tenv[j] - ref_tenv[j]) > 2:
+                        borders_ok = False
+                        break
+            if borders_ok:
+                pred_matches += 1
+    pred_full_match = pred_matches / len(spec_pred_df)
 
-        # Ground-truth prior state + 1-frame future look-ahead (ceiling)
-        ceil_pred_c = dt_c.predict(X_test)
-        ceil_pred_ne = dt_ne.predict(X_test)
-        ceil_class_acc = accuracy_score(y_test_c, ceil_pred_c)
+    # 2. State Machine with PERFECT Ground-Truth Attack flags
+    gt_att_test = gt_attack[test_mask].values
+    spec_gt_df, spec_gt_tenvs = run_canonical_spec_state_machine(df, test_mask, gt_att_test)
+    gt_class_acc = accuracy_score(spec_gt_df['ref_frameClass'], spec_gt_df['pred_frameClass'])
 
-        # Real recursive simulation + 1-frame future look-ahead
-        rec_test_df, rec_pred_tenvs = run_recursive_simulation_v3(df, feats_df, dt_c, dt_ne, test_mask)
-        rec_pred_c = rec_test_df['pred_frameClass'].values
-        rec_pred_ne = rec_test_df['pred_numEnvelopes'].values
+    gt_matches = 0
+    for i in range(len(spec_gt_df)):
+        ref_c = spec_gt_df.at[i, 'ref_frameClass']
+        ref_ne = spec_gt_df.at[i, 'ref_numEnvelopes']
+        if spec_gt_df.at[i, 'pred_frameClass'] == ref_c and spec_gt_df.at[i, 'pred_numEnvelopes'] == ref_ne:
+            p_tenv = spec_gt_tenvs[i]
+            ref_tenv = [spec_gt_df.at[i, f'ref_tEnv{j}'] for j in range(ref_ne + 1)]
+            borders_ok = True
+            for j in range(min(len(p_tenv), len(ref_tenv))):
+                if ref_tenv[j] != -1:
+                    if abs(p_tenv[j] - ref_tenv[j]) > 2:
+                        borders_ok = False
+                        break
+            if borders_ok:
+                gt_matches += 1
+    gt_full_match = gt_matches / len(spec_gt_df)
 
-        rec_class_acc = accuracy_score(rec_test_df['ref_frameClass'], rec_pred_c)
-        rec_nenv_acc = accuracy_score(rec_test_df['ref_numEnvelopes'], rec_pred_ne)
+    print("=== Reference State Machine Accuracy Comparison ===")
+    print(f"Spec State Machine (GT Attacks)  | frameClass Acc: {gt_class_acc*100:.2f}% | Strict Full-Match: {gt_full_match*100:.2f}%")
+    print(f"Spec State Machine (Pred Attacks)| frameClass Acc: {pred_class_acc*100:.2f}% | Strict Full-Match: {pred_full_match*100:.2f}%")
 
-        # Strict full match on recursive simulation
-        rec_matches = 0
-        for i in range(len(rec_test_df)):
-            ref_c = rec_test_df.at[i, 'ref_frameClass']
-            ref_ne = rec_test_df.at[i, 'ref_numEnvelopes']
-            if rec_pred_c[i] == ref_c and rec_pred_ne[i] == ref_ne:
-                p_tenv = rec_pred_tenvs[i]
-                ref_tenv = [rec_test_df.at[i, f'ref_tEnv{j}'] for j in range(ref_ne + 1)]
-                borders_ok = True
-                for j in range(min(len(p_tenv), len(ref_tenv))):
-                    if ref_tenv[j] != -1:
-                        if abs(p_tenv[j] - ref_tenv[j]) > 2:
-                            borders_ok = False
-                            break
-                if borders_ok:
-                    rec_matches += 1
-        rec_full_match = rec_matches / len(rec_test_df)
+    print("\n=== Reference State Machine (Pred Attacks) Classification Report ===")
+    print(classification_report(spec_pred_df['ref_frameClass'], spec_pred_df['pred_frameClass'], target_names=['FIXFIX (0)', 'FIXVAR (1)', 'VARFIX (2)', 'VARVAR (3)']))
 
-        print(f"Depth {depth:2d} | Ceiling Acc: {ceil_class_acc*100:.2f}% | Recursive Acc: {rec_class_acc*100:.2f}% | Recursive NumEnv Acc: {rec_nenv_acc*100:.2f}% | Strict Full-Match Rate: {rec_full_match*100:.2f}%")
-
-    # Detailed report for depth 6
-    dt_c_6 = DecisionTreeClassifier(max_depth=6, random_state=42).fit(X_train, y_train_c)
-    dt_ne_6 = DecisionTreeClassifier(max_depth=6, random_state=42).fit(X_train, y_train_ne)
-
-    rec_test_df6, _ = run_recursive_simulation_v3(df, feats_df, dt_c_6, dt_ne_6, test_mask)
-
-    print("\n=== Depth 6 Recursive Simulation Classification Report ===")
-    print(classification_report(rec_test_df6['ref_frameClass'], rec_test_df6['pred_frameClass'], target_names=['FIXFIX (0)', 'FIXVAR (1)', 'VARFIX (2)', 'VARVAR (3)']))
-
-    print("=== Depth 6 Recursive Confusion Matrix ===")
-    cm = confusion_matrix(rec_test_df6['ref_frameClass'], rec_test_df6['pred_frameClass'])
-    print(cm)
-
-    print("\n=== Depth 6 Top Feature Importances (frameClass) ===")
-    importances = sorted(zip(X_train.columns, dt_c_6.feature_importances_), key=lambda x: x[1], reverse=True)
-    for name, imp in importances:
-        if imp > 0.001:
-            print(f"  {name:25s}: {imp*100:.2f}%")
+    print("=== Reference State Machine (Pred Attacks) Confusion Matrix ===")
+    print(confusion_matrix(spec_pred_df['ref_frameClass'], spec_pred_df['pred_frameClass']))
 
 def main():
-    evaluate_lookahead_v3('probe/dataset/sbr_grid_dataset_v2_64k.csv.gz')
-    evaluate_lookahead_v3('probe/dataset/sbr_grid_dataset_v2_96k.csv.gz')
+    evaluate_canonical_spec('probe/dataset/sbr_grid_dataset_v2_64k.csv.gz')
+    evaluate_canonical_spec('probe/dataset/sbr_grid_dataset_v2_96k.csv.gz')
 
 if __name__ == '__main__':
     main()
