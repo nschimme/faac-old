@@ -159,6 +159,16 @@ float RateControlUpdate(RateControl *rc, int payloadBits,
        `fix` alike -- the frame's budget less what SBR was charged, against
        what the core actually spent. */
     int coreTarget = (int)(desbits * RC_BALANCE_AIM) - sbrCharge;
+
+    /* Idea 2: Transient SBR Bit Reservoir Feed-Forward
+       When SBR payload expands during transients (sbrBits > sbrCharge) and bit credit
+       is available (rc->balance > 0), borrow bits from reservoir to maintain AAC core quality. */
+    if (sbrBits > sbrCharge && rc->balance > 0) {
+        int boost = rc->balance / 6;
+        if (boost > desbits / 8) boost = desbits / 8;
+        coreTarget += boost;
+    }
+
     int coreBits = totalBits - sbrBits;
     int lend;
     int bound = RC_BALANCE_FRAMES * desbits;

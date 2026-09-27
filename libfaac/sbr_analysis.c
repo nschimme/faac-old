@@ -77,6 +77,42 @@ static void add_border(WorkingGrid *wg, int border, int res)
     }
 }
 
+static void clean_grid_borders(SbrGrid *g, int T)
+{
+    if (g->numEnvelopes < 1) g->numEnvelopes = 1;
+    if (g->numEnvelopes > SBR_MAX_ENVELOPES) g->numEnvelopes = SBR_MAX_ENVELOPES;
+
+    if (g->frameClass == SBR_FRAME_CLASS_FIXFIX || g->frameClass == SBR_FRAME_CLASS_FIXVAR) {
+        g->tEnv[0] = 0;
+    } else {
+        if (g->tEnv[0] > 3) g->tEnv[0] = 3;
+    }
+
+    if (g->frameClass == SBR_FRAME_CLASS_FIXFIX || g->frameClass == SBR_FRAME_CLASS_VARFIX) {
+        g->tEnv[g->numEnvelopes] = T;
+    } else {
+        if (g->tEnv[g->numEnvelopes] < T) g->tEnv[g->numEnvelopes] = T;
+        if (g->tEnv[g->numEnvelopes] > T + 3) g->tEnv[g->numEnvelopes] = T + 3;
+    }
+
+    int start = g->tEnv[0];
+    int end = g->tEnv[g->numEnvelopes];
+    for (int e = 1; e < g->numEnvelopes; e++) {
+        int target = g->tEnv[e];
+        if (target <= g->tEnv[e - 1]) {
+            target = g->tEnv[e - 1] + 2;
+        }
+        if (target >= end) {
+            target = end - 2;
+        }
+        if (target <= g->tEnv[e - 1]) {
+            target = start + (e * (end - start)) / g->numEnvelopes;
+            target = (target + 1) & ~1;
+        }
+        g->tEnv[e] = target;
+    }
+}
+
 static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, int attack, int pos, int split, int fixedRightBorder, struct SBRInfo *sbr)
 {
     SbrGrid g = { 0 };
@@ -86,7 +122,6 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
     int max_join = get_max_join(T);
     int ovl_cap = get_overlap_cap(T, pos);
 
-    /* Strategy 1: Cap envelopes to 2 for bitrates >= 40k total stereo (>= 20k/ch) */
     int max_env_cap = 5;
     if (sbr && sbr->numChannels > 0 && sbr->bitRate > 0) {
         unsigned long rate_per_ch = sbr->bitRate / sbr->numChannels;
@@ -168,7 +203,7 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
                 seg = (seg + 1) & ~1;
                 if (seg < 2) seg = 2;
                 cur_b += seg;
-                add_border(&wg, cur_b, 1);
+                add_border(&wg, cur_b, 0); /* Idea 3: low-res non-attack gap */
             }
         }
 
@@ -192,28 +227,29 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
 
         int remainder = T - last_inside;
         if (remainder > 0 && remainder < min_join) {
-            /* Spreading trigger: append high-resolution border 8 slots later */
-            add_border(&wg, last_inside + 8, 1);
+            /* Spreading trigger: append border 8 slots later */
+            add_border(&wg, last_inside + 8, 0); /* Idea 3: low-res trailing envelope */
             ac->spread = true;
         } else {
             while (last_b < T + min_join) {
                 last_b += post_cap;
-                add_border(&wg, last_b, 1);
+                add_border(&wg, last_b, 0); /* Idea 3: low-res trailing envelope */
             }
             ac->spread = false;
         }
 
-        /* Find common border at or after T */
+        /* Find common border at or after T, clamped to T + 3 for 2-bit bs_abs_bord_1 field */
         int c_idx = 0;
         while (c_idx < wg.numBorders && wg.borders[c_idx] < T) {
             c_idx++;
         }
         if (c_idx >= wg.numBorders) {
             c_idx = wg.numBorders;
-            add_border(&wg, T, 1);
+            add_border(&wg, T, 0);
         }
 
         int common_border = wg.borders[c_idx];
+        if (common_border > T + 3) common_border = T + 3;
 
         /* Build current frame grid */
         if (curr == SBR_FRAME_CLASS_FIXVAR) {
@@ -243,6 +279,7 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
             g.bsPointer = p;
         } else { /* VARVAR new attack */
             int leading = (ac->followUp.numBorders > 0) ? ac->followUp.borders[0] : 0;
+            if (leading > 3) leading = 3;
             int n_env = c_idx + 1;
             if (n_env > max_env_cap) n_env = max_env_cap;
             g.numEnvelopes = n_env;
@@ -262,7 +299,9 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
         ac->followUp.numBorders = 0;
         for (int i = c_idx; i < wg.numBorders; i++) {
             if (ac->followUp.numBorders < SBR_MAX_ENVELOPES + 1) {
-                ac->followUp.borders[ac->followUp.numBorders] = wg.borders[i] - T;
+                int rel_b = wg.borders[i] - T;
+                if (rel_b < 0) rel_b = 0;
+                ac->followUp.borders[ac->followUp.numBorders] = rel_b;
                 ac->followUp.freqRes[ac->followUp.numBorders] = wg.freqRes[i];
                 ac->followUp.numBorders++;
             }
@@ -274,7 +313,9 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
             int n_env = ac->followUp.numBorders;
             if (n_env > max_env_cap) n_env = max_env_cap;
             g.numEnvelopes = n_env;
-            g.tEnv[0] = ac->followUp.borders[0];
+            int leading = ac->followUp.borders[0];
+            if (leading > 3) leading = 3;
+            g.tEnv[0] = leading;
             for (int e = 1; e < n_env; e++) {
                 g.tEnv[e] = ac->followUp.borders[e];
             }
@@ -288,8 +329,8 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
             g.tEnv[0] = 0;
             g.tEnv[1] = (T + 1) / 2;
             g.tEnv[2] = T;
-            g.freqRes[0] = 1;
-            g.freqRes[1] = 1;
+            g.freqRes[0] = 0; /* Idea 3: low-res trailing envelope */
+            g.freqRes[1] = 0;
             g.bsPointer = 0;
         }
         ac->followUp.numBorders = 0;
@@ -301,9 +342,13 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
             int n_env = ac->followUp.numBorders;
             if (n_env > max_env_cap) n_env = max_env_cap;
             g.numEnvelopes = n_env;
-            g.tEnv[0] = ac->followUp.borders[0];
+            int leading = ac->followUp.borders[0];
+            if (leading > 3) leading = 3;
+            g.tEnv[0] = leading;
             for (int e = 1; e <= n_env; e++) {
-                g.tEnv[e] = (e < ac->followUp.numBorders) ? ac->followUp.borders[e] : (T + 2);
+                int b = (e < ac->followUp.numBorders) ? ac->followUp.borders[e] : (T + 2);
+                if (e == n_env && b > T + 3) b = T + 3;
+                g.tEnv[e] = b;
             }
             for (int e = 0; e < n_env; e++) {
                 g.freqRes[e] = ac->followUp.freqRes[e];
@@ -314,16 +359,20 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
             g.tEnv[0] = 0;
             g.tEnv[1] = 8;
             g.tEnv[2] = 18;
-            g.freqRes[0] = 1;
-            g.freqRes[1] = 1;
+            g.freqRes[0] = 0;
+            g.freqRes[1] = 0;
             g.bsPointer = 0;
         }
-        /* Save single high-resolution leading border for final VARFIX */
+        /* Save single low-resolution leading border for final VARFIX */
         ac->followUp.numBorders = 1;
-        ac->followUp.borders[0] = g.tEnv[g.numEnvelopes] - T;
-        ac->followUp.freqRes[0] = 1;
+        int rel_lead = g.tEnv[g.numEnvelopes] - T;
+        if (rel_lead < 0) rel_lead = 0;
+        if (rel_lead > 3) rel_lead = 3;
+        ac->followUp.borders[0] = rel_lead;
+        ac->followUp.freqRes[0] = 0;
     }
 
+    clean_grid_borders(&g, T);
     ac->grid = g;
 }
 
@@ -361,15 +410,13 @@ static void measure(SignalAnalysisChannel *ac, const SbrAnalysisFrame *f, const 
         scores[s] = score;
     }
 
-    /* Rate-aware transient threshold scaling:
-     * When bitrate per channel is <= 32000 BPS (64k stereo or 24-56k stereo),
-     * scale threshold up so multi-envelope SBR payloads are reserved for strong transients,
-     * protecting core AAC-LC quantization bits and maximizing ViSQOL MOS. */
+    /* Idea 1: Smooth bitrate-aware transient threshold calibration across 16k-32k/ch */
     float norm_thresh = (float)SBR_TRANSIENT_THRESH_DEFAULT / (float)SBR_QMF_BANDS_64;
     if (sbr && sbr->numChannels > 0 && sbr->bitRate > 0) {
         unsigned long rate_per_ch = sbr->bitRate / sbr->numChannels;
         if (rate_per_ch <= 32000) {
-            float scale = 1.0f + 2.5f * (1.0f - (float)rate_per_ch / 32000.0f);
+            float norm_diff = 1.0f - (float)rate_per_ch / 32000.0f;
+            float scale = 1.0f + 3.0f * powf(norm_diff, 1.5f);
             norm_thresh *= scale;
         }
     }
@@ -433,19 +480,19 @@ void SbrFinalizeFrame(SignalAnalysis *sa, const SbrAnalysisFrame *f, const SbrAn
     }
 
     if (nch == 2 && !lfe[0] && !lfe[1]) {
-        /* Construct individual channel grids first */
-        choose_grid(&sa->ch[0], sbr->numEnvFixFix, f->numSlots, attack[0], pos[0], split[0], 0, sbr);
-        choose_grid(&sa->ch[1], sbr->numEnvFixFix, f->numSlots, attack[1], pos[1], split[1], 0, sbr);
+        int shared_attack = attack[0] || attack[1];
+        int shared_pos = (attack[0] && attack[1]) ? ((pos[0] < pos[1]) ? pos[0] : pos[1]) : (attack[0] ? pos[0] : pos[1]);
+        int shared_split = !shared_attack && (split[0] || split[1]);
 
-        /* In coupled stereo, if grids match or if bitrates are constrained (<= 32k/ch),
-         * share channel 0's grid to save SBR payload bits for AAC-LC core quantization. */
-        unsigned long rate_per_ch = (sbr && sbr->numChannels > 0) ? (sbr->bitRate / sbr->numChannels) : 0;
-        if (check_grid_equal(&sa->ch[0].grid, &sa->ch[1].grid) || (rate_per_ch > 0 && rate_per_ch <= 32000 && !attack[0] && !attack[1])) {
-            sa->ch[1].grid = sa->ch[0].grid;
-            sa->ch[1].prevClass = sa->ch[0].prevClass;
-            sa->ch[1].spread = sa->ch[0].spread;
-            sa->ch[1].followUp = sa->ch[0].followUp;
-        }
+        /* Construct synchronized channel grids using shared attack parameters */
+        choose_grid(&sa->ch[0], sbr->numEnvFixFix, f->numSlots, shared_attack, shared_pos, shared_split, 0, sbr);
+        choose_grid(&sa->ch[1], sbr->numEnvFixFix, f->numSlots, shared_attack, shared_pos, shared_split, 0, sbr);
+
+        /* Synchronize follow-up state and grids across CPE channels */
+        sa->ch[1].grid = sa->ch[0].grid;
+        sa->ch[1].prevClass = sa->ch[0].prevClass;
+        sa->ch[1].spread = sa->ch[0].spread;
+        sa->ch[1].followUp = sa->ch[0].followUp;
     } else {
         for (int ch = 0; ch < nch; ch++) {
             if (lfe[ch]) continue;
