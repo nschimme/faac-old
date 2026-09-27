@@ -63,7 +63,7 @@ typedef struct SignalAnalysisChannel {
     SbrGrid grid;
     int envSampled[SBR_MAX_ENVELOPES];
 
-    float bE[64][SBR_QMF_BANDS_64];  /* Scratch buffer to keep 16 KB off stack */
+    float bE[96][SBR_QMF_BANDS_64];  /* Scratch buffer across current + next + ahead frames */
 } SignalAnalysisChannel;
 
 /* Raw SBR measurements for one input frame.  These are deliberately slot
