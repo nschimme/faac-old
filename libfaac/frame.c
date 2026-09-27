@@ -62,6 +62,12 @@
  * hearing. VBR, having no rate, codes at the top. */
 #define BANDWIDTH_CEILING     18750
 
+/* From this rate (bps per channel) the quantizer's treble de-emphasis is
+ * steepened by TREBLE_SLOPE_RICH; below it the steeper slope starves the
+ * treble of some material. */
+#define TREBLE_SLOPE_BITRATE  56000
+#define TREBLE_SLOPE_RICH     3.0f
+
 #if (defined WIN32 || defined _WIN32 || defined WIN64 || defined _WIN64) && !defined(PACKAGE_VERSION)
 #include "win32_ver.h"
 #endif
@@ -338,6 +344,10 @@ int faacEncApplyConfig(faacEncStruct* hEncoder,
     }
     /* set quantization quality */
     hEncoder->aacquantCfg.quality = config->quantqual;
+    /* A rate that already codes the treble well spends its margin better on
+     * the low bands, where the de-emphasis leaves the most audible error. */
+    hEncoder->aacquantCfg.treble_slope = (hEncoder->config.bitRate >= TREBLE_SLOPE_BITRATE)
+        ? TREBLE_SLOPE_RICH : 1.0f;
 
     if (hEncoder->config.aacObjectType == HE_V1) {
         SBRContext *sCtx = hEncoder->sbrContext;
@@ -670,9 +680,9 @@ int faacEncClose(faacEncHandle hpEncoder)
  * consumed here; the caller drops the frame after the core has read heHalfRate.
  */
 static void doHEAACFrame(faacEncStruct *hEncoder, unsigned int realPerCh,
-                         const int *coreBlockType, float *heHalfRate[MAX_CHANNELS])
+                         float *heHalfRate[MAX_CHANNELS])
 {
-    SbrContextProcessFrame(hEncoder->sbrContext, hEncoder->numChannels, hEncoder->isLfeChannel, coreBlockType, (int)realPerCh,
+    SbrContextProcessFrame(hEncoder->sbrContext, hEncoder->numChannels, hEncoder->isLfeChannel, (int)realPerCh,
                            (int)hEncoder->flushFrame, hEncoder->inputFifo, heHalfRate);
 }
 
@@ -763,13 +773,8 @@ int faacEncEncode(faacEncHandle hpEncoder,
          * SBR_FRAME_FIFO-1 frames behind, so the pipeline has to keep ticking
          * through the drain or the tail access units re-emit stale envelopes. */
         float *heHalfRate[MAX_CHANNELS] = {0};
-        if (hEncoder->config.aacObjectType == HE_V1 && SbrContextIsPresent(hEncoder->sbrContext)) {
-            int blockTypes[MAX_CHANNELS];
-            for (channel = 0; channel < numChannels; channel++) {
-                blockTypes[channel] = coderInfo[channel].block_type;
-            }
-            doHEAACFrame(hEncoder, (unsigned int)realPerCh, blockTypes, heHalfRate);
-        }
+        if (hEncoder->config.aacObjectType == HE_V1 && SbrContextIsPresent(hEncoder->sbrContext))
+            doHEAACFrame(hEncoder, (unsigned int)realPerCh, heHalfRate);
 
         /* Update current sample buffers */
         for (channel = 0; channel < numChannels; channel++)
