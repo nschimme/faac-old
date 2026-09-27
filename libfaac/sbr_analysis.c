@@ -46,20 +46,6 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
         ac->spread = false;
     }
 
-    /* Low bitrate HE-AAC (< 17 kbps/ch, numEnvFixFix == 1): use stable FIXFIX grid [0, T] to preserve core bit budget */
-    if (numEnvFixFix == 1) {
-        ac->spread = false;
-        ac->followUp.numBorders = 0;
-        ac->prevClass = SBR_FRAME_CLASS_FIXFIX;
-        g.frameClass = SBR_FRAME_CLASS_FIXFIX;
-        g.numEnvelopes = 1;
-        g.tEnv[0] = 0;
-        g.tEnv[1] = T;
-        g.freqRes[0] = 1;
-        g.bsPointer = 0;
-        ac->grid = g;
-        return;
-    }
 
     /* Frame Class Transition Table */
     SbrFrameClass prev = ac->prevClass;
@@ -339,6 +325,7 @@ static void measure(SignalAnalysisChannel *ac, const SbrAnalysisFrame *f, const 
 
 void SbrFinalizeFrame(SignalAnalysis *sa, const SbrAnalysisFrame *f, const SbrAnalysisFrame *next, const SbrAnalysisFrame *ahead, int nch, const bool *lfe, const int *coreBlockType, struct SBRInfo *sbr, struct SbrFrameData *fd)
 {
+    (void)coreBlockType;
     int attack[MAX_CHANNELS] = {0};
     int pos[MAX_CHANNELS] = {0};
     int split[MAX_CHANNELS] = {0};
@@ -348,9 +335,14 @@ void SbrFinalizeFrame(SignalAnalysis *sa, const SbrAnalysisFrame *f, const SbrAn
     for (int ch = 0; ch < nch; ch++) {
         if (lfe[ch]) continue;
         measure(&sa->ch[ch], f, next, ahead, ch, &attack[ch], &pos[ch], &split[ch]);
-        if (coreBlockType && (coreBlockType[ch] == ONLY_SHORT_WINDOW || coreBlockType[ch] == LONG_SHORT_WINDOW || coreBlockType[ch] == SHORT_LONG_WINDOW)) {
+        bool pcm_attack = coreBlockType && (coreBlockType[ch] == ONLY_SHORT_WINDOW);
+        /* Require both PCM short window and high transient strength to trigger SBR grid splits,
+         * preventing false transient splits on steady-state music at mid/high bitrates. */
+        if (pcm_attack && (sa->ch[ch].transientStrength >= 25.0f || (sbr->numEnvFixFix == 1 && attack[ch]))) {
             attack[ch] = 1;
             if (pos[ch] == 0) pos[ch] = 2;
+        } else {
+            attack[ch] = 0;
         }
     }
 
