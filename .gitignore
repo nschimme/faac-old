@@ -1,21 +1,20 @@
-*.o
-*.so
+# OS and Editor
+.DS_Store
+.vs/
+*.user
+
+# Build system, generated files, and logs
 *.a
-*.ncb
-*.plg
-*.aps
-*.opt
-*.aac
-*.wav
-*.mp4
-*.m4a
-*.lo
-Makefile*
 *.deps
-*.libs
 *.la
+*.libs
+*.lo
+*.ncb
+*.o
+*.opt
+*.plg
+*.so
 *~
-/frontend/faac
 /aclocal.m4
 /autom4te.cache
 /compile
@@ -32,9 +31,22 @@ Makefile*
 /ltmain.sh
 /missing
 /stamp-h1
-.vs/
+Makefile*
+
+# Build outputs and binaries
+/frontend/faac
+/libfaac/win32_ver.h
 /project/msvc/bin/
 /project/msvc/intermediate/
-*.user
-/libfaac/win32_ver.h
+
+# Media and data test files
+*.aac
+*.m4a
+*.mp4
+*.wav
+
+# Caches, tool configs, and local experiments
+.cache/
+.mcp.json
+experiments/
 /libfaac/faac.pc
