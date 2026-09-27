@@ -77,7 +77,7 @@ static void add_border(WorkingGrid *wg, int border, int res)
     }
 }
 
-static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, int attack, int pos, int split, int fixedRightBorder)
+static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, int attack, int pos, int split, int fixedRightBorder, struct SBRInfo *sbr)
 {
     SbrGrid g = { 0 };
     int T = slots;
@@ -85,6 +85,15 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
     int min_join = get_min_join(T);
     int max_join = get_max_join(T);
     int ovl_cap = get_overlap_cap(T, pos);
+
+    /* Strategy 1: Cap envelopes to 2 for bitrates >= 40k total stereo (>= 20k/ch) */
+    int max_env_cap = 5;
+    if (sbr && sbr->numChannels > 0 && sbr->bitRate > 0) {
+        unsigned long rate_per_ch = sbr->bitRate / sbr->numChannels;
+        if (rate_per_ch >= 20000) {
+            max_env_cap = 2;
+        }
+    }
 
     /* Fixed right border request suppresses attack flag and clears spread BEFORE applying transition table */
     if (fixedRightBorder) {
@@ -209,7 +218,7 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
         /* Build current frame grid */
         if (curr == SBR_FRAME_CLASS_FIXVAR) {
             int n_env = c_idx + 1;
-            if (n_env > 4) n_env = 4;
+            if (n_env > max_env_cap) n_env = max_env_cap;
             g.numEnvelopes = n_env;
             g.tEnv[0] = 0;
             for (int i = 1; i < n_env; i++) {
@@ -235,7 +244,7 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
         } else { /* VARVAR new attack */
             int leading = (ac->followUp.numBorders > 0) ? ac->followUp.borders[0] : 0;
             int n_env = c_idx + 1;
-            if (n_env > 5) n_env = 5;
+            if (n_env > max_env_cap) n_env = max_env_cap;
             g.numEnvelopes = n_env;
             g.tEnv[0] = leading;
             for (int i = 1; i < n_env; i++) {
@@ -263,7 +272,7 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
         ac->spread = false;
         if (ac->followUp.numBorders > 0) {
             int n_env = ac->followUp.numBorders;
-            if (n_env > 4) n_env = 4;
+            if (n_env > max_env_cap) n_env = max_env_cap;
             g.numEnvelopes = n_env;
             g.tEnv[0] = ac->followUp.borders[0];
             for (int e = 1; e < n_env; e++) {
@@ -290,7 +299,7 @@ static void choose_grid(SignalAnalysisChannel *ac, int numEnvFixFix, int slots, 
         ac->spread = false;
         if (ac->followUp.numBorders > 0) {
             int n_env = ac->followUp.numBorders;
-            if (n_env > 5) n_env = 5;
+            if (n_env > max_env_cap) n_env = max_env_cap;
             g.numEnvelopes = n_env;
             g.tEnv[0] = ac->followUp.borders[0];
             for (int e = 1; e <= n_env; e++) {
@@ -425,8 +434,8 @@ void SbrFinalizeFrame(SignalAnalysis *sa, const SbrAnalysisFrame *f, const SbrAn
 
     if (nch == 2 && !lfe[0] && !lfe[1]) {
         /* Construct individual channel grids first */
-        choose_grid(&sa->ch[0], sbr->numEnvFixFix, f->numSlots, attack[0], pos[0], split[0], 0);
-        choose_grid(&sa->ch[1], sbr->numEnvFixFix, f->numSlots, attack[1], pos[1], split[1], 0);
+        choose_grid(&sa->ch[0], sbr->numEnvFixFix, f->numSlots, attack[0], pos[0], split[0], 0, sbr);
+        choose_grid(&sa->ch[1], sbr->numEnvFixFix, f->numSlots, attack[1], pos[1], split[1], 0, sbr);
 
         /* In coupled stereo, if grids match or if bitrates are constrained (<= 32k/ch),
          * share channel 0's grid to save SBR payload bits for AAC-LC core quantization. */
@@ -440,7 +449,7 @@ void SbrFinalizeFrame(SignalAnalysis *sa, const SbrAnalysisFrame *f, const SbrAn
     } else {
         for (int ch = 0; ch < nch; ch++) {
             if (lfe[ch]) continue;
-            choose_grid(&sa->ch[ch], sbr->numEnvFixFix, f->numSlots, attack[ch], pos[ch], split[ch], 0);
+            choose_grid(&sa->ch[ch], sbr->numEnvFixFix, f->numSlots, attack[ch], pos[ch], split[ch], 0, sbr);
         }
     }
 
