@@ -41,12 +41,29 @@ typedef struct {
     int freqRes[SBR_MAX_ENVELOPES];
 } SbrGrid;
 
+typedef struct SbrFollowUpState {
+    int numBorders;
+    int borders[SBR_MAX_ENVELOPES + 2];
+    int freqRes[SBR_MAX_ENVELOPES + 1];
+    int transientIdx;
+    int firstFillIdx;
+} SbrFollowUpState;
+
 typedef struct SignalAnalysisChannel {
-    int       transientSlot;
+    SbrFrameClass prevClass;        /* Previous emitted class (initialized to FIXFIX) */
+    bool          spread;           /* Spread flag (initialized to false) */
+    SbrFollowUpState followUp;      /* Saved follow-up borders & metadata */
+
+    int   transientSlot;            /* Slot index on grid axis */
+    int   transientPos;             /* Reported QMF position offset */
     float transientStrength;
-    int       trailingBorder;
+    int   attack;                   /* Transient detected flag */
+    int   split;                    /* Stable frame split flag */
+
     SbrGrid grid;
     int envSampled[SBR_MAX_ENVELOPES];
+
+    float bE[64][SBR_QMF_BANDS_64];  /* Scratch buffer to keep 16 KB off stack */
 } SignalAnalysisChannel;
 
 /* Raw SBR measurements for one input frame.  These are deliberately slot
@@ -74,8 +91,8 @@ void SbrAnalyzeFrame(SbrAnalysisFrame *frame, float *fullPtrs[], int nch,
                      const bool *isLfe, int numSamples, struct SBRInfo *sbr);
 void SbrFinalizeFrame(SignalAnalysis *sa, const SbrAnalysisFrame *frame,
                       const SbrAnalysisFrame *next, const SbrAnalysisFrame *ahead,
-                      int nch, const bool *isLfe, struct SBRInfo *sbr,
-                      struct SbrFrameData *fd);
+                      int nch, const bool *isLfe, const int *coreBlockType,
+                      struct SBRInfo *sbr, struct SbrFrameData *fd);
 
 #ifdef __cplusplus
 }

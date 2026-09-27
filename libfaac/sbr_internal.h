@@ -47,6 +47,7 @@ struct SBRInfo {
     int frameCount;        /* access units so far; the header repeats every SBR_HEADER_PERIOD */
     int numChannels;
     int sampleRate;        /* full output rate; the dual-rate core runs at sampleRate/2 */
+    unsigned long bitRate; /* total stream bitrate in bps */
 
     /* --- frequency band configuration (set at init, constant per stream) --- */
     int kx;
