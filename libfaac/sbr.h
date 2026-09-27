@@ -53,7 +53,7 @@ struct BitStream;
 #define SBR_ANALYSIS_DELAY   (6 * SBR_QMF_BANDS_64)
 #define SBR_QMF_HIST_LEN     (SBR_QMF_OVL_LEN_64 + SBR_ANALYSIS_DELAY)
 #define SBR_MAX_BANDS        64
-#define SBR_MAX_ENVELOPES     2
+#define SBR_MAX_ENVELOPES     5
 #define SBR_HEADER_PERIOD    30
 
 /* Envelope time-slot resolution the decoder uses for an AAC-LC core frame
@@ -118,7 +118,7 @@ void SbrContextEnd(SBRContext *sbrCtx);
 int SbrContextGetASC(SBRContext *sbrCtx, int coreSRIdx, int channels, unsigned char** ppBuffer, unsigned long* pSize);
 unsigned int SbrContextGetXOverBandwidth(SBRContext *sbrCtx);
 void SbrContextUpdateConfig(SBRContext *sCtx, int channels, unsigned long bitrate);
-void SbrContextProcessFrame(SBRContext *sCtx, int numChannels, const bool *isLfe, int realPerCh, int flushTick, float *inputFifo[MAX_CHANNELS], float *heHalfRate[MAX_CHANNELS]);
+void SbrContextProcessFrame(SBRContext *sCtx, int numChannels, const bool *isLfe, const int *coreBlockType, int realPerCh, int flushTick, float *inputFifo[MAX_CHANNELS], float *heHalfRate[MAX_CHANNELS]);
 int SbrContextIsPresent(SBRContext *sCtx);
 void SbrContextRestoreRate(SBRContext *sCtx, unsigned long *sampleRate, unsigned int *sampleRateIdx, SR_INFO **srInfo);
 unsigned long SbrContextGetFullRate(SBRContext *sCtx, unsigned long defaultRate);
