@@ -22,65 +22,41 @@ int quantize_neon(const float * __restrict xr, int * __restrict xi, int n4, floa
 {
     const float32x4_t sfac = vdupq_n_f32(sfacfix);
     const float32x4_t magic = vdupq_n_f32(MAGIC_NUMBER);
-    int32x4_t max_vec0 = vdupq_n_s32(0);
-    int32x4_t max_vec1 = vdupq_n_s32(0);
-    int total = 4 * n4;
-    int cnt = 0;
+    int32x4_t max_vec = vdupq_n_s32(0);
+    int maxq_arr[4];
+    int cnt, maxq;
 
-    // 2x unrolled NEON loop: 8 floats per iteration
-    for (; cnt + 8 <= total; cnt += 8)
-    {
-        float32x4_t x0_orig = vld1q_f32(&xr[cnt]);
-        float32x4_t x1_orig = vld1q_f32(&xr[cnt + 4]);
-
-        float32x4_t x0 = vabsq_f32(vmulq_f32(x0_orig, sfac));
-        float32x4_t x1 = vabsq_f32(vmulq_f32(x1_orig, sfac));
-
-        x0 = vmulq_f32(x0, vsqrtq_f32(x0));
-        x1 = vmulq_f32(x1, vsqrtq_f32(x1));
-
-        x0 = vsqrtq_f32(x0);
-        x1 = vsqrtq_f32(x1);
-
-        x0 = vaddq_f32(x0, magic);
-        x1 = vaddq_f32(x1, magic);
-
-        int32x4_t q0 = vcvtq_s32_f32(x0);
-        int32x4_t q1 = vcvtq_s32_f32(x1);
-
-        max_vec0 = vmaxq_s32(max_vec0, q0);
-        max_vec1 = vmaxq_s32(max_vec1, q1);
-
-        int32x4_t mask0 = vreinterpretq_s32_u32(vcltq_f32(x0_orig, vdupq_n_f32(0.0f)));
-        int32x4_t mask1 = vreinterpretq_s32_u32(vcltq_f32(x1_orig, vdupq_n_f32(0.0f)));
-
-        q0 = vsubq_s32(veorq_s32(q0, mask0), mask0);
-        q1 = vsubq_s32(veorq_s32(q1, mask1), mask1);
-
-        vst1q_s32(&xi[cnt], q0);
-        vst1q_s32(&xi[cnt + 4], q1);
-    }
-
-    max_vec0 = vmaxq_s32(max_vec0, max_vec1);
-
-    if (cnt < total)
+    // Process 4 elements per iteration; band widths are multiples of 4
+    for (cnt = 0; cnt < 4 * n4; cnt += 4)
     {
         float32x4_t x_orig = vld1q_f32(&xr[cnt]);
+        // Absolute value of the scaled input
         float32x4_t x = vabsq_f32(vmulq_f32(x_orig, sfac));
+        int32x4_t q, mask;
 
+        // Math: (x * sfac)^0.75 + magic
+        // Logic: sqrt( (x*sfac) * sqrt(x*sfac) )
         x = vmulq_f32(x, vsqrtq_f32(x));
         x = vsqrtq_f32(x);
         x = vaddq_f32(x, magic);
 
-        int32x4_t q = vcvtq_s32_f32(x);
-        max_vec0 = vmaxq_s32(max_vec0, q);
+        // Convert to integer
+        q = vcvtq_s32_f32(x);
+        max_vec = vmaxq_s32(max_vec, q);
 
-        int32x4_t mask = vreinterpretq_s32_u32(vcltq_f32(x_orig, vdupq_n_f32(0.0f)));
+        // Bitwise Sign Fix: (val ^ mask) - mask, mask = sign bit of the input
+        mask = vshrq_n_s32(vreinterpretq_s32_f32(x_orig), 31);
         q = vsubq_s32(veorq_s32(q, mask), mask);
 
         vst1q_s32(&xi[cnt], q);
     }
 
-    return vmaxvq_s32(max_vec0);
+    vst1q_s32(maxq_arr, max_vec);
+    maxq = maxq_arr[0];
+    if (maxq_arr[1] > maxq) maxq = maxq_arr[1];
+    if (maxq_arr[2] > maxq) maxq = maxq_arr[2];
+    if (maxq_arr[3] > maxq) maxq = maxq_arr[3];
+
+    return maxq;
 }
 #endif
