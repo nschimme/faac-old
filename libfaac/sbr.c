@@ -296,7 +296,7 @@ void SbrContextUpdateConfig(SBRContext *sCtx, int channels, unsigned long bitrat
         SbrUpdate(sCtx->sbrInfo, bitrate);
 }
 
-void SbrContextProcessFrame(SBRContext *sCtx, int numChannels, const bool *isLfe, int realPerCh, int flushTick, float *inputFifo[MAX_CHANNELS], float *heHalfRate[MAX_CHANNELS])
+void SbrContextProcessFrame(SBRContext *sCtx, int numChannels, const bool *isLfe, const int *coreBlockType, int realPerCh, int flushTick, float *inputFifo[MAX_CHANNELS], float *heHalfRate[MAX_CHANNELS])
 {
     unsigned int channel;
     Resampler *rs = sCtx->resampler;
@@ -340,7 +340,7 @@ void SbrContextProcessFrame(SBRContext *sCtx, int numChannels, const bool *isLfe
             SbrFrameData *targetFd = &sCtx->frameFIFO[(sCtx->frameHead + SBR_FRAME_FIFO - LOOKAHEAD_DEPTH) % SBR_FRAME_FIFO];
             SbrFinalizeFrame(&sCtx->signalAnalysis, &sCtx->analysisFIFO[target],
                              &sCtx->analysisFIFO[next], &sCtx->analysisFIFO[sCtx->analysisHead],
-                             numChannels, isLfe, sCtx->sbrInfo, targetFd);
+                             numChannels, isLfe, coreBlockType, sCtx->sbrInfo, targetFd);
             SbrEncode(sCtx->sbrInfo, numChannels, isLfe, &sCtx->analysisFIFO[target], targetFd);
         } else {
             /* Initial payload slots remain the legal silent grids installed at init. */

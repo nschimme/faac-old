@@ -670,9 +670,9 @@ int faacEncClose(faacEncHandle hpEncoder)
  * consumed here; the caller drops the frame after the core has read heHalfRate.
  */
 static void doHEAACFrame(faacEncStruct *hEncoder, unsigned int realPerCh,
-                         float *heHalfRate[MAX_CHANNELS])
+                         const int *coreBlockType, float *heHalfRate[MAX_CHANNELS])
 {
-    SbrContextProcessFrame(hEncoder->sbrContext, hEncoder->numChannels, hEncoder->isLfeChannel, (int)realPerCh,
+    SbrContextProcessFrame(hEncoder->sbrContext, hEncoder->numChannels, hEncoder->isLfeChannel, coreBlockType, (int)realPerCh,
                            (int)hEncoder->flushFrame, hEncoder->inputFifo, heHalfRate);
 }
 
@@ -763,8 +763,13 @@ int faacEncEncode(faacEncHandle hpEncoder,
          * SBR_FRAME_FIFO-1 frames behind, so the pipeline has to keep ticking
          * through the drain or the tail access units re-emit stale envelopes. */
         float *heHalfRate[MAX_CHANNELS] = {0};
-        if (hEncoder->config.aacObjectType == HE_V1 && SbrContextIsPresent(hEncoder->sbrContext))
-            doHEAACFrame(hEncoder, (unsigned int)realPerCh, heHalfRate);
+        if (hEncoder->config.aacObjectType == HE_V1 && SbrContextIsPresent(hEncoder->sbrContext)) {
+            int blockTypes[MAX_CHANNELS];
+            for (channel = 0; channel < numChannels; channel++) {
+                blockTypes[channel] = coderInfo[channel].block_type;
+            }
+            doHEAACFrame(hEncoder, (unsigned int)realPerCh, blockTypes, heHalfRate);
+        }
 
         /* Update current sample buffers */
         for (channel = 0; channel < numChannels; channel++)

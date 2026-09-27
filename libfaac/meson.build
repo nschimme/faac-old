@@ -67,7 +67,7 @@ common_args = {
 
 default_lib = get_option('default_library')
 
-# Build internal static library for internal tests without symbol hiding
+# Build internal static library for internal unit tests without symbol hiding
 libfaac_internal_static = static_library(
     'faac_internal_static',
     common_src,

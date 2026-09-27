@@ -18,7 +18,7 @@ static void simulate_trace(const int *attacks, const int *positions, int nframes
 
     SBRInfo sbr;
     memset(&sbr, 0, sizeof(sbr));
-    sbr.numEnvFixFix = 1;
+    sbr.numEnvFixFix = 2;
 
     SbrFrameData fd;
     memset(&fd, 0, sizeof(fd));
@@ -36,7 +36,8 @@ static void simulate_trace(const int *attacks, const int *positions, int nframes
             for (int s = 0; s < slots; s++) f.totalE[0][s] = 1.0f;
         }
 
-        SbrFinalizeFrame(&sa, &f, &f, &f, 1, lfe, &sbr, &fd);
+        int bt[1] = { att ? ONLY_SHORT_WINDOW : ONLY_LONG_WINDOW };
+        SbrFinalizeFrame(&sa, &f, &f, &f, 1, lfe, bt, &sbr, &fd);
         out_classes[frame] = fd.ch[0].grid.frameClass;
     }
 }
