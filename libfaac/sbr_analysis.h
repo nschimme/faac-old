@@ -31,6 +31,7 @@ extern "C" {
 #endif
 
 struct SBRInfo;
+struct SbrFrameData;
 
 typedef struct {
     SbrFrameClass frameClass;
@@ -48,6 +49,17 @@ typedef struct SignalAnalysisChannel {
     int envSampled[SBR_MAX_ENVELOPES];
 } SignalAnalysisChannel;
 
+/* Raw SBR measurements for one input frame.  These are deliberately slot
+ * energies, rather than PCM or QMF samples: grid selection happens two frames
+ * later, when enough context exists, and can then re-bin them without an
+ * allocation or a second QMF transform. */
+typedef struct SbrAnalysisFrame {
+    int numSlots;
+    int sampled[32];
+    float totalE[MAX_CHANNELS][32];
+    float bandE[MAX_CHANNELS][32][SBR_QMF_BANDS_64];
+} SbrAnalysisFrame;
+
 typedef struct SignalAnalysis {
     int numSlots;
     int sampled;
@@ -56,11 +68,14 @@ typedef struct SignalAnalysis {
        full width. */
     SignalAnalysisChannel ch[MAX_CHANNELS];
 
-    /* Per-envelope QMF band energy, binned over each channel's grid. */
-    float bandE[MAX_CHANNELS][SBR_MAX_ENVELOPES][SBR_QMF_BANDS_64];
 } SignalAnalysis;
 
-void SbrAnalyze(SignalAnalysis *sa, float *fullPtrs[], int nch, const bool *isLfe, int numSamples, struct SBRInfo *sbr);
+void SbrAnalyzeFrame(SbrAnalysisFrame *frame, float *fullPtrs[], int nch,
+                     const bool *isLfe, int numSamples, struct SBRInfo *sbr);
+void SbrFinalizeFrame(SignalAnalysis *sa, const SbrAnalysisFrame *frame,
+                      const SbrAnalysisFrame *next, const SbrAnalysisFrame *ahead,
+                      int nch, const bool *isLfe, struct SBRInfo *sbr,
+                      struct SbrFrameData *fd);
 
 #ifdef __cplusplus
 }

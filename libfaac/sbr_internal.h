@@ -91,6 +91,12 @@ struct SBRContext {
 
     /* Shared signal analysis */
     SignalAnalysis  signalAnalysis;
+    /* Three analysed frames: target, N+1 and N+2.  The target is finalized
+       into its already-reserved payload FIFO slot only after the latter two
+       exist. */
+    SbrAnalysisFrame analysisFIFO[LOOKAHEAD_DEPTH + 1];
+    int              analysisHead;
+    int              analysisCount;
     /* Coded-payload delay ring; see SBR_FRAME_FIFO. frameHead is the newest
        entry, so its successor (frameHead + 1) % SBR_FRAME_FIFO is the oldest --
        the payload the current access unit emits. */
@@ -117,7 +123,8 @@ void SbrUpdate(SBRInfo *sbr, unsigned long bitRate);
 void SbrEnd(SBRInfo *sbr);
 
 void SbrQmfAnalysis(SBRInfo *sbr, const float * restrict ovl_pos, float * restrict energy, int kx, int k2);
-/* Quantizes this frame's payload directly into *fd (a delay-line slot). */
-void SbrEncode(SBRInfo *sbr, float *timeDomain[MAX_CHANNELS], int numChannels, const bool *isLfe, int numSamples, struct SignalAnalysis *sa, SbrFrameData *fd);
+/* Quantizes a finalized analysis frame directly into its payload-FIFO slot. */
+void SbrEncode(SBRInfo *sbr, int numChannels, const bool *isLfe,
+               const SbrAnalysisFrame *frame, SbrFrameData *fd);
 
 #endif

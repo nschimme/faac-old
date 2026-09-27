@@ -301,6 +301,7 @@ void SbrContextProcessFrame(SBRContext *sCtx, int numChannels, const bool *isLfe
     unsigned int channel;
     Resampler *rs = sCtx->resampler;
     float *fullPtrs[MAX_CHANNELS];
+    (void)flushTick;
 
     /* SbrEncode quantizes into the new head; SbrWrite (via SbrContextGetBits)
      * emits the oldest slot, which is the payload for this frame's core audio. */
@@ -310,14 +311,7 @@ void SbrContextProcessFrame(SBRContext *sCtx, int numChannels, const bool *isLfe
 
     /* Tick 1 still has real signal in the QMF overlap and the decimation FIR;
      * by tick 2 both are zero, so the rest of the drain is known silence. */
-    if (realPerCh == 0 && flushTick > 1) {
-        for (channel = 0; channel < (unsigned int)numChannels; channel++) {
-            memset(rs->halfRate[channel], 0, FRAME_LEN * sizeof(float));
-            heHalfRate[channel] = rs->halfRate[channel];
-            sCtx->signalAnalysis.ch[channel].transientStrength = 0.0f;
-        }
-        sbr_frame_silence(fd);
-    } else {
+    {
         for (channel = 0; channel < (unsigned int)numChannels; channel++) {
             float *fullRate = rs->fullRate[channel];
             fullPtrs[channel] = fullRate;
@@ -334,8 +328,24 @@ void SbrContextProcessFrame(SBRContext *sCtx, int numChannels, const bool *isLfe
          * claims SBR_NUM_TIME_SLOTS, so normalising a short frame over fewer slots
          * would inflate its levels, and the QMF-overlap save below reads the last
          * SBR_QMF_OVL_LEN_64 samples -- behind the buffer for a short frame. */
-        SbrAnalyze(&sCtx->signalAnalysis, fullPtrs, numChannels, isLfe, 2 * FRAME_LEN, sCtx->sbrInfo);
-        SbrEncode(sCtx->sbrInfo, fullPtrs, numChannels, isLfe, 2 * FRAME_LEN, &sCtx->signalAnalysis, fd);
+        sCtx->analysisHead = (sCtx->analysisHead + 1) % (LOOKAHEAD_DEPTH + 1);
+        SbrAnalyzeFrame(&sCtx->analysisFIFO[sCtx->analysisHead], fullPtrs, numChannels,
+                        isLfe, 2 * FRAME_LEN, sCtx->sbrInfo);
+        if (sCtx->analysisCount < LOOKAHEAD_DEPTH + 1) sCtx->analysisCount++;
+        if (sCtx->analysisCount == LOOKAHEAD_DEPTH + 1) {
+            int target = (sCtx->analysisHead + 1) % (LOOKAHEAD_DEPTH + 1);
+            int next = (target + 1) % (LOOKAHEAD_DEPTH + 1);
+            /* At N this is the slot reserved at N-2; the existing payload
+             * FIFO emits it at its established later access unit. */
+            SbrFrameData *targetFd = &sCtx->frameFIFO[(sCtx->frameHead + SBR_FRAME_FIFO - LOOKAHEAD_DEPTH) % SBR_FRAME_FIFO];
+            SbrFinalizeFrame(&sCtx->signalAnalysis, &sCtx->analysisFIFO[target],
+                             &sCtx->analysisFIFO[next], &sCtx->analysisFIFO[sCtx->analysisHead],
+                             numChannels, isLfe, sCtx->sbrInfo, targetFd);
+            SbrEncode(sCtx->sbrInfo, numChannels, isLfe, &sCtx->analysisFIFO[target], targetFd);
+        } else {
+            /* Initial payload slots remain the legal silent grids installed at init. */
+            sbr_frame_silence(fd);
+        }
         /* Dual-rate decimation: produces the halved-rate core signal. */
         Resample(rs, 2 * FRAME_LEN);
     }
@@ -436,39 +446,37 @@ void SbrQmfAnalysis(SBRInfo *sbr, const float * restrict ovl_pos, float * restri
 }
 
 
-static void sbr_adopt_envelope_grid(const struct SignalAnalysis *sa, SbrFrameData *fd, int nch)
-{
-    for (int ch = 0; ch < nch; ch++) {
-        fd->ch[ch].grid = sa->ch[ch].grid;
-    }
-    for (int ch = 0; ch < nch; ch++)
-        fd->ch[ch].eff_amp_res = (fd->ch[ch].grid.frameClass == SBR_FRAME_CLASS_FIXFIX &&
-                                  fd->ch[ch].grid.numEnvelopes == 1) ? 0 : SBR_AMP_RES;
-}
-
 static void sbr_quantize_envelopes(const SBRInfo *sbr, int nch, const bool *isLfe,
-                                   const struct SignalAnalysis *sa, SbrFrameData *fd)
+                                   const SbrAnalysisFrame *frame, SbrFrameData *fd)
 {
     for (int ch = 0; ch < nch; ch++) {
         if (isLfe[ch]) continue;
         const SbrGrid *grid = &fd->ch[ch].grid;
         int eff_amp_res = fd->ch[ch].eff_amp_res;
-        /* Read-only alias; the quantizer never writes back through it. */
-        const float (* restrict bandE)[SBR_QMF_BANDS_64] = sa->bandE[ch];
         int dlav = eff_amp_res ? SBR_ENV_DELTA_LIMIT_HIRES : SBR_ENV_DELTA_LIMIT_LORES;
         for (int e = 0; e < grid->numEnvelopes; e++) {
             int nb = sbr_env_bands(sbr, grid, e);
             const int *edges = sbr_env_edges(sbr, grid, e);
             int prevLevel = -1;
-            int e_slots = sa->ch[ch].envSampled[e];
-            float inv_e_slots = 1.0f / (float)(e_slots < 1 ? 1 : e_slots);
+            int start = grid->tEnv[e] * frame->numSlots / SBR_NUM_TIME_SLOTS;
+            int end = grid->tEnv[e + 1] * frame->numSlots / SBR_NUM_TIME_SLOTS;
+            /* Variable-grid borders may legally extend two SBR slots past the
+             * frame.  There is no PCM/QMF energy beyond this retained frame;
+             * clamp the aggregation range while retaining the coded border. */
+            start = clamp_int(start, 0, frame->numSlots);
+            end = clamp_int(end, 0, frame->numSlots);
+            int e_slots = 0;
+            for (int slot = start; slot < end; slot++) e_slots += frame->sampled[slot];
             for (int b = 0; b < nb; b++) {
                 int k_lo = edges[b], k_hi = edges[b+1];
                 /* Weight energy by the number of QMF slots per envelope to
                  * maintain normalized power levels across variable borders. */
                 float E = 0.0f;
-                for (int k = k_lo; k < k_hi; k++) E += bandE[e][k];
-                E *= inv_e_slots / (float)(k_hi - k_lo);
+                for (int slot = start; slot < end; slot++) {
+                    if (!frame->sampled[slot]) continue;
+                    for (int k = k_lo; k < k_hi; k++) E += frame->bandE[ch][slot][k];
+                }
+                E /= (float)((e_slots ? e_slots : 1) * (k_hi - k_lo));
                 float factor = eff_amp_res ? 1.0f : 2.0f;
                 int level = lrintf(factor * (fast_log2(E + SBR_LOG_ENERGY_FLOOR) - SBR_ENV_LEVEL_LOG2_OFFSET));
                 int raw_level = clamp_int(level, 0, 127);
@@ -482,14 +490,10 @@ static void sbr_quantize_envelopes(const SBRInfo *sbr, int nch, const bool *isLf
     }
 }
 
-void SbrEncode(SBRInfo *sbr, float *timeDomain[MAX_CHANNELS], int numChannels, const bool *isLfe, int numSamples, struct SignalAnalysis *sa, SbrFrameData *fd)
+void SbrEncode(SBRInfo *sbr, int numChannels, const bool *isLfe,
+               const SbrAnalysisFrame *frame, SbrFrameData *fd)
 {
-    for (int ch = 0; ch < numChannels; ch++)
-        if (!isLfe[ch])
-            memcpy(sbr->ch[ch].qmfOvl64, timeDomain[ch] + numSamples - SBR_QMF_HIST_LEN, SBR_QMF_HIST_LEN * sizeof(float));
-
-    sbr_adopt_envelope_grid(sa, fd, numChannels);
-    sbr_quantize_envelopes(sbr, numChannels, isLfe, sa, fd);
+    sbr_quantize_envelopes(sbr, numChannels, isLfe, frame, fd);
 
 #ifdef FAAC_STATS
     g_faacStats.sbrFrames++;
@@ -507,4 +511,3 @@ void SbrEncode(SBRInfo *sbr, float *timeDomain[MAX_CHANNELS], int numChannels, c
 /* SBR bitstream writer. Emits the SBR fill element payload into the bitstream.
  * Replays the write sequence into a counting sink during rate control to
  * ensure accurate bit budget allocation. */
-
