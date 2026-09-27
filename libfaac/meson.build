@@ -20,6 +20,16 @@ if config_h.get('HAVE_AVX2')
     quantize_simd_libs += quantize_avx
 endif
 
+if config_h.get('HAVE_ARM_SVE')
+    sve_flag = ['-march=armv8-a+sve']
+    quantize_sve = static_library('quantize_sve', 'quantize_sve.c',
+        include_directories: ['..', '../include'],
+        c_args: c_args + sve_flag,
+        gnu_symbol_visibility: 'hidden'
+    )
+    quantize_simd_libs += quantize_sve
+endif
+
 common_src = [
     'bitstream.c',
     'bitstream.h',
