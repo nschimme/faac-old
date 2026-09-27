@@ -29,7 +29,7 @@ libm = cc.find_library('m', required: false)
 
 cpu_family = target_machine.cpu_family()
 
-config_h.set('HAVE_SSE2', (cpu_family in ['x86', 'x86_64']) and config_h.get('HAVE_IMMINTRIN_H'))
+config_h.set('HAVE_SSE2', (cpu_family == 'x86') and config_h.get('HAVE_IMMINTRIN_H'))
 
 config_h.set('FAAC_SBR_DECIMATION', get_option('sbr-decimation'))
 
