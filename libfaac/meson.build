@@ -67,6 +67,18 @@ common_args = {
 
 default_lib = get_option('default_library')
 
+# Build internal static library for internal tests without symbol hiding
+libfaac_internal_static = static_library(
+    'faac_internal_static',
+    common_src,
+    include_directories: ['..', '../include'],
+    c_args: c_args,
+    dependencies: [libm],
+    link_with: quantize_simd_libs,
+    install: false,
+    override_options: ['b_lto=false']
+)
+
 # LTO on the static archive ships unportable compiler bytecode, so keep it off.
 if default_lib == 'static' or default_lib == 'both'
     libfaac_static = static_library(

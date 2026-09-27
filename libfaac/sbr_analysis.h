@@ -41,10 +41,25 @@ typedef struct {
     int freqRes[SBR_MAX_ENVELOPES];
 } SbrGrid;
 
+typedef struct SbrFollowUpState {
+    int numBorders;
+    int borders[SBR_MAX_ENVELOPES + 2];
+    int freqRes[SBR_MAX_ENVELOPES + 1];
+    int transientIdx;
+    int firstFillIdx;
+} SbrFollowUpState;
+
 typedef struct SignalAnalysisChannel {
-    int       transientSlot;
+    SbrFrameClass prevClass;        /* Previous emitted class (initialized to FIXFIX) */
+    bool          spread;           /* Spread flag (initialized to false) */
+    SbrFollowUpState followUp;      /* Saved follow-up borders & metadata */
+
+    int   transientSlot;            /* Slot index on grid axis */
+    int   transientPos;             /* Reported QMF position offset */
     float transientStrength;
-    int       trailingBorder;
+    int   attack;                   /* Transient detected flag */
+    int   split;                    /* Stable frame split flag */
+
     SbrGrid grid;
     int envSampled[SBR_MAX_ENVELOPES];
 } SignalAnalysisChannel;
