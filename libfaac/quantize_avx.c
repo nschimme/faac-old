@@ -19,6 +19,57 @@
 
 int quantize_avx2(const float * __restrict xr, int * __restrict xi, int len, float sfacfix)
 {
+    // Fast path for single quad (width 4, e.g. short windows)
+    if (len == 4)
+    {
+        const __m128 sfac128 = _mm_set1_ps(sfacfix);
+        const __m128 magic128 = _mm_set1_ps(MAGIC_NUMBER);
+        const __m128 abs_mask128 = _mm_castsi128_ps(_mm_set1_epi32(0x7FFFFFFF));
+
+        __m128 x_orig = _mm_loadu_ps(xr);
+        __m128 x = _mm_and_ps(_mm_mul_ps(x_orig, sfac128), abs_mask128);
+
+        x = _mm_mul_ps(x, _mm_sqrt_ps(x));
+        x = _mm_sqrt_ps(x);
+        x = _mm_add_ps(x, magic128);
+
+        __m128i q = _mm_cvttps_epi32(x);
+        __m128i max128 = _mm_max_epi32(q, _mm_shuffle_epi32(q, _MM_SHUFFLE(1, 0, 3, 2)));
+        max128 = _mm_max_epi32(max128, _mm_shuffle_epi32(max128, _MM_SHUFFLE(0, 1, 0, 1)));
+
+        __m128i mask = _mm_srai_epi32(_mm_castps_si128(x_orig), 31);
+        q = _mm_sub_epi32(_mm_xor_si128(q, mask), mask);
+        _mm_storeu_si128((__m128i*)xi, q);
+
+        return _mm_cvtsi128_si32(max128);
+    }
+
+    // Fast path for 2 quads (width 8)
+    if (len == 8)
+    {
+        const __m256 sfac = _mm256_set1_ps(sfacfix);
+        const __m256 magic = _mm256_set1_ps(MAGIC_NUMBER);
+        const __m256 abs_mask = _mm256_castsi256_ps(_mm256_set1_epi32(0x7FFFFFFF));
+
+        __m256 x_orig = _mm256_loadu_ps(xr);
+        __m256 x = _mm256_and_ps(_mm256_mul_ps(x_orig, sfac), abs_mask);
+
+        x = _mm256_mul_ps(x, _mm256_sqrt_ps(x));
+        x = _mm256_sqrt_ps(x);
+        x = _mm256_add_ps(x, magic);
+
+        __m256i q = _mm256_cvttps_epi32(x);
+        __m128i max128 = _mm_max_epi32(_mm256_castsi256_si128(q), _mm256_extracti128_si256(q, 1));
+        max128 = _mm_max_epi32(max128, _mm_shuffle_epi32(max128, _MM_SHUFFLE(1, 0, 3, 2)));
+        max128 = _mm_max_epi32(max128, _mm_shuffle_epi32(max128, _MM_SHUFFLE(0, 1, 0, 1)));
+
+        __m256i mask = _mm256_srai_epi32(_mm256_castps_si256(x_orig), 31);
+        q = _mm256_sub_epi32(_mm256_xor_si256(q, mask), mask);
+        _mm256_storeu_si256((__m256i*)xi, q);
+
+        return _mm_cvtsi128_si32(max128);
+    }
+
     const __m256 sfac = _mm256_set1_ps(sfacfix);
     const __m256 magic = _mm256_set1_ps(MAGIC_NUMBER);
     const __m256 abs_mask = _mm256_castsi256_ps(_mm256_set1_epi32(0x7FFFFFFF));
