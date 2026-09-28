@@ -32,8 +32,8 @@ jobs:
             arch: amd64
             os: ubuntu-24.04
           - rate_control: vbr
-            arch: amd64
-            os: ubuntu-24.04
+            arch: arm64
+            os: ubuntu-24.04-arm
           - rate_control: cbr
             arch: arm64
             os: ubuntu-24.04-arm
@@ -170,12 +170,24 @@ jobs:
           build-dir: ./candidate/build_cand
           sha: ${{ github.event.pull_request.head.sha }}
 
+      - name: Generate Per-Rate Control Report
+        if: github.event_name == 'pull_request'
+        uses: nschimme/faac-benchmark/report@master
+        with:
+          results-path: ./results
+          report-output: report_${{ matrix.rate_control }}.md
+          summary-output: summary_${{ matrix.rate_control }}.md
+          cases-output: cases_${{ matrix.rate_control }}.md
+
       - name: Upload Results
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: results-${{ matrix.arch }}-${{ matrix.rate_control }}
-          path: results/*.json
+          path: |
+            results/*.json
+            report_${{ matrix.rate_control }}.md
+            cases_${{ matrix.rate_control }}.md
 
   footprint:
     name: Footprint
@@ -255,7 +267,7 @@ jobs:
   report:
     name: Consolidated Report
     needs: benchmark
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     if: always() && github.event_name == 'pull_request'
     permissions:
       pull-requests: write
@@ -279,6 +291,7 @@ jobs:
           base-sha: ${{ github.event.pull_request.base.sha }}
           cand-sha: ${{ github.event.pull_request.head.sha }}
           summary-only: false
+          strict-decode: true
 
       - name: Upload Full Report
         uses: actions/upload-artifact@v4
