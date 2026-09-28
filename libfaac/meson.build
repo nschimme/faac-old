@@ -44,6 +44,8 @@ common_src = [
     'sbr_tables.h',
     'sbr_analysis.c',
     'sbr_analysis.h',
+    'sbr_grid.c',
+    'sbr_grid.h',
     'resample.c',
     'resample.h',
     'stereo.c',
