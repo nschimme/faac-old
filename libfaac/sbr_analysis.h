@@ -17,6 +17,7 @@
 #define SBR_ANALYSIS_H
 
 #include <stdbool.h>
+#include "sbr_grid.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,13 +34,6 @@ extern "C" {
 struct SBRInfo;
 struct SbrFrameData;
 
-typedef struct {
-    SbrFrameClass frameClass;
-    int numEnvelopes;
-    int tEnv[SBR_MAX_ENVELOPES + 1];
-    int bsPointer;
-    int freqRes[SBR_MAX_ENVELOPES];
-} SbrGrid;
 
 typedef struct SbrFollowUpState {
     int numBorders;
@@ -50,9 +44,7 @@ typedef struct SbrFollowUpState {
 } SbrFollowUpState;
 
 typedef struct SignalAnalysisChannel {
-    SbrFrameClass prevClass;        /* Previous emitted class (initialized to FIXFIX) */
-    bool          spread;           /* Spread flag (initialized to false) */
-    SbrFollowUpState followUp;      /* Saved follow-up borders & metadata */
+    SbrGridState state;
 
     int   transientSlot;            /* Slot index on grid axis */
     int   transientPos;             /* Reported QMF position offset */

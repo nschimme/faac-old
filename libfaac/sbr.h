@@ -27,7 +27,6 @@ typedef enum SbrFrameClass {
 #include "coder.h"
 #include "channels.h"
 #include "fft.h"
-#include "sbr_analysis.h"
 
 #define LOOKAHEAD_DEPTH 2
 
