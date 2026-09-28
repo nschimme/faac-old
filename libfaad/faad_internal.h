@@ -173,9 +173,14 @@ typedef struct {
     uint8_t sfb_cb[8][MAX_SFB];
     int16_t scalefactors[8][MAX_SFB];
     uint8_t global_gain;
+    int32_t quantized[FRAME_LEN_LONG];
 
     /* Pulse data */
     bool pulse_data_present;
+    uint8_t pulse_count;
+    uint8_t pulse_start_sfb;
+    uint8_t pulse_offset[4];
+    uint8_t pulse_amp[4];
 
     /* TNS data */
     bool tns_data_present;
@@ -184,6 +189,7 @@ typedef struct {
     uint8_t tns_order[8][4];
     uint8_t tns_direction[8][4];
     uint8_t tns_coef_res[8];
+    uint8_t tns_coef_compress[8][4];
     int8_t  tns_coef[8][4][TNS_MAX_ORDER];
 
     /* Gain control */

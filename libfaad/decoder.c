@@ -282,6 +282,30 @@ static void core_dump_ics(struct faad_decoder *dec, int ch, const ICSInfo *ics, 
         wo += ics->window_group_length[g];
     }
     fprintf(df, "\n");
+    if (getenv("FAAD_LADDER_DUMP")) {
+        fprintf(df, "I %u %d %u %u %u %u %u %u %u |", dec->stats.totalFrames, ch,
+                ics->window_sequence, ics->window_shape, ics->max_sfb,
+                ics->num_window_groups, ics->global_gain, ics->pulse_data_present,
+                ics->tns_data_present);
+        for (int g = 0; g < ics->num_window_groups; g++) fprintf(df, " %u", ics->window_group_length[g]);
+        fprintf(df, " | %u %u", ics->pulse_count, ics->pulse_start_sfb);
+        for (int i = 0; i < ics->pulse_count; i++)
+            fprintf(df, " %u:%u", ics->pulse_offset[i], ics->pulse_amp[i]);
+        fprintf(df, " | ");
+        for (int w = 0; w < ics->num_windows; w++) {
+            fprintf(df, " %u:%u", ics->tns_n_filt[w], ics->tns_coef_res[w]);
+            for (int f = 0; f < ics->tns_n_filt[w]; f++) {
+                fprintf(df, "[%u,%u,%u,%u", ics->tns_length[w][f], ics->tns_order[w][f],
+                        ics->tns_direction[w][f], ics->tns_coef_compress[w][f]);
+                for (int k = 0; k < ics->tns_order[w][f]; k++)
+                    fprintf(df, ",%d", ics->tns_coef[w][f][k]);
+                fprintf(df, "]");
+            }
+        }
+        fprintf(df, "\nQ %u %d", dec->stats.totalFrames, ch);
+        for (int k = 0; k < FRAME_LEN_LONG; k++) fprintf(df, " %d", ics->quantized[k]);
+        fprintf(df, "\n");
+    }
 }
 #endif
 

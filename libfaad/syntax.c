@@ -175,11 +175,11 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
     ics->pulse_data_present = bits_get(bs, 1);
     if (ics->pulse_data_present) {
         uint32_t number_pulse = bits_get(bs, 2);
-        uint32_t pulse_start_sfb = bits_get(bs, 6);
-        (void)pulse_start_sfb;
+        ics->pulse_count = (uint8_t)(number_pulse + 1);
+        ics->pulse_start_sfb = bits_get(bs, 6);
         for (uint32_t i = 0; i <= number_pulse; i++) {
-            bits_skip(bs, 5); /* pulse_offset */
-            bits_skip(bs, 4); /* pulse_amp */
+            ics->pulse_offset[i] = bits_get(bs, 5);
+            ics->pulse_amp[i] = bits_get(bs, 4);
         }
     }
 
@@ -203,6 +203,7 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
                     if (ics->tns_order[w][f]) {
                         ics->tns_direction[w][f] = bits_get(bs, 1);
                         uint32_t coef_compress = bits_get(bs, 1);
+                        ics->tns_coef_compress[w][f] = coef_compress;
                         int bits_per_coef = (coef_res ? 4 : 3) - (int)coef_compress;
                         /* every coefficient is in the stream; only the LC
                          * order is kept and filtered */

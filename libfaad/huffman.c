@@ -327,6 +327,10 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
                         while (k < end_k) {
                             int v, w_val, x, y;
                             decode_quad(bs, cb, &v, &w_val, &x, &y);
+                            ics->quantized[(window_offset + w) * 128 + k] = v;
+                            ics->quantized[(window_offset + w) * 128 + k + 1] = w_val;
+                            ics->quantized[(window_offset + w) * 128 + k + 2] = x;
+                            ics->quantized[(window_offset + w) * 128 + k + 3] = y;
                             ptr[0] = pow_4_3_fast(v) * scale;
                             ptr[1] = pow_4_3_fast(w_val) * scale;
                             ptr[2] = pow_4_3_fast(x) * scale;
@@ -342,6 +346,8 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
                                 , stats
 #endif
                             );
+                            ics->quantized[(window_offset + w) * 128 + k] = x;
+                            ics->quantized[(window_offset + w) * 128 + k + 1] = y;
                             ptr[0] = pow_4_3_fast(x) * scale;
                             ptr[1] = pow_4_3_fast(y) * scale;
                             ptr += 2;
