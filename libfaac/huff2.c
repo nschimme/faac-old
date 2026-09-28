@@ -131,6 +131,45 @@ static void size_books(const int * __restrict qs, int len, int lo, int * __restr
     }
 }
 
+/* Bits to code a band in one book, or -1 if its peak exceeds the book. */
+int huffbook_band_bits(const int *qs, int len, int book)
+{
+    int i, peak = 0, bits = 0;
+    for (i = 0; i < len; i++) {
+        int q = abs(qs[i]);
+        if (q > peak) peak = q;
+    }
+    if (peak > (book <= HCB_2 ? LAV_1 : book <= HCB_4 ? LAV_2 :
+                book <= HCB_6 ? LAV_4 : book <= HCB_8 ? LAV_7 :
+                book <= HCB_10 ? LAV_12 : MAX_HUFF_ESC_VAL)) return -1;
+    if (book <= HCB_6) {
+        int other;
+        huffcode_size_pair(qs, len, ((book - 1) & ~1) + 1, &bits, &other);
+        if (!(book & 1)) bits = other;
+        if (book == HCB_3 || book == HCB_4)
+            for (i = 0; i < len; i++) bits += qs[i] != 0;
+        return bits;
+    }
+    for (i = 0; i < len; i += 2) {
+        int a = abs(qs[i]), b = abs(qs[i + 1]), index;
+        if (book <= HCB_8) index = DIM_M2_7 * a + b;
+        else if (book <= HCB_10) index = DIM_M2_12 * a + b;
+        else index = DIM_ESC * (a > LAV_ESC ? LAV_ESC : a) + (b > LAV_ESC ? LAV_ESC : b);
+        bits += hmap[book][index].len + (a != 0) + (b != 0);
+        if (book == HCB_ESC) {
+            if (a >= LAV_ESC) bits += escape(a, NULL);
+            if (b >= LAV_ESC) bits += escape(b, NULL);
+        }
+    }
+    return bits;
+}
+
+/* Bits for one scalefactor delta, or -1 if it can't be coded. */
+int huffbook_sf_bits(int delta)
+{
+    return delta < -SF_DELTA || delta > SF_DELTA ? -1 : book12[SF_DELTA + delta].len;
+}
+
 /* Appends the band's codewords to coder->s. */
 static void huffcode_write(const int * __restrict qs, int len, int bnum, CoderInfo *coder)
 {

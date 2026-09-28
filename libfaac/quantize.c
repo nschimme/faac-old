@@ -60,6 +60,7 @@ static float max_quant_limit;
  * Precomputed 2^(sfac/4) LUT eliminates repeated transcendental powf calls during gain coupling. */
 static float gain_lut[GAIN_LUT_SIZE];
 static float log10_width_sf_lut[128];
+static float pow_4_3_lut[MAX_HUFF_ESC_VAL + 1];
 
 #define SF_CHAIN_UNSET INT_MIN
 
@@ -82,6 +83,9 @@ void QuantizeInit(void)
     /* Pre-multiply width logarithm by SF_STEP_ENRG (= sfstep / 2) */
     for (i = 1; i < 128; i++)
         log10_width_sf_lut[i] = log10f((float)i) * SF_STEP_ENRG;
+
+    for (i = 0; i <= MAX_HUFF_ESC_VAL; i++)
+        pow_4_3_lut[i] = powf((float)i, 4.0f / 3.0f);
 
     /* One-time constant: computed in double so the stored float is
      * correctly rounded, at zero runtime cost. */
@@ -440,11 +444,108 @@ static void ResolveIntensityNoise(const CoderInfo *left, CoderInfo *right)
     }
 }
 
+static float band_distortion(const float *xr, const int *q, int len, float invgain, float weight)
+{
+    float d = 0.0f;
+    int k;
+    for (k = 0; k < len; k++) {
+        float v = pow_4_3_lut[abs(q[k])] * invgain;
+        float e = (q[k] < 0 ? -v : v) - xr[k];
+        d += e * e * weight;
+    }
+    return d;
+}
+
+/* Try each regular band one scalefactor step either side, pricing its
+ * spectral bits in its current book and only the two sf deltas that change;
+ * huffbook() then chooses books and sections as before. */
+static void refine_scalefactors(CoderInfo *c, const float *xr, int *qs,
+                                const int *bias, const float *weight, const float *lambda_band)
+{
+    int candidate[FRAME_LEN], bestq[FRAME_LEN];
+    int next_band[MAX_SCFAC_BANDS];
+    int b, last = -1, first_pns = -1, prev = -1, off = 0, group = 0, group_start = 0;
+    /* The first PNS energy is coded against global gain, which the first
+     * regular band sets, so that band's moves must keep it in range. */
+    for (b = 0; b < c->bandcnt; b++)
+        if (c->book[b] == HCB_PNS) { first_pns = b; break; }
+    for (b = c->bandcnt - 1; b >= 0; b--) {
+        next_band[b] = last;
+        if (c->book[b] >= HCB_1 && c->book[b] <= HCB_ESC) last = b;
+    }
+    for (b = 0; b < c->bandcnt; b++) {
+        int book = c->book[b], sb = b % c->sfbn;
+        if (sb == 0 && b) {
+            group_start += c->groups.len[group] * BLOCK_LEN_SHORT;
+            group++;
+        }
+        if (book < HCB_1 || book > HCB_ESC) continue;
+        int width = c->sfb_offset[sb + 1] - c->sfb_offset[sb];
+        int len = width * c->groups.len[group];
+        int oldsf = c->sf[b], next = next_band[b];
+        int bestsf = oldsf, di;
+        float best = 0.0f;
+        /* delta 0 is the fallback; its value is summed term by term so the
+         * comparison sees exactly the cost the band already has. */
+        static const signed char deltas[3] = { 0, -1, 1 };
+        for (di = 0; di < 3; di++) {
+            int delta = deltas[di], sf = oldsf + delta;
+            int j, left, right, bits;
+            float gain, invgain, d = 0.0f, value;
+            if (delta && (sf < 0 || sf > SF_MAX_ABS)) continue;
+            if (delta && prev < 0 && first_pns >= 0) {
+                int pns_delta = c->sf[first_pns] - (sf - SF_PNS_OFFSET);
+                if (pns_delta < -256 || pns_delta > 255) continue;
+            }
+            left = huffbook_sf_bits(prev < 0 ? 0 : sf - c->sf[prev]);
+            right = next < 0 ? 0 : huffbook_sf_bits(c->sf[next] - sf);
+            if (delta && (left < 0 || right < 0)) continue;
+            gain = sfac_to_gain(SF_OFFSET + bias[b] - sf);
+            invgain = 1.0f / gain;
+            if (delta) {
+                int maxq = 0;
+                for (j = 0; j < c->groups.len[group]; j++) {
+                    int peak = qfunc(xr + group_start + j * BLOCK_LEN_SHORT + c->sfb_offset[sb],
+                                      candidate + j * width, width >> 2, gain);
+                    if (peak > maxq) maxq = peak;
+                }
+                if (maxq > MAX_HUFF_ESC_VAL) continue;
+            } else {
+                memcpy(candidate, qs + off, len * sizeof(int));
+            }
+            bits = huffbook_band_bits(candidate, len, book);
+            if (delta && bits < 0) continue;
+            for (j = 0; j < c->groups.len[group]; j++)
+                d += band_distortion(xr + group_start + j * BLOCK_LEN_SHORT + c->sfb_offset[sb],
+                                     candidate + j * width, width, invgain, weight[b]);
+            if (!delta) {
+                value = d + lambda_band[b] * bits;
+                value += lambda_band[b] * left;
+                if (next >= 0) value += lambda_band[b] * right;
+            } else {
+                value = d + lambda_band[b] * (bits + left + right);
+            }
+            if (!delta || value < best - 1e-6f * (1.0f + fabsf(best))) {
+                best = value; bestsf = sf;
+                memcpy(bestq, candidate, len * sizeof(int));
+            }
+        }
+        if (bestsf != oldsf) {
+            c->sf[b] = bestsf;
+            memcpy(qs + off, bestq, len * sizeof(int));
+        }
+        prev = b;
+        off += len;
+    }
+}
+
 int BlocQuant(CoderInfo * __restrict coder, float * __restrict xr, AACQuantCfg *aacquantCfg)
 {
     float target[MAX_SCFAC_BANDS];
     BandEnergy be[NSFB_LONG];
     int qs[FRAME_LEN];
+    int bias[MAX_SCFAC_BANDS];
+    float weight[MAX_SCFAC_BANDS], lambda_band[MAX_SCFAC_BANDS];
     int i, lastsf = SF_CHAIN_UNSET, qlen = 0;
     float *gxr = xr;
     int cutoff = (coder->block_type == ONLY_SHORT_WINDOW)
@@ -460,9 +561,20 @@ int BlocQuant(CoderInfo * __restrict coder, float * __restrict xr, AACQuantCfg *
             group_total = coder->refTotal[i];
 
         derive_masking_targets(coder, i, (float)aacquantCfg->quality / DEFQUAL, aacquantCfg->treble_slope, be, group_total, target);
+        for (int sb = 0; sb < coder->sfbn; sb++) {
+            int b = i * coder->sfbn + sb;
+            int len = (coder->sfb_offset[sb + 1] - coder->sfb_offset[sb]) * coder->groups.len[i];
+            float avg = be[sb].sum / coder->groups.len[i];
+            float ratio = avg > 1e-9f ? be[sb].peak_energy / avg : 0.0f;
+            bias[b] = coder->sf[b];
+            weight[b] = be[sb].sum > 0.0f ? target[sb] * target[sb] * len / be[sb].sum : 0.0f;
+            lambda_band[b] = 0.025f * fminf(1.2f, fmaxf(0.6f, DEFQUAL / aacquantCfg->quality))
+                           * (ratio > 2.5f ? 0.80f : ratio < 0.20f && avg > 0.0f ? 1.25f : 1.0f);
+        }
         assign_band_codebooks(coder, gxr, target, be, i, aacquantCfg->pnslevel, &lastsf, qs, &qlen);
         gxr += coder->groups.len[i] * BLOCK_LEN_SHORT;
     }
+    refine_scalefactors(coder, xr, qs, bias, weight, lambda_band);
     huffbook(coder, qs);
 
     // global_gain must come from a regular band: it's an 8-bit bitstream field,
