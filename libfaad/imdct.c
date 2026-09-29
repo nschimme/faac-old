@@ -146,6 +146,17 @@ static inline void imdct_emit(float * restrict out_pcm, float * restrict overlap
     }
 }
 
+/* imdct_emit() for the common long-long block, cut where the fold and the
+ * emit/overlap split change so each piece is a straight, vectorisable loop. */
+static void imdct_emit_long(float * restrict out_pcm, float * restrict overlap, const float * restrict u, float scale,
+                            const float * restrict wl, const float * restrict wr)
+{
+    for (int i = 0; i < 512; i++)      out_pcm[i] = u[512 + i] * scale * wl[i] + overlap[i];
+    for (int i = 512; i < 1024; i++)   out_pcm[i] = -u[1535 - i] * scale * wl[i] + overlap[i];
+    for (int i = 1024; i < 1536; i++)  overlap[i - 1024] = -u[1535 - i] * scale * wr[2047 - i];
+    for (int i = 1536; i < 2048; i++)  overlap[i - 1024] = -u[i - 1536] * scale * wr[2047 - i];
+}
+
 void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, float * restrict spec, float * restrict out_pcm)
 {
     /* ISO/IEC 14496-3 §4.6.11.3.2: the left half of the window uses the
@@ -183,6 +194,10 @@ void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, float
     const float scale = 2.0f / 2048.0f;
     dct4(spec, u, 1024);
 
+    if (ics->window_sequence == ONLY_LONG_SEQUENCE) {
+        imdct_emit_long(out_pcm, overlap, u, scale, win_long_l, win_long);
+        return;
+    }
     if (ics->window_sequence == LONG_STOP_SEQUENCE) {
         /* zero, the short window's rise, then flat */
         for (int i = 0; i < 448; i++) out_pcm[i] = overlap[i];
