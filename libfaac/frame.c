@@ -831,7 +831,7 @@ int faacEncEncode(faacEncHandle hpEncoder,
     /* Psychoacoustics */
     PsyCalculate(hEncoder->psyInfo, hEncoder->isLfeChannel, numChannels);
 
-    BlockSwitch(coderInfo, hEncoder->psyInfo, numChannels);
+    BlockSwitch(coderInfo, hEncoder->psyInfo, hEncoder->isLfeChannel, numChannels);
 
 #ifdef FAAC_STATS
     g_faacStats.totalFrames++;
@@ -853,7 +853,9 @@ int faacEncEncode(faacEncHandle hpEncoder,
     {
 		for (channel = 0; channel < numChannels; channel++)
 		{
-			coderInfo[channel].block_type = ONLY_SHORT_WINDOW;
+			/* LFE must stay ONLY_LONG_SEQUENCE */
+			if (!hEncoder->isLfeChannel[channel])
+				coderInfo[channel].block_type = ONLY_SHORT_WINDOW;
 		}
     }
 

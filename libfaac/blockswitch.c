@@ -201,7 +201,8 @@ void PsyBufferUpdate(GlobalPsyInfo * gpsyInfo, PsyInfo * psyInfo,
   psydata->level = level;
 }
 
-void BlockSwitch(CoderInfo * coderInfo, PsyInfo * psyInfo, unsigned int numChannels)
+void BlockSwitch(CoderInfo * coderInfo, PsyInfo * psyInfo, const bool * isLfeChannel,
+		 unsigned int numChannels)
 {
   unsigned int channel;
   int desire = ONLY_LONG_WINDOW;
@@ -209,15 +210,23 @@ void BlockSwitch(CoderInfo * coderInfo, PsyInfo * psyInfo, unsigned int numChann
   /* Use the same block type for all channels
      If there is 1 channel that wants a short block,
      use a short block on all channels.
+     LFE channels are excluded: ISO/IEC 14496-3 requires ONLY_LONG_SEQUENCE.
    */
   for (channel = 0; channel < numChannels; channel++)
   {
-    if (psyInfo[channel].block_type == ONLY_SHORT_WINDOW)
+    if (!isLfeChannel[channel] && psyInfo[channel].block_type == ONLY_SHORT_WINDOW)
       desire = ONLY_SHORT_WINDOW;
   }
 
   for (channel = 0; channel < numChannels; channel++)
   {
+    if (isLfeChannel[channel])
+    {
+      coderInfo[channel].block_type = ONLY_LONG_WINDOW;
+      coderInfo[channel].desired_block_type = ONLY_LONG_WINDOW;
+      continue;
+    }
+
     int lasttype = coderInfo[channel].block_type;
 
     if (desire == ONLY_SHORT_WINDOW
