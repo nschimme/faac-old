@@ -512,23 +512,20 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
         }
     }
 
-    float *pcm_float = dec->pcm_float;
-    for (uint32_t c = 0; c < dec->num_channels; c++) {
-        imdct_and_window(dec, c, &ics_list[c], dec->spec[c], pcm_float + c * FRAME_LEN_LONG);
-    }
-
-    float *pcm_final = dec->pcm_final;
-    if (dec->asc.is_sbr || dec->sbr_present) {
+    /* One buffer, one frame_samples-long run per channel: SBR analyses a
+     * channel's whole core frame before it synthesises that channel, so it
+     * works in place over the core output at the start of each run. */
+    bool sbr_frame = dec->asc.is_sbr || dec->sbr_present;
 #ifdef FAAD_D_SBR
-        dec->frame_samples = 1024;
+    dec->frame_samples = 1024;
 #else
-        dec->frame_samples = 2048;
+    dec->frame_samples = sbr_frame ? 2048 : 1024;
 #endif
-        sbr_apply(dec, dec->num_channels, pcm_float, pcm_final);
-    } else {
-        dec->frame_samples = 1024;
-        memcpy(pcm_final, pcm_float, dec->num_channels * 1024 * sizeof(float));
+    float *pcm_final = dec->pcm;
+    for (uint32_t c = 0; c < dec->num_channels; c++) {
+        imdct_and_window(dec, c, &ics_list[c], dec->spec[c], pcm_final + c * dec->frame_samples);
     }
+    if (sbr_frame) sbr_apply(dec, dec->num_channels, pcm_final);
 
     uint32_t total_samples = dec->frame_samples * dec->num_channels;
     uint32_t required_bytes = total_samples * ((dec->config.output_format == FAAD_OUTPUT_16BIT) ? 2 : 4);

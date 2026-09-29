@@ -416,8 +416,7 @@ struct faad_decoder {
     float prev_spec[MAX_CHANNELS][FRAME_LEN_LONG];
 
     /* Frame decode scratch buffers moved from C call stack to reduce stack depth (<1 KB) */
-    float pcm_float[MAX_CHANNELS * FRAME_LEN_LONG];
-    float pcm_final[MAX_CHANNELS * 2048];
+    float pcm[MAX_CHANNELS * 2048]; /* core output, then SBR output in place */
 
 #ifdef FAAD_STATS
     FaadDecStats stats;
@@ -460,7 +459,7 @@ void ps_read_data(struct faad_decoder *dec, BitReader *bs, uint32_t bits_left);
 void ps_frame_begin(struct faad_decoder *dec, float X[PS_IN_SLOTS][64][2], int top);
 void ps_slot(struct faad_decoder *dec, int n, float X[PS_IN_SLOTS][64][2], float L[64][2], float R[64][2]);
 void init_ps_tables(void);
-void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *pcm_out);
+void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm);
 #ifdef FAAD_STATS
 FILE *faad_dump_file(struct faad_decoder *dec);
 #endif
