@@ -23,6 +23,7 @@
 #include "charset.h"
 #include "cli_common.h"
 #include "endian.h"
+#include "asc_codec.h"
 
 typedef struct {
     uint64_t offset;
@@ -377,13 +378,22 @@ int main(int argc, char **argv)
             mp4_free_track(&track);
             return 1;
         }
+        /* ADTS carries the core layer: for HE the SBR/PS data rides
+         * implicitly inside each frame, so the header names the core
+         * object type and the core sampling rate. */
+        AscInfo asc;
+        asc_codec_parse(track.asc_buf, track.asc_len, &asc);
+        uint8_t profile = (asc.object_type >= 1 && asc.object_type <= 4) ? (uint8_t)(asc.object_type - 1) : 1;
+        uint8_t sr_idx = asc_codec_sr_idx(asc.sample_rate);
+        uint8_t ch = asc.num_channels & 7;
         for (uint32_t s = 0; s < track.num_samples; s++) {
             uint64_t offset = track.samples[s].offset;
             uint32_t size = track.samples[s].size;
-            if (offset > 0 && offset + size <= (uint64_t)file_len) {
-                uint8_t adts_hdr[7] = { 0xFF, 0xF1, 0x50, 0x80, 0x00, 0x1F, 0xFC };
-                uint32_t frame_len = size + 7;
-                adts_hdr[3] = (uint8_t)(0x80 | ((frame_len >> 11) & 0x03));
+            uint32_t frame_len = size + 7;
+            if (offset > 0 && offset + size <= (uint64_t)file_len && frame_len <= 0x1FFF) {
+                uint8_t adts_hdr[7] = { 0xFF, 0xF1, 0x00, 0x00, 0x00, 0x1F, 0xFC };
+                adts_hdr[2] = (uint8_t)((profile << 6) | ((sr_idx & 0x0F) << 2) | ((ch >> 2) & 1));
+                adts_hdr[3] = (uint8_t)(((ch & 3) << 6) | ((frame_len >> 11) & 0x03));
                 adts_hdr[4] = (uint8_t)((frame_len >> 3) & 0xFF);
                 adts_hdr[5] = (uint8_t)(((frame_len & 0x07) << 5) | 0x1F);
                 fwrite(adts_hdr, 1, 7, fadts);

@@ -73,7 +73,7 @@ if get_option('decoder')
     endif
     faad = executable('faad',
         ['faad_main.c', 'mp4read.c', 'charset.c', 'cli_common.c'],
-        include_directories: ['..', '../include', '../common'],
+        include_directories: ['..', '../include', '../libfaac', '../common'],
         link_with: decoder_link_libs,
         c_args: c_args_list,
         link_args: gc_args,
