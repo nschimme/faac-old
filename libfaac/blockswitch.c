@@ -50,13 +50,18 @@ psydata_t;
 /* The high-pass first difference (d[n]=x[n]-x[n-1]) de-weights bass, whose
  * broadband energy would otherwise mask HF attacks and false-trigger short
  * blocks on stationary music; what's left tracks the band where pre-echo is
- * audible. A sub-block whose energy leaves [level/ratio, level*ratio] of the
- * running level before it is a transient. On LC the level spans roughly the
- * last three sub-blocks, so dense stationary texture stops tripping short
- * windows while onsets and the drop-outs after them still do. The bit-starved
- * HE core gains from more short windows than its attacks alone call for, so
- * it judges against the neighbouring sub-block alone, with a tighter band. */
+ * audible. A sub-block whose energy leaves [level/dropRatio, level*ratio] of
+ * the running level before it is a transient. On LC the level spans roughly
+ * the last three sub-blocks, so dense stationary texture stops tripping short
+ * windows while onsets still do. A drop-out counts on LC only when the level
+ * falls by more than PSY_DROP_RATIO_LC: the ordinary decay of a note is
+ * better served by a long block, while a hard cut to near silence still needs
+ * a short one so the coding noise does not smear into the silence. The
+ * bit-starved HE core gains from more short windows than its attacks alone
+ * call for, so it judges against the neighbouring sub-block alone, with a
+ * tighter band either way. */
 #define PSY_LEVEL_RATIO_LC  (2.5f)
+#define PSY_DROP_RATIO_LC   (12.0f)
 #define PSY_LEVEL_SMOOTH_LC (0.3f)
 #define PSY_LEVEL_RATIO_HE  (1.5f)
 
@@ -80,6 +85,7 @@ void PsyInit(GlobalPsyInfo * gpsyInfo, PsyInfo * psyInfo, unsigned int numChanne
 
   gpsyInfo->sampleRate = (float) sampleRate;
   gpsyInfo->levelRatio = heCore ? PSY_LEVEL_RATIO_HE : PSY_LEVEL_RATIO_LC;
+  gpsyInfo->dropRatio = heCore ? PSY_LEVEL_RATIO_HE : PSY_DROP_RATIO_LC;
   gpsyInfo->levelSmooth = heCore ? 1.0f : PSY_LEVEL_SMOOTH_LC;
 
   for (channel = 0; channel < numChannels; channel++)
@@ -194,7 +200,7 @@ void PsyBufferUpdate(GlobalPsyInfo * gpsyInfo, PsyInfo * psyInfo,
       e += d * d;
     }
     psydata->eng[ENG_WIN_NEXT + win] = (psyfloat)e;
-    if (e > gpsyInfo->levelRatio * level || e * gpsyInfo->levelRatio < level)
+    if (e > gpsyInfo->levelRatio * level || e * gpsyInfo->dropRatio < level)
       psydata->attack |= 1u << (ENG_WIN_NEXT + win);
     level = gpsyInfo->levelSmooth * e + (1.0f - gpsyInfo->levelSmooth) * level;
   }
