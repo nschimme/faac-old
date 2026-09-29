@@ -1340,8 +1340,16 @@ static void sbr_dump_frame(FILE *df, unsigned int frame_idx, uint32_t ch, const 
 }
 #endif
 
-void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *pcm_out)
+/* In place: channel c's core frame is read from, and its SBR output
+ * written to, pcm + c * SBR_OUT_LEN (the PS path writes channel 1 there too). */
+#ifdef FAAD_D_SBR
+#define SBR_OUT_LEN 1024
+#else
+#define SBR_OUT_LEN 2048
+#endif
+void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm)
 {
+    float *pcm_in = pcm, *pcm_out = pcm;
 #ifndef FAAD_DISABLE_SBR
     SBRScratch *sc = &dec->sbr_scratch;
     float E0[SBR_MAX_ENV][SBR_MAX_BANDS], E1[SBR_MAX_ENV][SBR_MAX_BANDS];
@@ -1390,7 +1398,7 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
 #endif
         for (int c = 0; c < nch; c++) {
             SBRChannel *sch = &dec->sbr[ch + c];
-            sbr_process_channel(el, sch, sc, pcm_in + (ch + c) * FRAME_LEN_LONG, c ? E1 : E0, c ? Q1 : Q0, have_hf, SBR_SLOTS);
+            sbr_process_channel(el, sch, sc, pcm_in + (ch + c) * SBR_OUT_LEN, c ? E1 : E0, c ? Q1 : Q0, have_hf, SBR_SLOTS);
 #ifdef FAAD_D_SBR
             for (int t = 0; t < SBR_SLOTS; t++)
                 qmf_synthesis_slot_ds(sch, sc->x[t], pcm_out + (ch + c) * 1024 + t * 32);
@@ -1403,14 +1411,19 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
     }
 #else
     (void)dec;
+    (void)pcm_in; (void)pcm_out;
+#ifndef FAAD_D_SBR
+    /* no SBR decoder: linear 2x upsampling, backwards so it can run in place */
     for (uint32_t ch = 0; ch < num_ch; ch++) {
-        float prev = pcm_in[ch * FRAME_LEN_LONG];
-        for (uint32_t i = 0; i < FRAME_LEN_LONG; i++) {
-            float sample = pcm_in[ch * FRAME_LEN_LONG + i];
-            pcm_out[ch * 2048 + i * 2]     = 0.5f * (prev + sample);
-            pcm_out[ch * 2048 + i * 2 + 1] = sample;
-            prev = sample;
+        float *p = pcm + ch * SBR_OUT_LEN;
+        for (int i = FRAME_LEN_LONG - 1; i >= 0; i--) {
+            float sample = p[i], prev = i ? p[i - 1] : sample;
+            p[i * 2 + 1] = sample;
+            p[i * 2]     = 0.5f * (prev + sample);
         }
     }
+#else
+    (void)num_ch; (void)pcm;
+#endif
 #endif
 }
