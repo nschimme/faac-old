@@ -295,6 +295,26 @@ static inline float pow_4_3_fast(int x)
     return (x < 0) ? -val : val;
 }
 
+/* §4.6.4.3: a pulse adds to the quantised value, away from zero, before
+ * inverse quantisation; the line is re-quantised from its dequantised
+ * value, which is exact for the integer magnitudes the books carry. */
+static void apply_pulses(const ICSInfo *ics, float *spec, int max_sfb)
+{
+    for (int i = 0; i < ics->pulse_count; i++) {
+        int k = ics->pulse_pos[i];
+        int sfb = 0;
+        while (sfb < max_sfb && ics->sfb_offsets[sfb + 1] <= k) sfb++;
+        if (sfb >= max_sfb) continue;
+        int cb = ics->sfb_cb[0][sfb];
+        if (cb == 0 || cb >= 13) continue;
+        float scale = sf_scale_lut[ics->scalefactors[0][sfb]]; /* clamped to 0..255 when read */
+        float q = floorf(powf(fabsf(spec[k]) / scale, 0.75f) + 0.5f);
+        if (spec[k] < 0.0f) q = -q;
+        q += (q > 0.0f) ? ics->pulse_amp[i] : -(float)ics->pulse_amp[i];
+        spec[k] = copysignf(powf(fabsf(q), 4.0f / 3.0f), q) * scale;
+    }
+}
+
 faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
 #ifdef FAAD_STATS
     , FaadDecStats *stats
@@ -353,5 +373,7 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
         }
         window_offset += win_group_len;
     }
+
+    if (ics->pulse_count) apply_pulses(ics, spec, max_sfb);
     return FAAD_OK;
 }
