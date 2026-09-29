@@ -137,10 +137,27 @@ static void fifo_truncate_tail(PCMFifo *f, uint32_t bytes_to_remove)
     f->fill -= bytes_to_remove;
 }
 
+/* dwChannelMask for the WAV order libfaad outputs (FL FR FC LFE BL BR SL SR). */
+static uint32_t wav_channel_mask(uint16_t num_channels)
+{
+    switch (num_channels) {
+    case 3: return 0x007;  /* FL FR FC */
+    case 4: return 0x107;  /* FL FR FC BC */
+    case 5: return 0x037;  /* FL FR FC BL BR */
+    case 6: return 0x03F;  /* FL FR FC LFE BL BR */
+    case 8: return 0x63F;  /* FL FR FC LFE BL BR SL SR */
+    default: return 0;
+    }
+}
+
+/* Plain PCM/float up to two channels; WAVE_FORMAT_EXTENSIBLE with a
+ * channel mask above that, so players place the surround channels. */
 static void write_wav_header(FILE *f, uint32_t sample_rate, uint16_t num_channels, uint32_t total_pcm_bytes, uint16_t bits_per_sample, bool is_float)
 {
     fseek(f, 0, SEEK_SET);
-    uint32_t file_size = htole32(36 + total_pcm_bytes);
+    bool extensible = num_channels > 2;
+    uint32_t fmt_size = extensible ? 40 : 16;
+    uint32_t file_size = htole32(4 + 8 + fmt_size + 8 + total_pcm_bytes);
     uint16_t bytes_per_sample = bits_per_sample / 8;
     uint32_t byte_rate = htole32(sample_rate * num_channels * bytes_per_sample);
     uint16_t block_align = htole16(num_channels * bytes_per_sample);
@@ -152,8 +169,8 @@ static void write_wav_header(FILE *f, uint32_t sample_rate, uint16_t num_channel
     fwrite(&file_size, 4, 1, f);
     fwrite("WAVEfmt ", 1, 8, f);
 
-    uint32_t fmt_chunk_size = htole32(16);
-    uint16_t audio_format = htole16(is_float ? 3 : 1); /* 1 = PCM, 3 = IEEE Float */
+    uint32_t fmt_chunk_size = htole32(fmt_size);
+    uint16_t audio_format = htole16(extensible ? 0xFFFE : (is_float ? 3 : 1)); /* 1 = PCM, 3 = IEEE Float */
     fwrite(&fmt_chunk_size, 4, 1, f);
     fwrite(&audio_format, 2, 1, f);
     fwrite(&ch_le, 2, 1, f);
@@ -161,6 +178,19 @@ static void write_wav_header(FILE *f, uint32_t sample_rate, uint16_t num_channel
     fwrite(&byte_rate, 4, 1, f);
     fwrite(&block_align, 2, 1, f);
     fwrite(&bps_le, 2, 1, f);
+    if (extensible) {
+        uint16_t cb_size = htole16(22);
+        uint16_t valid_bits = htole16(bits_per_sample);
+        uint32_t mask = htole32(wav_channel_mask(num_channels));
+        /* KSDATAFORMAT_SUBTYPE_PCM / _IEEE_FLOAT: {0000000X-0000-0010-8000-00AA00389B71} */
+        uint8_t guid[16] = { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+                             0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71 };
+        if (is_float) guid[0] = 0x03;
+        fwrite(&cb_size, 2, 1, f);
+        fwrite(&valid_bits, 2, 1, f);
+        fwrite(&mask, 4, 1, f);
+        fwrite(guid, 1, 16, f);
+    }
 
     uint32_t pcm_bytes_le = htole32(total_pcm_bytes);
     fwrite("data", 1, 4, f);
@@ -231,7 +261,7 @@ int main(int argc, char **argv)
     bool raw_format = false;
     uint32_t bit_depth = 16;
     bool is_float = false;
-    bool downmix_stereo = false;
+    enum faad_downmix_mode downmix = FAAD_DOWNMIX_NONE;
     bool gapless = true;
     bool info_only = false;
     bool json_info = false;
@@ -269,7 +299,17 @@ int main(int argc, char **argv)
             else bit_depth = 16;
             break;
         case 'a': adts_outfile = optarg; break;
-        case 'd': downmix_stereo = true; break;
+        case 'd': {
+            /* the mode is optional: -d, -dstereo, --downmix=2, or -d stereo */
+            const char *mode = optarg;
+            if (!mode && optind < argc && (!strcmp(argv[optind], "mono") || !strcmp(argv[optind], "stereo") ||
+                                           !strcmp(argv[optind], "1") || !strcmp(argv[optind], "2")))
+                mode = argv[optind++];
+            if (!mode || !strcmp(mode, "mono") || !strcmp(mode, "1")) downmix = FAAD_DOWNMIX_MONO;
+            else if (!strcmp(mode, "stereo") || !strcmp(mode, "2")) downmix = FAAD_DOWNMIX_STEREO;
+            else { fprintf(stderr, "Unknown downmix mode '%s' (mono/1 or stereo/2)\n", mode); return 1; }
+            break;
+        }
         case 'j': jump_seconds = atof(optarg); break;
         case OPT_NO_GAPLESS: gapless = false; break;
         case 'i': info_only = true; break;
@@ -351,7 +391,7 @@ int main(int argc, char **argv)
     faad_config_init(&cfg, sizeof(cfg));
     cfg.stream_format = is_mp4 ? FAAD_STREAM_RAW : FAAD_STREAM_ADTS;
     cfg.output_format = is_float ? FAAD_OUTPUT_FLOAT : FAAD_OUTPUT_16BIT;
-    cfg.downmix_mode = downmix_stereo ? FAAD_DOWNMIX_MONO : FAAD_DOWNMIX_NONE;
+    cfg.downmix_mode = downmix;
 
     faad_decoder *dec = NULL;
     faad_status st = faad_decoder_create(&cfg, is_mp4 ? track.asc_buf : NULL, is_mp4 ? track.asc_len : 0, &dec);
@@ -363,6 +403,8 @@ int main(int argc, char **argv)
     }
 
     FILE *fout = NULL;
+    bool header_pending = false;
+    uint16_t header_channels = 2; /* the count the header was first written with; its size depends on it */
     if (!info_only) {
         if (write_stdout) {
             fout = stdout;
@@ -384,16 +426,9 @@ int main(int argc, char **argv)
                 if (is_mp4) mp4_free_track(&track);
                 return 1;
             }
-            if (!raw_format) {
-                faad_stream_info sinfo;
-                uint32_t init_sr = 44100;
-                uint32_t init_ch = 2;
-                if (faad_decoder_get_info(dec, &sinfo) == FAAD_OK) {
-                    if (sinfo.sample_rate > 0) init_sr = sinfo.sample_rate;
-                    if (sinfo.channels > 0) init_ch = sinfo.channels;
-                }
-                write_wav_header(fout, init_sr, (uint16_t)init_ch, 0, bit_depth, is_float);
-            }
+            /* The header waits for the first decoded frame: an ADTS stream's
+             * channel count (and with it the header's size) isn't known before. */
+            header_pending = !raw_format;
         }
     }
 
@@ -454,6 +489,11 @@ int main(int argc, char **argv)
                  * implicitly and only known once the payload is decoded. */
                 sample_rate = finfo.sample_rate;
                 num_channels = finfo.channels;
+                if (header_pending) {
+                    write_wav_header(fout, sample_rate, (uint16_t)num_channels, 0, bit_depth, is_float);
+                    header_channels = (uint16_t)num_channels;
+                    header_pending = false;
+                }
                 obj_type = finfo.sbr_active ? FAAD_OBJ_HE_AAC_V1 : FAAD_OBJ_LC;
 
                 uint32_t dec_bytes_per_sample = is_float ? 4 : 2;
@@ -545,6 +585,11 @@ int main(int argc, char **argv)
 
             sample_rate = finfo.sample_rate;
             num_channels = finfo.channels;
+            if (header_pending) {
+                write_wav_header(fout, sample_rate, (uint16_t)num_channels, 0, bit_depth, is_float);
+                header_channels = (uint16_t)num_channels;
+                header_pending = false;
+            }
             obj_type = finfo.sbr_active ? FAAD_OBJ_HE_AAC_V1 : FAAD_OBJ_LC;
 
             if (fout && bytes_written > 0) {
@@ -644,6 +689,7 @@ int main(int argc, char **argv)
         printf("  Encoder:   %s\n", track.encoder_tag[0] ? track.encoder_tag : "FAAC");
     } else if (fout) {
         if (!raw_format && fout != stdout) {
+            if (!header_pending) num_channels = header_channels;
             write_wav_header(fout, sample_rate, (uint16_t)num_channels, total_pcm_bytes, bit_depth, is_float);
             fclose(fout);
         }
