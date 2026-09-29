@@ -1,8 +1,9 @@
+import os
 import sys,pathlib,collections,math,json,numpy as np
 from scipy.stats import spearmanr
 sys.path.insert(0,'probe/ladder');from parse_dump import parse
 from line_level import long_off,short_off,region
-root=pathlib.Path('/tmp/ladder_g');old=pathlib.Path('/tmp/ladder_f');clips={item['id']:item['stem'] for item in json.loads((root/'g2_index.json').read_text())}
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));old=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));clips={item['id']:item['stem'] for item in json.loads((root/'g2_index.json').read_text())}
 rows=[]
 for name,stem in clips.items():
  a=parse(str(root/(name+'_apple.dump')));f=parse(str(root/(name+'_normal.dump')))

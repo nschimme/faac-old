@@ -1,5 +1,7 @@
+import os
+import sys
 import json,math,statistics,pathlib
-root=pathlib.Path('/tmp/ladder_g');scores=json.loads((root/'g2_scores.json').read_text());index=json.loads((root/'g2_index.json').read_text());encoded=json.loads((root/'g2_encode.json').read_text());rows=[];byarm={x:[] for x in ('F_vs_A','fSF','fWIN','rSF','rWIN','A_vs_Apple')}
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));scores=json.loads((root/'g2_scores.json').read_text());index=json.loads((root/'g2_index.json').read_text());encoded=json.loads((root/'g2_encode.json').read_text());rows=[];byarm={x:[] for x in ('F_vs_A','fSF','fWIN','rSF','rWIN','A_vs_Apple')}
 for item in index:
  k=item['id'];d=scores.get(k)
  if not d:continue

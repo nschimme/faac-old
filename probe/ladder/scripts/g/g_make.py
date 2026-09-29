@@ -1,8 +1,9 @@
+import os
 import sys,copy,pathlib,json,math
 sys.path.insert(0,'probe/ladder')
 from parse_dump import parse,ICS
 from line_level import long_off,short_off,region
-root=pathlib.Path('/tmp/ladder_g')
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'))
 clips={'Severance':'Severance__1.31-1.51_.16b48k','21classic':'21-classic.441.16b48k','velvet':'velvet.16b48k','Greensleeves':'24-Greensleeves-Korean-male-speech.441.16b48k','German':'12-German-male-speech.441.16b48k'}
 base_arms=['F','A','rWIN','rBW','rCLS','rSF','rMS','rTNS','SFt','SFs']
 pairs=['rSF+rWIN','rSF+rBW','rSF+rCLS','rSF+rMS','rSF+rTNS','rWIN+rBW','rWIN+rCLS','rWIN+rMS','rWIN+rTNS','rMS+rCLS']
@@ -80,4 +81,4 @@ def make_one(name,stem,apple_dump,faac_dump,arms):
  (root/(name+'_G_units.json')).write_text(json.dumps(summary,indent=2))
 if __name__=='__main__':
  for name in sys.argv[1:] or clips:
-  make_one(name,clips[name],pathlib.Path('probe/ladder/survey/apple')/(clips[name]+'.dump'),pathlib.Path('/tmp/ladder_f')/(name+'_F1_normal.dump'),base_arms+pairs)
+  make_one(name,clips[name],pathlib.Path('probe/ladder/survey/apple')/(clips[name]+'.dump'),pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'))/(name+'_F1_normal.dump'),base_arms+pairs)

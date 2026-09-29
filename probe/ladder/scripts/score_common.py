@@ -1,5 +1,6 @@
+import sys
 import os,subprocess,pathlib,numpy as np,soundfile as sf,re
-root=pathlib.Path('/tmp/ladder_e');repo=pathlib.Path.cwd();data=pathlib.Path('/Users/nschimme/gitprojects/faac-benchmark/data/external/audio');venv='/Users/nschimme/gitprojects/faac-benchmark/.venv/bin/python';scorer='/Users/nschimme/gitprojects/faac-benchmark/scripts/score_clip.py'
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));repo=pathlib.Path(__file__).resolve().parents[3];data=pathlib.Path(os.environ.get('FAAC_BENCHMARK_DATA', '/opt/faac-benchmark/data/external/audio'));venv=os.environ.get('PYTHON_BIN', sys.executable);scorer=os.environ.get('SCORE_CLIP', '/opt/faac-benchmark/scripts/score_clip.py')
 clips={'Severance':'Severance__1.31-1.51_.16b48k','21classic':'21-classic.441.16b48k','velvet':'velvet.16b48k','Greensleeves':'24-Greensleeves-Korean-male-speech.441.16b48k','German':'12-German-male-speech.441.16b48k'}
 def run(cmd,**kw):return subprocess.run(cmd,check=True,**kw)
 def wav_from_aac(aac,wav,skip,n):

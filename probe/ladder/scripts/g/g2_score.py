@@ -1,5 +1,6 @@
+import sys
 import os,subprocess,pathlib,re,json,numpy as np,soundfile as sf
-root=pathlib.Path('/tmp/ladder_g');old=pathlib.Path('/tmp/ladder_f');sc='/Users/nschimme/gitprojects/faac-benchmark/scripts/score_clip.py';py='/Users/nschimme/gitprojects/faac-benchmark/.venv/bin/python';index=json.loads((root/'g2_index.json').read_text());status=json.loads((root/'g2_encode.json').read_text());results={}
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));old=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));sc=os.environ.get('SCORE_CLIP', '/opt/faac-benchmark/scripts/score_clip.py');py=os.environ.get('PYTHON_BIN', sys.executable);index=json.loads((root/'g2_index.json').read_text());status=json.loads((root/'g2_encode.json').read_text());results={}
 def score(src,deg):
  env=os.environ.copy();env['PYTHONPATH']=str(old);p=subprocess.run([py,sc,str(src),str(deg)],env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,check=True);m=re.search(r'MOS: ([\d.]+)',p.stdout)
  if not m:raise RuntimeError(p.stdout)

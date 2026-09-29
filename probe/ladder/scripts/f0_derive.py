@@ -1,6 +1,6 @@
 import math
 rows={}
-for line in open('/tmp/ladder_f/f0_score.log'):
+for line in open('f0_score.log'):
  p=line.split();rows.setdefault(p[0],{})[p[1]]=(float(p[2]),int(p[3]))
 for name,r in rows.items():
  s=(r['faac144'][0]-r['faac112'][0])/math.log2(r['faac144'][1]/r['faac112'][1]);base=r['faac128'];

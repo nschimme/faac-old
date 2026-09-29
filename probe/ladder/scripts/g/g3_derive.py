@@ -1,5 +1,7 @@
+import os
+import sys
 import json,math,statistics,pathlib
-root=pathlib.Path('/tmp/ladder_g');s=json.loads((root/'g1_scores.json').read_text());rows=[]
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));s=json.loads((root/'g1_scores.json').read_text());rows=[]
 for name,d in s.items():
  slope=(d['faac144']['mos']-d['faac112']['mos'])/math.log2(d['faac144']['bytes']/d['faac112']['bytes'])
  def loss(x):return (d['A']['mos']-d[x]['mos'])-slope*math.log2(d['A']['bytes']/d[x]['bytes'])

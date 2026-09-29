@@ -1,5 +1,7 @@
+import os
+import sys
 import numpy as np,scipy.signal as ss,pathlib
-root=pathlib.Path('/tmp/ladder_f')
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'))
 for name in ('Severance','21classic','velvet','Greensleeves','German'):
  a=np.fromfile(root/(name+'_F0.f32'),dtype='<f4').reshape(-1,2)[:,0]
  b=np.fromfile(root/(name+'_KF_target.f32'),dtype='<f4').reshape(-1,2)[:,0]

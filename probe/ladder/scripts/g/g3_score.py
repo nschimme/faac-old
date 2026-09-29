@@ -1,5 +1,7 @@
+import os
+import sys
 import pathlib,os,subprocess,re,json,numpy as np,soundfile as sf
-root=pathlib.Path('/tmp/ladder_g');old=pathlib.Path('/tmp/ladder_f');data=pathlib.Path('/Users/nschimme/gitprojects/faac-benchmark/data/external/audio');sc='/Users/nschimme/gitprojects/faac-benchmark/scripts/score_clip.py';py='/Users/nschimme/gitprojects/faac-benchmark/.venv/bin/python';clips={'Severance':'Severance__1.31-1.51_.16b48k','21classic':'21-classic.441.16b48k','velvet':'velvet.16b48k','Greensleeves':'24-Greensleeves-Korean-male-speech.441.16b48k','German':'12-German-male-speech.441.16b48k'};scores=json.loads((root/'g1_scores.json').read_text())
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));old=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));data=pathlib.Path(os.environ.get('FAAC_BENCHMARK_DATA', '/opt/faac-benchmark/data/external/audio'));sc=os.environ.get('SCORE_CLIP', '/opt/faac-benchmark/scripts/score_clip.py');py=os.environ.get('PYTHON_BIN', sys.executable);clips={'Severance':'Severance__1.31-1.51_.16b48k','21classic':'21-classic.441.16b48k','velvet':'velvet.16b48k','Greensleeves':'24-Greensleeves-Korean-male-speech.441.16b48k','German':'12-German-male-speech.441.16b48k'};scores=json.loads((root/'g1_scores.json').read_text())
 for name,stem in clips.items():
  src=data/(stem+'.wav');n=sf.info(src).frames
  for arm in ('SFt','SFs'):

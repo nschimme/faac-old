@@ -866,3 +866,40 @@ In the matched-layout subset, `f2_character.py` also found the frequent clean-cl
 | 21classic | 91.0% / -2.08 / 3.35 (n=13,268) | 89.2% / +2.11 / 3.20 (n=9,041) | 83.4% / +1.66 / 2.29 (n=6,554) | 83.1% / +0.91 / 1.95 (n=2,787) |
 
 **Inference.** The clean-clip lead is strongly associated with SF decisions on this grid; velvet’s loss is strongly associated with window decisions. The pooled M/S arm is dominated by velvet and an especially large German isolated loss even though German ALLF is close to A. The German 1,809.5% share is evidence of interaction with the other FAAC decisions, so it is not a standalone estimate of M/S’s contribution in the fully FAAC stream. No encoder fix is proposed here.
+
+
+## Linux reproduction (Jules)
+
+The reference ladder setup and controls were reproduced on Linux (Ubuntu 24.04 x86_64).
+
+### Setup and Script Porting
+
+- **Setup script (`probe/ladder/jules_setup.sh`)**: Created `probe/ladder/jules_setup.sh` to automate environment setup from a fresh VM:
+  1. Builds `libfaac` on this branch with Meson (`build_ladder`).
+  2. Compiles `probe/ladder/reemit_main.c` into `probe/ladder/reemit_tool`.
+  3. Checks out `origin/faad-ladder-dump` (via git worktree at `/tmp/faad-ladder-dump`) and builds the FAAD3 decoder with `-Dstats=true`.
+  4. Sets up `/opt/faac-benchmark`, installs requirements, fetches datasets via `setup_datasets.py`, and maps source WAVs in `/opt/faac-benchmark/data/external/audio/`.
+  5. Verifies `zimtohrli` MOS scorer and `ffmpeg` dependencies.
+- **Ported Scripts**: Updated all Stage E/F scripts in `probe/ladder/scripts/` to remove hardcoded `/tmp` and `/Users` paths. Work directory is configurable via `sys.argv[1]` or `LADDER_WORK` env var (defaulting to `./ladder_work`), and binaries/data paths are configurable via environment variables (`FAAC_BIN`, `FAAD_BIN`, `FAAC_BENCHMARK_DATA`, `SCORE_CLIP`, `PYTHON_BIN`).
+
+### Known-Answer Controls
+
+| Control | Status | Description |
+|---|---|---|
+| **Control 0** | **PASS** | Apple ref -> FAAD_LADDER_DUMP -> `parse_dump.py` -> `reemit_tool` decodes to float PCM identical to Apple's own decode after 2112 samples delay (max absolute error 0.0, zero differing samples). |
+| **KA Control** | **PASS** | Step1 with Apple decisions (+64 prepended zero samples, `FAAC_STEP1_OFFSET=1`, transition windows forced) reproduces committed Stage F0 behavior with exact matching byte counts across all 5 clips. |
+| **KF Control** | **PASS** | FAAC normal -b 128 encode of +64 input, dumped and fed back through step1 with `FAAC_STEP1_SELF_IS=1` at offset 0, produces 100% byte-identical ADTS and 0.0 max absolute PCM error to FAAC's normal encode on all 5 clips. |
+
+### Stage F0 Bytes and Linux MOS Scores
+
+MOS scores evaluated using `score_clip.py` (`zimtohrli` backend) on Linux against source WAVs:
+
+| clip | F0 bytes target | Linux FAAC-112 MOS (bytes) | Linux FAAC-128 MOS (bytes) | Linux FAAC-144 MOS (bytes) | macOS FAAC-128 MOS | MOS diff ($\Delta$) |
+|---|---:|---:|---:|---:|---:|---:|
+| Severance | 165,185 | 4.7834 (141,718) | 4.8457 (161,441) | 4.8743 (181,310) | 4.8458 | -0.0001 |
+| 21classic | 161,756 | 4.7780 (136,850) | 4.8132 (155,936) | 4.8330 (175,144) | 4.8129 | +0.0003 |
+| velvet | 180,306 | 4.4206 (144,052) | 4.4807 (162,456) | 4.5798 (182,280) | 4.4807 | 0.0000 |
+| Greensleeves | 145,124 | 4.7915 (123,884) | 4.8525 (141,091) | 4.8910 (158,478) | 4.8526 | -0.0001 |
+| German | 125,695 | 4.8738 (111,214) | 4.9229 (126,798) | 4.9483 (142,534) | 4.9228 | +0.0001 |
+
+Linux FAAC-128 MOS scores match macOS MOS scores within 0.0003 across all 5 ladder clips.

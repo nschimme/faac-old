@@ -1,6 +1,7 @@
+import os
 import sys,collections,statistics,pathlib
 sys.path.insert(0,'probe/ladder');import parse_dump as pd,hybrid_merge as hm,prequant_check as pq
-root=pathlib.Path('/tmp/ladder_e'); clips={'Severance':'Severance__1.31-1.51_.16b48k','21classic':'21-classic.441.16b48k','velvet':'velvet.16b48k','Greensleeves':'24-Greensleeves-Korean-male-speech.441.16b48k','German':'12-German-male-speech.441.16b48k'}
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work')); clips={'Severance':'Severance__1.31-1.51_.16b48k','21classic':'21-classic.441.16b48k','velvet':'velvet.16b48k','Greensleeves':'24-Greensleeves-Korean-male-speech.441.16b48k','German':'12-German-male-speech.441.16b48k'}
 for ref in ('apple','fdk'):
  for name,stem in clips.items():
   s=pd.parse(str(root/(name+('_aligned' if ref=='apple' else '_fdk')+'.dump')));r=pd.parse('probe/ladder/survey/'+ref+'/'+stem+'.dump');spec=pq.load_spec(str(root/(name+('_aligned' if ref=='apple' else '_fdk')+'.spec')))

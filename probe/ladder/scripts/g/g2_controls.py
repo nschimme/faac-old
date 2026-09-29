@@ -1,5 +1,6 @@
+import sys
 import os,subprocess,pathlib,json
-root=pathlib.Path('/tmp/ladder_g');repo=pathlib.Path.cwd();faac=str(repo/'build-ladder/frontend/faac');faad='/private/tmp/claude-501/faac-work/faad-dump/build-ladder/frontend/faad';index=json.loads((root/'g2_index.json').read_text());status={}
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));repo=pathlib.Path(__file__).resolve().parents[4];faac=os.environ.get('FAAC_BIN', str(repo / 'build_ladder/frontend/faac'));faad=os.environ.get('FAAD_BIN', '/tmp/faad-ladder-dump/build_faad/frontend/faad');index=json.loads((root/'g2_index.json').read_text());status={}
 def enc(k,arm,origin):
  env=os.environ.copy();env.update(FAAC_STEP1=str(root/(k+'_G_A.bin' if arm=='KA' else k+'_G_'+arm+'.bin')),FAAC_STEP1_OFFSET='1')
  if origin:env['FAAC_STEP1_ORIGIN']=str(root/(k+'_G_'+arm+'_origin.bin'))
