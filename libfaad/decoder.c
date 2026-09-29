@@ -285,6 +285,17 @@ static void core_dump_ics(struct faad_decoder *dec, int ch, const ICSInfo *ics, 
 }
 #endif
 
+/* Clamp and round to nearest: truncating toward zero costs the output half
+ * an LSB of error against any rounding decoder, on every sample. */
+static inline int16_t pcm_to_s16(float v)
+{
+    /* written as selects so they map to min/max and the loops vectorise */
+    v += copysignf(0.5f, v);
+    v = v < 32767.0f ? v : 32767.0f;
+    v = v > -32768.0f ? v : -32768.0f;
+    return (int16_t)(int)v;
+}
+
 FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                                       const uint8_t *in_buf, uint32_t in_bytes,
                                       uint32_t *bytes_consumed,
@@ -535,32 +546,16 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
             const float * restrict pcm_l = pcm_final;
             const float * restrict pcm_r = pcm_final + frame_samples;
             for (uint32_t i = 0; i < frame_samples; i++) {
-                float val_l = pcm_l[i];
-                float val_r = pcm_r[i];
-                if (val_l > 32767.0f) val_l = 32767.0f;
-                if (val_l < -32768.0f) val_l = -32768.0f;
-                if (val_r > 32767.0f) val_r = 32767.0f;
-                if (val_r < -32768.0f) val_r = -32768.0f;
-                out_int16[2 * i]     = (int16_t)val_l;
-                out_int16[2 * i + 1] = (int16_t)val_r;
+                out_int16[2 * i]     = pcm_to_s16(pcm_l[i]);
+                out_int16[2 * i + 1] = pcm_to_s16(pcm_r[i]);
             }
         } else if (num_chs == 1) {
-            const float * restrict pcm_l = pcm_final;
-            for (uint32_t i = 0; i < frame_samples; i++) {
-                float val = pcm_l[i];
-                if (val > 32767.0f) val = 32767.0f;
-                if (val < -32768.0f) val = -32768.0f;
-                out_int16[i] = (int16_t)val;
-            }
+            for (uint32_t i = 0; i < frame_samples; i++)
+                out_int16[i] = pcm_to_s16(pcm_final[i]);
         } else {
-            for (uint32_t i = 0; i < frame_samples; i++) {
-                for (uint32_t c = 0; c < num_chs; c++) {
-                    float val = pcm_final[c * frame_samples + i];
-                    if (val > 32767.0f) val = 32767.0f;
-                    if (val < -32768.0f) val = -32768.0f;
-                    out_int16[i * num_chs + c] = (int16_t)val;
-                }
-            }
+            for (uint32_t i = 0; i < frame_samples; i++)
+                for (uint32_t c = 0; c < num_chs; c++)
+                    out_int16[i * num_chs + c] = pcm_to_s16(pcm_final[c * frame_samples + i]);
         }
     } else {
         /* The core reconstructs at 16-bit full scale; float output is unity full scale. */
