@@ -831,7 +831,7 @@ int faacEncEncode(faacEncHandle hpEncoder,
     /* Psychoacoustics */
     PsyCalculate(hEncoder->psyInfo, hEncoder->isLfeChannel, numChannels);
 
-    BlockSwitch(coderInfo, hEncoder->psyInfo, hEncoder->isLfeChannel, numChannels);
+    BlockSwitch(coderInfo, hEncoder->psyInfo, numChannels);
 
 #ifdef FAAC_STATS
     g_faacStats.totalFrames++;
@@ -841,22 +841,13 @@ int faacEncEncode(faacEncHandle hpEncoder,
     }
 #endif
 
-    /* force block type */
-    if (shortctl == SHORTCTL_NOSHORT)
+    /* force block type; LFE must stay ONLY_LONG_SEQUENCE (ISO/IEC 14496-3) */
+    for (channel = 0; channel < numChannels; channel++)
     {
-		for (channel = 0; channel < numChannels; channel++)
-		{
-			coderInfo[channel].block_type = ONLY_LONG_WINDOW;
-		}
-    }
-    else if ((hEncoder->frameNum <= (LOOKAHEAD_DEPTH + 1)) || (shortctl == SHORTCTL_NOLONG))
-    {
-		for (channel = 0; channel < numChannels; channel++)
-		{
-			/* LFE must stay ONLY_LONG_SEQUENCE */
-			if (!hEncoder->isLfeChannel[channel])
-				coderInfo[channel].block_type = ONLY_SHORT_WINDOW;
-		}
+        if (hEncoder->isLfeChannel[channel] || shortctl == SHORTCTL_NOSHORT)
+            coderInfo[channel].block_type = ONLY_LONG_WINDOW;
+        else if ((hEncoder->frameNum <= (LOOKAHEAD_DEPTH + 1)) || (shortctl == SHORTCTL_NOLONG))
+            coderInfo[channel].block_type = ONLY_SHORT_WINDOW;
     }
 
     /* AAC Filterbank, MDCT with overlap and add */
