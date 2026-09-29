@@ -9,18 +9,18 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-static float kbd_window_2048[1024];
-static float sine_window_2048[1024];
-static float kbd_window_256[128];
-static float sine_window_256[128];
+static real_t kbd_window_2048[1024];
+static real_t sine_window_2048[1024];
+static real_t kbd_window_256[128];
+static real_t sine_window_256[128];
 
 
 /* DCT-IV twiddles exp(-j*pi*(n + 1/8)/M) for M = 1024 and 128; the same
  * table serves the pre- and post-rotation. */
-static float dct4_cos_1024[512];
-static float dct4_sin_1024[512];
-static float dct4_cos_128[64];
-static float dct4_sin_128[64];
+static real_t dct4_cos_1024[512];
+static real_t dct4_sin_1024[512];
+static real_t dct4_cos_128[64];
+static real_t dct4_sin_128[64];
 
 static bool tables_init = false;
 
@@ -38,7 +38,7 @@ static double bessel_i0(double x)
 
 /* Kaiser-Bessel-derived window, first half (ISO/IEC 14496-3 §4.6.11.3.2):
  * the cumulative Kaiser kernel, normalised, under a square root. */
-static void kbd_window(float *w, int n, double alpha)
+static void kbd_window(real_t *w, int n, double alpha)
 {
     double sum = 0.0, run = 0.0;
     for (int i = 0; i <= n; i++) {
@@ -48,7 +48,7 @@ static void kbd_window(float *w, int n, double alpha)
     for (int i = 0; i < n; i++) {
         double v = (2.0 * i / n) - 1.0;
         run += bessel_i0(M_PI * alpha * sqrt(1.0 - v * v));
-        w[i] = (float)sqrt(run / sum);
+        w[i] = float_to_real((float)sqrt(run / sum));
     }
 }
 
@@ -59,23 +59,23 @@ void init_windows(void)
     fft_init();
 
     for (int i = 0; i < 1024; i++) {
-        sine_window_2048[i] = sinf((float)M_PI * (i + 0.5f) / 2048.0f);
+        sine_window_2048[i] = float_to_real(sinf((float)M_PI * (i + 0.5f) / 2048.0f));
     }
     for (int i = 0; i < 128; i++) {
-        sine_window_256[i] = sinf((float)M_PI * (i + 0.5f) / 256.0f);
+        sine_window_256[i] = float_to_real(sinf((float)M_PI * (i + 0.5f) / 256.0f));
     }
     kbd_window(kbd_window_2048, 1024, 4.0);
     kbd_window(kbd_window_256, 128, 6.0);
 
     for (int k = 0; k < 512; k++) {
         double ang = -M_PI * (k + 0.125) / 1024.0;
-        dct4_cos_1024[k] = (float)cos(ang);
-        dct4_sin_1024[k] = (float)sin(ang);
+        dct4_cos_1024[k] = float_to_real((float)cos(ang));
+        dct4_sin_1024[k] = float_to_real((float)sin(ang));
     }
     for (int k = 0; k < 64; k++) {
         double ang = -M_PI * (k + 0.125) / 128.0;
-        dct4_cos_128[k] = (float)cos(ang);
-        dct4_sin_128[k] = (float)sin(ang);
+        dct4_cos_128[k] = float_to_real((float)cos(ang));
+        dct4_sin_128[k] = float_to_real((float)sin(ang));
     }
 
     tables_init = true;
@@ -88,25 +88,29 @@ static void dct4(const real_t *in, real_t *u, int M)
 {
     int K = M / 2;
     int logm = (M == 1024) ? 9 : 6;
-    float z[1024], w[1024], in_flt[1024], u_flt[1024];
-    for (int i = 0; i < M; i++) in_flt[i] = real_to_float(in[i]);
+    float z[1024], w[1024];
 
-    const float *cos_tbl = (M == 1024) ? dct4_cos_1024 : dct4_cos_128;
-    const float *sin_tbl = (M == 1024) ? dct4_sin_1024 : dct4_sin_128;
+    const real_t *cos_tbl = (M == 1024) ? dct4_cos_1024 : dct4_cos_128;
+    const real_t *sin_tbl = (M == 1024) ? dct4_sin_1024 : dct4_sin_128;
     float *zr = z, *zi = z + K;
 
     for (int n = 0; n < K; n++) {
-        float a = in_flt[2 * n], b = in_flt[M - 1 - 2 * n];
-        zr[n] = a * cos_tbl[n] - b * sin_tbl[n];
-        zi[n] = a * sin_tbl[n] + b * cos_tbl[n];
+        real_t a = in[2 * n], b = in[M - 1 - 2 * n];
+        real_t zr_r = SUB_REAL(MUL_REAL(a, cos_tbl[n]), MUL_REAL(b, sin_tbl[n]));
+        real_t zi_r = ADD_REAL(MUL_REAL(a, sin_tbl[n]), MUL_REAL(b, cos_tbl[n]));
+        zr[n] = real_to_float(zr_r);
+        zi[n] = real_to_float(zi_r);
     }
     fft(z, w, logm);
     const float *wr = w, *wi = w + K;
     for (int k = 0; k < K; k++) {
-        u_flt[2 * k]         =  wr[k] * cos_tbl[k] - wi[k] * sin_tbl[k];
-        u_flt[M - 1 - 2 * k] = -(wr[k] * sin_tbl[k] + wi[k] * cos_tbl[k]);
+        real_t wr_r = float_to_real(wr[k]);
+        real_t wi_r = float_to_real(wi[k]);
+        real_t u0 = SUB_REAL(MUL_REAL(wr_r, cos_tbl[k]), MUL_REAL(wi_r, sin_tbl[k]));
+        real_t u1 = -ADD_REAL(MUL_REAL(wr_r, sin_tbl[k]), MUL_REAL(wi_r, cos_tbl[k]));
+        u[2 * k]         = u0;
+        u[M - 1 - 2 * k] = u1;
     }
-    for (int i = 0; i < M; i++) u[i] = float_to_real(u_flt[i]);
 }
 
 /* IMDCT (ISO/IEC 14496-3 §4.6.11.3.1): n0 = N/4 + 1/2 makes the transform a
@@ -138,12 +142,11 @@ static inline real_t imdct_sample(const real_t *u, int i, real_t scale)
 /* Left half: window, add the previous frame's overlap, emit. Right half:
  * window into the overlap for the next frame. */
 static inline void imdct_emit(real_t * restrict out_pcm, real_t * restrict overlap, const real_t *u, real_t scale,
-                              int i0, int i1, const float * restrict wl, int wl_dir, float wflat)
+                              int i0, int i1, const real_t * restrict wl, int wl_dir, real_t wflat)
 {
     /* window sample i is wl[i - i0] (wl_dir > 0), wl[i1 - 1 - i] (< 0) or wflat (wl == NULL) */
     for (int i = i0; i < i1; i++) {
-        float w = wl ? (wl_dir > 0 ? wl[i - i0] : wl[i1 - 1 - i]) : wflat;
-        real_t r_w = float_to_real(w);
+        real_t r_w = wl ? (wl_dir > 0 ? wl[i - i0] : wl[i1 - 1 - i]) : wflat;
         real_t x = MUL_REAL(imdct_sample(u, i, scale), r_w);
         if (i < FRAME_LEN_LONG) out_pcm[i] = ADD_REAL(x, overlap[i]);
         else overlap[i - FRAME_LEN_LONG] = x;
@@ -155,10 +158,10 @@ void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, real_
     /* ISO/IEC 14496-3 §4.6.11.3.2: the left half of the window uses the
      * previous block's shape, the right half this block's. */
     uint8_t prev_shape = dec->prev_window_shape[ch];
-    const float * restrict win_long_l = (prev_shape == KBD_WINDOW) ? kbd_window_2048 : sine_window_2048;
-    const float * restrict win_short_l = (prev_shape == KBD_WINDOW) ? kbd_window_256 : sine_window_256;
-    const float * restrict win_long = (ics->window_shape == KBD_WINDOW) ? kbd_window_2048 : sine_window_2048;
-    const float * restrict win_short = (ics->window_shape == KBD_WINDOW) ? kbd_window_256 : sine_window_256;
+    const real_t * restrict win_long_l = (prev_shape == KBD_WINDOW) ? kbd_window_2048 : sine_window_2048;
+    const real_t * restrict win_short_l = (prev_shape == KBD_WINDOW) ? kbd_window_256 : sine_window_256;
+    const real_t * restrict win_long = (ics->window_shape == KBD_WINDOW) ? kbd_window_2048 : sine_window_2048;
+    const real_t * restrict win_short = (ics->window_shape == KBD_WINDOW) ? kbd_window_256 : sine_window_256;
     real_t * restrict overlap = dec->overlap[ch];
     dec->prev_window_shape[ch] = ics->window_shape;
 
@@ -169,13 +172,11 @@ void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, real_
         for (int w = 0; w < 8; w++) {
             real_t block[256];
             fast_imdct(spec + w * 128, block, 256);
-            const float * restrict wl = (w == 0) ? win_short_l : win_short;
+            const real_t * restrict wl = (w == 0) ? win_short_l : win_short;
             real_t *dst = acc + w * 128;
             for (int i = 0; i < 128; i++) {
-                real_t r_wl = float_to_real(wl[i]);
-                real_t r_ws = float_to_real(win_short[i]);
-                dst[i]       = ADD_REAL(dst[i], MUL_REAL(block[i], r_wl));
-                dst[255 - i] = ADD_REAL(dst[255 - i], MUL_REAL(block[255 - i], r_ws));
+                dst[i]       = ADD_REAL(dst[i], MUL_REAL(block[i], wl[i]));
+                dst[255 - i] = ADD_REAL(dst[255 - i], MUL_REAL(block[255 - i], win_short[i]));
             }
         }
         for (int i = 0; i < 448; i++) out_pcm[i] = overlap[i];
@@ -192,18 +193,18 @@ void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, real_
     if (ics->window_sequence == LONG_STOP_SEQUENCE) {
         /* zero, the short window's rise, then flat */
         for (int i = 0; i < 448; i++) out_pcm[i] = overlap[i];
-        imdct_emit(out_pcm, overlap, u, scale, 448, 576, win_short_l, 1, 0.0f);
-        imdct_emit(out_pcm, overlap, u, scale, 576, 1024, NULL, 0, 1.0f);
+        imdct_emit(out_pcm, overlap, u, scale, 448, 576, win_short_l, 1, REAL_CONST(0.0));
+        imdct_emit(out_pcm, overlap, u, scale, 576, 1024, NULL, 0, REAL_CONST(1.0));
     } else {
-        imdct_emit(out_pcm, overlap, u, scale, 0, 1024, win_long_l, 1, 0.0f);
+        imdct_emit(out_pcm, overlap, u, scale, 0, 1024, win_long_l, 1, REAL_CONST(0.0));
     }
     if (ics->window_sequence == LONG_START_SEQUENCE) {
         /* flat, the short window's fall, then zero */
-        imdct_emit(out_pcm, overlap, u, scale, 1024, 1472, NULL, 0, 1.0f);
-        imdct_emit(out_pcm, overlap, u, scale, 1472, 1600, win_short, -1, 0.0f);
-        memset(overlap + 576, 0, sizeof(float) * 448);
+        imdct_emit(out_pcm, overlap, u, scale, 1024, 1472, NULL, 0, REAL_CONST(1.0));
+        imdct_emit(out_pcm, overlap, u, scale, 1472, 1600, win_short, -1, REAL_CONST(0.0));
+        memset(overlap + 576, 0, sizeof(real_t) * 448);
     } else {
-        imdct_emit(out_pcm, overlap, u, scale, 1024, 2048, win_long, -1, 0.0f);
+        imdct_emit(out_pcm, overlap, u, scale, 1024, 2048, win_long, -1, REAL_CONST(0.0));
     }
 }
 
