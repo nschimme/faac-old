@@ -759,8 +759,8 @@ faad_status sbr_decode_extension(struct faad_decoder *dec, BitReader *bs, uint32
 
     /* sbr_single_channel_element / sbr_channel_pair_element (§4.6.18.3.4) */
     bool data_extra = bits_get(bs, 1);
+    if (data_extra) bits_skip(bs, 4 * (uint32_t)nch); /* bs_reserved, ahead of bs_coupling */
     el->coupling = (nch == 2) ? bits_get(bs, 1) : false;
-    if (data_extra) bits_skip(bs, 4 * (uint32_t)nch); /* bs_reserved */
 
     if (!sbr_read_grid(bs, chs[0])) return FAAD_ERR_DECODE_FAILED;
     if (nch == 2) {
