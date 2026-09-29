@@ -398,6 +398,7 @@ struct faad_decoder {
     float spec[MAX_CHANNELS][FRAME_LEN_LONG];
     float overlap[MAX_CHANNELS][FRAME_LEN_LONG];
     uint8_t prev_window_shape[MAX_CHANNELS]; /* the left window half follows the previous block's shape */
+    uint8_t prev_window_seq[MAX_CHANNELS];   /* what a concealed frame continues from */
 
 #ifndef FAAD_DISABLE_SBR
     SBRChannel sbr[MAX_CHANNELS];
@@ -405,6 +406,7 @@ struct faad_decoder {
     SBRScratch sbr_scratch;
 #endif
     bool sbr_present;
+    bool sbr_seen; /* an SBR payload has appeared: frames without one still run at the SBR rate */
 
 #ifndef FAAD_DISABLE_PS
     PSState ps;

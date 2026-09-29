@@ -168,6 +168,7 @@ void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, float
     const float * restrict win_short = (ics->window_shape == KBD_WINDOW) ? kbd_window_256 : sine_window_256;
     float * restrict overlap = dec->overlap[ch];
     dec->prev_window_shape[ch] = ics->window_shape;
+    dec->prev_window_seq[ch] = ics->window_sequence;
 
     if (ics->window_sequence == EIGHT_SHORT_SEQUENCE) {
         /* eight 256-sample blocks hopping by 128 cover samples 448..1599 */

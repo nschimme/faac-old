@@ -156,6 +156,7 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
      * (Fs/2 of the nominal rate when SBR is present), not the nominal
      * post-SBR rate reported to callers. */
     setup_sfb_offsets(ics, dec->core_sample_rate);
+    if (ics->max_sfb > ics->num_sfbs) return FAAD_ERR_DECODE_FAILED; /* a corrupt or misparsed ics_info */
 
 #ifdef FAAD_STATS
     if (ics->window_sequence == EIGHT_SHORT_SEQUENCE) {
@@ -263,10 +264,9 @@ faad_status decode_cpe(BitReader *bs, struct faad_decoder *dec, CPEInfo *cpe, ui
         }
     }
 
-    decode_ics(bs, dec, &cpe->ics[0], dec->spec[ch], cpe->common_window);
-    decode_ics(bs, dec, &cpe->ics[1], dec->spec[ch + 1], cpe->common_window);
-
-    return FAAD_OK;
+    faad_status st = decode_ics(bs, dec, &cpe->ics[0], dec->spec[ch], cpe->common_window);
+    if (st != FAAD_OK) return st;
+    return decode_ics(bs, dec, &cpe->ics[1], dec->spec[ch + 1], cpe->common_window);
 #endif
 }
 
