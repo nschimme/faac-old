@@ -118,10 +118,3 @@ void apply_is_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spe
         window_offset += ics_r->window_group_length[g];
     }
 }
-
-void apply_freq_downmix_mono(float *spec_l, const float *spec_r)
-{
-    for (int i = 0; i < FRAME_LEN_LONG; i++) {
-        spec_l[i] = 0.5f * (spec_l[i] + spec_r[i]);
-    }
-}

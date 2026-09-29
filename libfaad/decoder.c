@@ -10,6 +10,71 @@
 
 #include "atomic.h"
 
+/* Channels a channel_configuration carries (7 is 7.1); 0, a PCE, is
+ * learnt from the first decoded frame, so start from stereo. */
+static uint32_t config_channels(uint32_t channel_config)
+{
+    return channel_config == 7 ? 8 : (channel_config >= 1 && channel_config <= 6) ? channel_config : 2;
+}
+
+static const uint8_t *output_channel_map(uint32_t channel_config, uint32_t num_chs)
+{
+    static const uint8_t map3[] = { 1, 2, 0 };                   /* C L R -> L R C */
+    static const uint8_t map4[] = { 1, 2, 0, 3 };                /* C L R Cs -> L R C Cs */
+    static const uint8_t map5[] = { 1, 2, 0, 3, 4 };             /* C L R Ls Rs -> L R C Ls Rs */
+    static const uint8_t map6[] = { 1, 2, 0, 5, 3, 4 };          /* C L R Ls Rs LFE -> L R C LFE Ls Rs */
+    static const uint8_t map8[] = { 1, 2, 0, 7, 5, 6, 3, 4 };    /* C L R Ls Rs Lb Rb LFE -> L R C LFE Lb Rb Ls Rs */
+    switch (channel_config) {
+    case 3: return num_chs == 3 ? map3 : NULL;
+    case 4: return num_chs == 4 ? map4 : NULL;
+    case 5: return num_chs == 5 ? map5 : NULL;
+    case 6: return num_chs == 6 ? map6 : NULL;
+    case 7: return num_chs == 8 ? map8 : NULL;
+    default: return NULL;
+    }
+}
+
+/* Time-domain downmix of the WAV-ordered channels src[] into pcm (one
+ * frame_samples run per output channel): surround to stereo as
+ * Lo = L + 0.707 (C + Ls), Ro = R + 0.707 (C + Rs), LFE dropped, scaled
+ * so a full-scale input cannot clip; mono as (Lo + Ro) / 2. Returns the
+ * output channel count, num_chs itself when there is nothing to mix. */
+static uint32_t downmix_pcm(enum faad_downmix_mode mode, const float *src[], uint32_t num_chs,
+                            uint32_t frame_samples, float *pcm)
+{
+    if (mode == FAAD_DOWNMIX_NONE || num_chs < 2 || (mode == FAAD_DOWNMIX_STEREO && num_chs == 2))
+        return num_chs;
+    /* surround indices in the WAV order output_channel_map() produces */
+    int c = -1, ls = -1, rs = -1;
+    switch (num_chs) {
+    case 3: c = 2; break;
+    case 4: c = 2; ls = rs = 3; break;
+    case 5: c = 2; ls = 3; rs = 4; break;
+    case 6: c = 2; ls = 4; rs = 5; break;
+    case 8: c = 2; ls = 4; rs = 5; break; /* the side pair is folded in below */
+    default: break;
+    }
+    const float k = 0.70710678f;
+    float gain = 1.0f / (1.0f + (c >= 0 ? k : 0.0f) + (ls >= 0 ? (ls == rs ? 0.5f * k : k) : 0.0f)
+                               + (num_chs == 8 ? k : 0.0f));
+    float lsw = (ls == rs) ? 0.5f * k : k; /* a single rear channel feeds both sides */
+    for (uint32_t i = 0; i < frame_samples; i++) {
+        float lo = src[0][i], ro = src[1][i];
+        if (c >= 0) { lo += k * src[c][i]; ro += k * src[c][i]; }
+        if (ls >= 0) { lo += lsw * src[ls][i]; ro += lsw * src[rs][i]; }
+        if (num_chs == 8) { lo += k * src[6][i]; ro += k * src[7][i]; }
+        if (num_chs > 2) { lo *= gain; ro *= gain; }
+        if (mode == FAAD_DOWNMIX_MONO) {
+            pcm[i] = 0.5f * (lo + ro);
+        } else {
+            pcm[i] = lo;
+            pcm[frame_samples + i] = ro;
+        }
+    }
+    return mode == FAAD_DOWNMIX_MONO ? 1 : 2;
+}
+
+
 FAADAPI faad_status faad_get_library_info(faad_library_info *out)
 {
     if (!out || out->struct_size < sizeof(faad_library_info)) {
@@ -104,7 +169,7 @@ FAADAPI faad_status faad_decoder_init(void *mem_buf, uint32_t mem_size,
         faad_status st = asc_decode(&bs, &dec->asc);
         if (st != FAAD_OK) return st;
 
-        dec->num_channels = dec->asc.num_channels ? dec->asc.num_channels : 2;
+        dec->num_channels = config_channels(dec->asc.num_channels);
         dec->core_sample_rate = dec->asc.sample_rate ? dec->asc.sample_rate : 44100;
 #ifdef FAAD_D_SBR
         dec->sample_rate = dec->core_sample_rate;
@@ -213,6 +278,8 @@ FAADAPI faad_status faad_decoder_get_info(const faad_decoder *dec, faad_stream_i
 
     out_info->sample_rate = dec->sample_rate;
     out_info->channels = dec->num_channels;
+    if (dec->config.downmix_mode == FAAD_DOWNMIX_MONO) out_info->channels = 1;
+    else if (dec->config.downmix_mode == FAAD_DOWNMIX_STEREO && out_info->channels > 2) out_info->channels = 2;
     out_info->object_type = dec->asc.is_sbr ? FAAD_OBJ_HE_AAC_V1 : FAAD_OBJ_LC;
     out_info->delay_samples = dec->asc.is_sbr ? FAAD_SBR_DELAY : 0;
 
@@ -285,6 +352,9 @@ static void core_dump_ics(struct faad_decoder *dec, int ch, const ICSInfo *ics, 
 }
 #endif
 
+/* Native (element) index of each output channel, WAV / SMPTE order, for
+ * channel configurations 3..7 (ISO/IEC 14496-3 Table 1.19); NULL keeps
+ * the element order (mono, stereo, PCE-defined layouts). */
 /* Clamp and round to nearest: truncating toward zero costs the output half
  * an LSB of error against any rounding decoder, on every sample. */
 static inline int16_t pcm_to_s16(float v)
@@ -342,7 +412,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
         } else if (adts_frame_len > in_bytes) {
             return FAAD_ERR_NEED_MORE_DATA;
         } else {
-            dec->num_channels = dec->asc.num_channels ? dec->asc.num_channels : 2;
+            dec->num_channels = config_channels(dec->asc.num_channels);
             dec->sample_rate = dec->asc.sample_rate ? dec->asc.sample_rate : 44100;
             dec->core_sample_rate = dec->sample_rate; /* adts_decode_header() doesn't detect SBR */
             bs.len = adts_frame_len;
@@ -419,13 +489,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                 apply_tns(&cpe.ics[0], dec->spec[ch_idx]);
                 apply_tns(&cpe.ics[1], dec->spec[ch_idx + 1]);
 
-                if (dec->config.downmix_mode == FAAD_DOWNMIX_MONO && cpe.common_window) {
-                    apply_freq_downmix_mono(dec->spec[ch_idx], dec->spec[ch_idx + 1]);
-                    memset(dec->spec[ch_idx + 1], 0, sizeof(float) * FRAME_LEN_LONG);
-                    ch_idx += 1;
-                } else {
-                    ch_idx += 2;
-                }
+                ch_idx += 2;
             } else if (syntax_id == ID_CCE) {
                 decode_cce(&bs, dec);
             } else if (syntax_id == ID_DSE) {
@@ -527,51 +591,49 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
     }
     if (sbr_frame) sbr_apply(dec, dec->num_channels, pcm_final);
 
-    uint32_t total_samples = dec->frame_samples * dec->num_channels;
-    uint32_t required_bytes = total_samples * ((dec->config.output_format == FAAD_OUTPUT_16BIT) ? 2 : 4);
+    uint32_t frame_samples = dec->frame_samples;
+    uint32_t num_chs = dec->num_channels;
 
+    /* Output in the WAV / SMPTE order (FL FR FC LFE BL BR SL SR), taken
+     * from the element order the channel configuration implies. */
+    const float *src[MAX_CHANNELS];
+    const uint8_t *map = output_channel_map(dec->asc.num_channels, num_chs);
+    for (uint32_t c = 0; c < num_chs; c++)
+        src[c] = pcm_final + (map ? map[c] : c) * frame_samples;
+    num_chs = downmix_pcm(dec->config.downmix_mode, src, num_chs, frame_samples, pcm_final);
+    if (num_chs <= 2)
+        for (uint32_t c = 0; c < num_chs; c++) src[c] = pcm_final + c * frame_samples;
+
+    uint32_t required_bytes = frame_samples * num_chs * ((dec->config.output_format == FAAD_OUTPUT_16BIT) ? 2 : 4);
     if (out_cap_bytes < required_bytes) {
         return FAAD_ERR_OUTPUT_TOO_SMALL;
     }
 
-    uint32_t frame_samples = dec->frame_samples;
-    uint32_t num_chs = dec->num_channels;
-
     if (dec->config.output_format == FAAD_OUTPUT_16BIT) {
         int16_t * restrict out_int16 = (int16_t *)out_pcm;
         if (num_chs == 2) {
-            const float * restrict pcm_l = pcm_final;
-            const float * restrict pcm_r = pcm_final + frame_samples;
+            const float * restrict pcm_l = src[0];
+            const float * restrict pcm_r = src[1];
             for (uint32_t i = 0; i < frame_samples; i++) {
                 out_int16[2 * i]     = pcm_to_s16(pcm_l[i]);
                 out_int16[2 * i + 1] = pcm_to_s16(pcm_r[i]);
             }
         } else if (num_chs == 1) {
+            const float * restrict pcm_m = src[0];
             for (uint32_t i = 0; i < frame_samples; i++)
-                out_int16[i] = pcm_to_s16(pcm_final[i]);
+                out_int16[i] = pcm_to_s16(pcm_m[i]);
         } else {
             for (uint32_t i = 0; i < frame_samples; i++)
                 for (uint32_t c = 0; c < num_chs; c++)
-                    out_int16[i * num_chs + c] = pcm_to_s16(pcm_final[c * frame_samples + i]);
+                    out_int16[i * num_chs + c] = pcm_to_s16(src[c][i]);
         }
     } else {
         /* The core reconstructs at 16-bit full scale; float output is unity full scale. */
         const float norm = 1.0f / 32768.0f;
         float * restrict out_f32 = (float *)out_pcm;
-        if (num_chs == 2) {
-            const float * restrict pcm_l = pcm_final;
-            const float * restrict pcm_r = pcm_final + frame_samples;
-            for (uint32_t i = 0; i < frame_samples; i++) {
-                out_f32[2 * i]     = pcm_l[i] * norm;
-                out_f32[2 * i + 1] = pcm_r[i] * norm;
-            }
-        } else {
-            for (uint32_t i = 0; i < frame_samples; i++) {
-                for (uint32_t c = 0; c < num_chs; c++) {
-                    out_f32[i * num_chs + c] = pcm_final[c * frame_samples + i] * norm;
-                }
-            }
-        }
+        for (uint32_t i = 0; i < frame_samples; i++)
+            for (uint32_t c = 0; c < num_chs; c++)
+                out_f32[i * num_chs + c] = src[c][i] * norm;
     }
 
     *bytes_consumed = adts_frame_len;
@@ -591,7 +653,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
         frame_info->sample_rate = sbr_active ? 2 * dec->core_sample_rate : dec->core_sample_rate;
 #endif
         frame_info->samples_per_ch = dec->frame_samples;
-        frame_info->channels = (uint8_t)dec->num_channels;
+        frame_info->channels = (uint8_t)num_chs;
         frame_info->sbr_active = sbr_active;
         frame_info->ps_active = dec->ps_present || dec->asc.is_ps;
     }
