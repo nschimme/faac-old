@@ -137,6 +137,16 @@ static void fifo_truncate_tail(PCMFifo *f, uint32_t bytes_to_remove)
     f->fill -= bytes_to_remove;
 }
 
+/* Unity-scale float to 24-bit, rounded to nearest and clamped. */
+static int32_t pcm_float_to_s24(float v)
+{
+    float x = v * 8388608.0f;
+    x += (x >= 0.0f) ? 0.5f : -0.5f;
+    if (x > 8388607.0f) x = 8388607.0f;
+    if (x < -8388608.0f) x = -8388608.0f;
+    return (int32_t)x;
+}
+
 /* dwChannelMask for the WAV order libfaad outputs (FL FR FC LFE BL BR SL SR). */
 static uint32_t wav_channel_mask(uint16_t num_channels)
 {
@@ -390,7 +400,8 @@ int main(int argc, char **argv)
     faad_config cfg;
     faad_config_init(&cfg, sizeof(cfg));
     cfg.stream_format = is_mp4 ? FAAD_STREAM_RAW : FAAD_STREAM_ADTS;
-    cfg.output_format = is_float ? FAAD_OUTPUT_FLOAT : FAAD_OUTPUT_16BIT;
+    /* 24-bit output is converted from float so it keeps the precision 16-bit rounding would drop */
+    cfg.output_format = (is_float || bit_depth == 24) ? FAAD_OUTPUT_FLOAT : FAAD_OUTPUT_16BIT;
     cfg.downmix_mode = downmix;
 
     faad_decoder *dec = NULL;
@@ -496,7 +507,7 @@ int main(int argc, char **argv)
                 }
                 obj_type = finfo.sbr_active ? FAAD_OBJ_HE_AAC_V1 : FAAD_OBJ_LC;
 
-                uint32_t dec_bytes_per_sample = is_float ? 4 : 2;
+                uint32_t dec_bytes_per_sample = (is_float || bit_depth == 24) ? 4 : 2;
                 uint32_t dec_bytes_per_frame_sample = num_channels * dec_bytes_per_sample;
                 uint32_t frame_samples = bytes_written / dec_bytes_per_frame_sample;
                 if (!gapless_scaled) {
@@ -528,11 +539,10 @@ int main(int argc, char **argv)
 
                 if (fout && samples_to_write > 0) {
                     if (bit_depth == 24 && !is_float) {
-                        /* Convert int16_t PCM from decoder to 24-bit PCM */
-                        const int16_t *src_pcm = (const int16_t *)write_ptr;
+                        const float *src_pcm = (const float *)(write_ptr);
                         uint32_t total_items = samples_to_write * num_channels;
                         for (uint32_t k = 0; k < total_items; k++) {
-                            int32_t val24 = ((int32_t)src_pcm[k]) << 8;
+                            int32_t val24 = pcm_float_to_s24(src_pcm[k]);
                             pcm24_buf[k * 3 + 0] = (uint8_t)(val24 & 0xFF);
                             pcm24_buf[k * 3 + 1] = (uint8_t)((val24 >> 8) & 0xFF);
                             pcm24_buf[k * 3 + 2] = (uint8_t)((val24 >> 16) & 0xFF);
@@ -593,7 +603,7 @@ int main(int argc, char **argv)
             obj_type = finfo.sbr_active ? FAAD_OBJ_HE_AAC_V1 : FAAD_OBJ_LC;
 
             if (fout && bytes_written > 0) {
-                uint32_t dec_bytes_per_sample = is_float ? 4 : 2;
+                uint32_t dec_bytes_per_sample = (is_float || bit_depth == 24) ? 4 : 2;
                 uint32_t dec_bytes_per_frame_sample = num_channels * dec_bytes_per_sample;
                 uint32_t frame_samples = bytes_written / dec_bytes_per_frame_sample;
                 if (!gapless_scaled) {
@@ -606,10 +616,10 @@ int main(int argc, char **argv)
                 }
 
                 if (bit_depth == 24 && !is_float) {
-                    const int16_t *src_pcm = (const int16_t *)outbuf;
+                    const float *src_pcm = (const float *)(outbuf);
                     uint32_t total_items = frame_samples * num_channels;
                     for (uint32_t k = 0; k < total_items; k++) {
-                        int32_t val24 = ((int32_t)src_pcm[k]) << 8;
+                        int32_t val24 = pcm_float_to_s24(src_pcm[k]);
                         pcm24_buf[k * 3 + 0] = (uint8_t)(val24 & 0xFF);
                         pcm24_buf[k * 3 + 1] = (uint8_t)((val24 >> 8) & 0xFF);
                         pcm24_buf[k * 3 + 2] = (uint8_t)((val24 >> 16) & 0xFF);
