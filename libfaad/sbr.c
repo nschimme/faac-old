@@ -35,8 +35,11 @@ static const float sbr_h_smooth[5] = {
 
 static float ana_pre_c[64], ana_pre_s[64];   /* exp(+j*pi*n/64) */
 static float ana_post_c[32], ana_post_s[32]; /* exp(-j*pi*(k+1/2)/128) */
-static float syn_pre_c[64], syn_pre_s[64];   /* exp(-j*255*pi*k/128) */
-static float syn_post_c[128], syn_post_s[128]; /* exp(+j*pi*(2n-255)/256) */
+#ifndef FAAD_D_SBR
+static float syn_rot_c[32], syn_rot_s[32];   /* exp(-j*pi*(n+1/8)/64) */
+static float syn_a_c[32], syn_a_s[32];       /* the same, over 128 */
+static float syn_b_c[32], syn_b_s[32];       /* the same times exp(+j*2*pi*k/64), over 128 */
+#endif
 #ifdef FAAD_D_SBR
 static float ds_pre_c[32], ds_pre_s[32];     /* exp(-j*127.5*pi*k/64) */
 static float ds_post_c[64], ds_post_s[64];   /* exp(+j*pi*(2n-127.5)/128) */
@@ -50,17 +53,22 @@ void init_qmf_twiddles(void)
     for (int n = 0; n < 64; n++) {
         ana_pre_c[n] = (float)cos(M_PI * n / 64.0);
         ana_pre_s[n] = (float)sin(M_PI * n / 64.0);
-        syn_pre_c[n] = (float)cos(-255.0 * M_PI * n / 128.0);
-        syn_pre_s[n] = (float)sin(-255.0 * M_PI * n / 128.0);
     }
     for (int k = 0; k < 32; k++) {
         ana_post_c[k] = (float)cos(-0.5 * M_PI * (k + 0.5) / 64.0);
         ana_post_s[k] = (float)sin(-0.5 * M_PI * (k + 0.5) / 64.0);
     }
-    for (int n = 0; n < 128; n++) {
-        syn_post_c[n] = (float)cos(M_PI * (2 * n - 255) / 256.0);
-        syn_post_s[n] = (float)sin(M_PI * (2 * n - 255) / 256.0);
+#ifndef FAAD_D_SBR
+    for (int n = 0; n < 32; n++) {
+        double a = -M_PI * (n + 0.125) / 64.0, b = a + 2.0 * M_PI * n / 64.0;
+        syn_rot_c[n] = (float)cos(a);
+        syn_rot_s[n] = (float)sin(a);
+        syn_a_c[n] = (float)(cos(a) / 128.0);
+        syn_a_s[n] = (float)(sin(a) / 128.0);
+        syn_b_c[n] = (float)(cos(b) / 128.0);
+        syn_b_s[n] = (float)(sin(b) / 128.0);
     }
+#endif
 #ifdef FAAD_D_SBR
     for (int k = 0; k < 32; k++) {
         ds_pre_c[k] = (float)cos(-127.5 * M_PI * k / 64.0);
@@ -78,38 +86,50 @@ void init_qmf_twiddles(void)
 /* QMF banks (§4.6.18.4, §4.6.18.8)                                          */
 /* ------------------------------------------------------------------------ */
 
-/* 32-band analysis of one slot (32 new samples). The decimated bank is the
- * lower half of the 64-band one, so its phase origin sits a quarter sample
- * in: X(k) = sum_n u(n) exp(j*pi/64*(k+1/2)(2n-1/2)), an unnormalised
- * 64-point inverse DFT of u(n)*exp(j*pi*n/64), rotated. */
-static void qmf_analysis_slot(SBRChannel *ch, const float *in, float out[32][2])
+/* Push one 32-sample block into the analysis delay line and window it:
+ * u(n) = sum_j x(n + 64j) c(2(n + 64j)), newest sample first. The line is
+ * a ring of ten 32-sample blocks kept twice over, so the five 64-sample
+ * runs never wrap. */
+static void qmf_analysis_window(SBRChannel *ch, const float *in, float u[64])
 {
-    /* Newest sample first. The line is a ring of ten 32-sample blocks kept
-     * twice over, so the five 64-sample runs below never wrap. */
     ch->qmf_x_pos = (ch->qmf_x_pos + 320 - 32) % 320;
     float *x = ch->qmf_x + ch->qmf_x_pos;
     for (int n = 0; n < 32; n++) x[n] = x[320 + n] = in[31 - n];
-
-    /* The decimated prototype c(2n) halves the passband gain of the full
-     * 64-band bank the encoder's energies refer to; the factor 2 restores it. */
-    float u[64];
     for (int n = 0; n < 64; n++) {
         float acc = 0.0f;
         for (int j = 0; j < 5; j++) acc += x[n + 64 * j] * qmf_c[2 * (n + 64 * j)];
-        u[n] = 2.0f * acc;
+        u[n] = acc;
     }
-    /* Inverse DFT through the forward transform: IDFT(a) = conj(FFT(conj(a))). */
+}
+
+/* 32-band analysis of two consecutive slots (64 new samples). The
+ * decimated bank is the lower half of the 64-band one, so its phase origin
+ * sits a quarter sample in: X(k) = 2 sum_n u(n) exp(j*pi/64*(k+1/2)(2n-1/2)),
+ * the conjugate of a 64-point DFT of u(n)*exp(-j*pi*n/64), rotated; the
+ * factor 2 restores the passband gain the decimated prototype c(2n)
+ * halves. u is real, so that DFT is conjugate-symmetric about bin 63/2 and
+ * one transform of u0 + j*u1 carries both slots. */
+static void qmf_analysis_pair(SBRChannel *ch, const float *in, float out0[32][2], float out1[32][2])
+{
+    float u0[64], u1[64];
+    qmf_analysis_window(ch, in, u0);
+    qmf_analysis_window(ch, in + 32, u1);
+
     float z[128], w[128];
     for (int n = 0; n < 64; n++) {
-        z[n]      = u[n] * ana_pre_c[n];
-        z[64 + n] = -(u[n] * ana_pre_s[n]);
+        z[n]      = u0[n] * ana_pre_c[n] + u1[n] * ana_pre_s[n];
+        z[64 + n] = u1[n] * ana_pre_c[n] - u0[n] * ana_pre_s[n];
     }
     fft(z, w, 6);
     const float *re = w, *im = w + 64;
     for (int k = 0; k < 32; k++) {
-        float ar = re[k], ai = -im[k];
-        out[k][0] = ar * ana_post_c[k] - ai * ana_post_s[k];
-        out[k][1] = ar * ana_post_s[k] + ai * ana_post_c[k];
+        /* 2 conj(W0(k)) and 2 conj(W1(k)) from W(k) and W(63 - k) */
+        float ar = re[k] + re[63 - k], ai = im[63 - k] - im[k];
+        float br = im[k] + im[63 - k], bi = re[k] - re[63 - k];
+        out0[k][0] = ar * ana_post_c[k] - ai * ana_post_s[k];
+        out0[k][1] = ar * ana_post_s[k] + ai * ana_post_c[k];
+        out1[k][0] = br * ana_post_c[k] - bi * ana_post_s[k];
+        out1[k][1] = br * ana_post_s[k] + bi * ana_post_c[k];
     }
 }
 
@@ -121,32 +141,40 @@ static inline void mac64(float * restrict acc, const float * restrict x, const f
 
 #ifndef FAAD_D_SBR
 /* 64-band synthesis of one slot: 64 output samples.
- * v(n) = 1/64 Re{ exp(j*pi*(2n-255)/256) * IDFT128(X(k) exp(-j*255*pi*k/128)) }
- * Only 64 of the 128 inputs are non-zero, so the 128-point transform is
- * two 64-point ones: the even outputs directly, the odd outputs after
- * rotating the input by exp(-j*pi*n/64). The delay line is a ring of ten
- * 128-sample blocks; the newest block starts at qmf_v_pos. */
+ * v(n) = 1/64 sum_k Re{X(k) exp(j*pi/64*(k+1/2)(n-127.5))}, n = 0..127,
+ * which is C(n-128) - S(n-128) for C the DCT-IV of Re X and S the DST-IV
+ * of Im X; their symmetries give all 128 samples from the 64 of each. The
+ * DST-IV is a DCT-IV of the reversed input with alternate signs, and each
+ * DCT-IV of 64 is a 32-point complex FFT between two rotations, so both
+ * FFTs ride one 64-point transform: the first on the even inputs, the
+ * second on the odd, separated by one butterfly. The delay line is a ring
+ * of ten 128-sample blocks; the newest block starts at qmf_v_pos. */
 static void qmf_synthesis_slot(SBRChannel *ch, float X[64][2], float *out)
 {
-    float z0[128], z1[128], w0[128], w1[128];
-    for (int k = 0; k < 64; k++) {
-        float br = X[k][0] * syn_pre_c[k] - X[k][1] * syn_pre_s[k];
-        float bi = -(X[k][0] * syn_pre_s[k] + X[k][1] * syn_pre_c[k]);
-        z0[k] = br;
-        z0[64 + k] = bi;
-        z1[k]      = br * ana_pre_c[k] + bi * ana_pre_s[k];
-        z1[64 + k] = bi * ana_pre_c[k] - br * ana_pre_s[k];
+    float z[128], w[128];
+    for (int n = 0; n < 32; n++) {
+        float c = syn_rot_c[n], s = syn_rot_s[n];
+        float ar = X[2 * n][0], ai = X[63 - 2 * n][0];
+        float br = X[63 - 2 * n][1], bi = X[2 * n][1];
+        z[2 * n]          = ar * c - ai * s;
+        z[64 + 2 * n]     = ar * s + ai * c;
+        z[2 * n + 1]      = br * c - bi * s;
+        z[64 + 2 * n + 1] = br * s + bi * c;
     }
-    fft(z0, w0, 6);
-    fft(z1, w1, 6);
+    fft(z, w, 6);
 
     ch->qmf_v_pos = (ch->qmf_v_pos + 1280 - 128) % 1280;
     float *v = ch->qmf_v + ch->qmf_v_pos;
-    for (int k = 0; k < 64; k++) {
-        float cr = w0[k], ci = -w0[64 + k];
-        v[2 * k] = (cr * syn_post_c[2 * k] - ci * syn_post_s[2 * k]) * (1.0f / 64.0f);
-        cr = w1[k]; ci = -w1[64 + k];
-        v[2 * k + 1] = (cr * syn_post_c[2 * k + 1] - ci * syn_post_s[2 * k + 1]) * (1.0f / 64.0f);
+    const float *wr = w, *wi = w + 64;
+    for (int k = 0; k < 32; k++) {
+        float pr = wr[k] + wr[k + 32], pi = wi[k] + wi[k + 32];
+        float mr = wr[k] - wr[k + 32], mi = wi[k] - wi[k + 32];
+        float cr = pr * syn_a_c[k] - pi * syn_a_s[k], ci = pr * syn_a_s[k] + pi * syn_a_c[k];
+        float dr = mr * syn_b_c[k] - mi * syn_b_s[k], di = mr * syn_b_s[k] + mi * syn_b_c[k];
+        v[2 * k]       = dr - cr;
+        v[127 - 2 * k] = cr + dr;
+        v[63 - 2 * k]  = ci + di;
+        v[64 + 2 * k]  = di - ci;
     }
 
     /* Ten 64-tap runs, each inside one 128-sample block, so no run wraps. */
@@ -1167,12 +1195,14 @@ static void sbr_analyse(SBRChannel *ch, SBRScratch *sc, const float *pcm)
 {
     for (int k = 0; k < 32; k++)
         memcpy(sc->x_low[k], ch->x_low_tail[k], sizeof(ch->x_low_tail[k]));
-    float slot[32][2];
-    for (int t = 0; t < SBR_SLOTS; t++) {
-        qmf_analysis_slot(ch, pcm + t * 32, slot);
+    float slot[2][32][2];
+    for (int t = 0; t < SBR_SLOTS; t += 2) {
+        qmf_analysis_pair(ch, pcm + t * 32, slot[0], slot[1]);
         for (int k = 0; k < 32; k++) {
-            sc->x_low[k][SBR_T_HFGEN + t][0] = slot[k][0];
-            sc->x_low[k][SBR_T_HFGEN + t][1] = slot[k][1];
+            sc->x_low[k][SBR_T_HFGEN + t][0] = slot[0][k][0];
+            sc->x_low[k][SBR_T_HFGEN + t][1] = slot[0][k][1];
+            sc->x_low[k][SBR_T_HFGEN + t + 1][0] = slot[1][k][0];
+            sc->x_low[k][SBR_T_HFGEN + t + 1][1] = slot[1][k][1];
         }
     }
     for (int k = 0; k < 32; k++)
