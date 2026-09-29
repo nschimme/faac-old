@@ -174,8 +174,12 @@ typedef struct {
     int16_t scalefactors[8][MAX_SFB];
     uint8_t global_gain;
 
-    /* Pulse data */
+    /* Pulse data: up to four spectral lines of a long window whose
+     * quantised magnitude is raised by pulse_amp */
     bool pulse_data_present;
+    uint8_t pulse_count;
+    uint8_t pulse_amp[4];
+    uint16_t pulse_pos[4];
 
     /* TNS data */
     bool tns_data_present;

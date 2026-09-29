@@ -173,14 +173,21 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
     );
 
     ics->pulse_data_present = bits_get(bs, 1);
+    ics->pulse_count = 0;
     if (ics->pulse_data_present) {
         uint32_t number_pulse = bits_get(bs, 2);
         uint32_t pulse_start_sfb = bits_get(bs, 6);
-        (void)pulse_start_sfb;
+        /* §4.6.4: pulses are for long windows only, and start inside the table */
+        if (ics->window_sequence == EIGHT_SHORT_SEQUENCE || pulse_start_sfb >= ics->num_sfbs)
+            return FAAD_ERR_DECODE_FAILED;
+        uint32_t pos = ics->sfb_offsets[pulse_start_sfb];
         for (uint32_t i = 0; i <= number_pulse; i++) {
-            bits_skip(bs, 5); /* pulse_offset */
-            bits_skip(bs, 4); /* pulse_amp */
+            pos += bits_get(bs, 5); /* pulse_offset */
+            if (pos >= FRAME_LEN_LONG) return FAAD_ERR_DECODE_FAILED;
+            ics->pulse_pos[i] = (uint16_t)pos;
+            ics->pulse_amp[i] = (uint8_t)bits_get(bs, 4);
         }
+        ics->pulse_count = (uint8_t)(number_pulse + 1);
     }
 
     ics->tns_data_present = bits_get(bs, 1);
