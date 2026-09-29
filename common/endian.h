@@ -114,8 +114,7 @@ static inline uint32_t le32toh(uint32_t x) {
 }
 
 static inline int16_t read_pcm16(const int16_t *p, bool bigendian) {
-    uint16_t val;
-    memcpy(&val, p, sizeof(val));
+    uint16_t val = (uint16_t)*p;
 #if WORDS_BIGENDIAN
     if (!bigendian) val = bswap16(val);
 #else
@@ -136,8 +135,7 @@ static inline int32_t read_pcm24(const uint8_t *p, bool bigendian) {
 }
 
 static inline int32_t read_pcm32(const int32_t *p, bool bigendian) {
-    uint32_t val;
-    memcpy(&val, p, sizeof(val));
+    uint32_t val = (uint32_t)*p;
 #if WORDS_BIGENDIAN
     if (!bigendian) val = bswap32(val);
 #else
