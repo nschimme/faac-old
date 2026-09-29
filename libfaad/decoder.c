@@ -447,7 +447,10 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
 #ifdef FAAD_STATS
                 unsigned b0 = bits_get_consumed(&bs);
 #endif
-                decode_sce(&bs, dec, &ics_list[ch_idx], ch_idx);
+                if (decode_sce(&bs, dec, &ics_list[ch_idx], ch_idx) != FAAD_OK) {
+                    decode_success = false; /* the rest of the payload is out of step */
+                    break;
+                }
 #ifdef FAAD_STATS
                 core_dump_ics(dec, ch_idx, &ics_list[ch_idx], dec->spec[ch_idx], NULL,
                               bits_get_consumed(&bs) - b0);
@@ -463,7 +466,10 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
 #ifdef FAAD_STATS
                 unsigned b0 = bits_get_consumed(&bs);
 #endif
-                decode_cpe(&bs, dec, &cpe, ch_idx);
+                if (decode_cpe(&bs, dec, &cpe, ch_idx) != FAAD_OK) {
+                    decode_success = false;
+                    break;
+                }
 #ifdef FAAD_STATS
                 {
                     unsigned nb = bits_get_consumed(&bs) - b0;
@@ -510,9 +516,18 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                             ch0 = (ch_idx >= 1) ? (ch_idx - 1) : 0;
                         }
                         faad_status sbr_st = sbr_decode_extension(dec, &bs, ch0, last_elem_type, ext_type == SBR_EXTENSION_DATA_CRC);
+#ifndef FAAD_DISABLE_SBR
                         if (sbr_st != FAAD_OK) {
-                            decode_success = false;
+                            /* The core is intact: play it band-limited rather than
+                             * conceal it, and keep the half-read payload out of
+                             * the envelope history. */
+                            uint32_t nch = (last_elem_type == ID_CPE) ? 2 : 1;
+                            for (uint32_t c = ch0; c < ch0 + nch && c < MAX_CHANNELS; c++) dec->sbr[c].have_frame = false;
+                            dec->sbr_present = true;
                         }
+#else
+                        (void)sbr_st;
+#endif
                         uint32_t consumed = bits_get_consumed(&bs);
 #ifdef FAAD_STATS
                         dec->stats.fillElementCount++;
@@ -573,13 +588,22 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
             for (int i = 0; i < FRAME_LEN_LONG; i++) {
                 dec->spec[c][i] = dec->prev_spec[c][i] * fade;
             }
+            /* Repeat the last block's windowing; a start block's spectrum
+             * follows its own short-window overlap as a stop block. */
+            static const uint8_t next_seq[4] = { ONLY_LONG_SEQUENCE, LONG_STOP_SEQUENCE,
+                                                 EIGHT_SHORT_SEQUENCE, ONLY_LONG_SEQUENCE };
+            ICSInfo *ics = &ics_list[c];
+            memset(ics, 0, sizeof(*ics));
+            ics->window_sequence = next_seq[dec->prev_window_seq[c] & 3];
+            ics->window_shape = dec->prev_window_shape[c];
         }
     }
 
     /* One buffer, one frame_samples-long run per channel: SBR analyses a
      * channel's whole core frame before it synthesises that channel, so it
      * works in place over the core output at the start of each run. */
-    bool sbr_frame = dec->asc.is_sbr || dec->sbr_present;
+    if (dec->sbr_present) dec->sbr_seen = true;
+    bool sbr_frame = dec->asc.is_sbr || dec->sbr_present || dec->sbr_seen;
 #ifdef FAAD_D_SBR
     dec->frame_samples = 1024;
 #else
@@ -639,7 +663,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
     *bytes_consumed = adts_frame_len;
     *bytes_written = required_bytes;
 
-    bool sbr_active = dec->sbr_present || dec->asc.is_sbr;
+    bool sbr_active = sbr_frame;
 #ifdef FAAD_STATS
     if (sbr_active) {
         dec->stats.sbrActiveFrames++;
