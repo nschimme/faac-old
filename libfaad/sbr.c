@@ -1163,7 +1163,7 @@ static void sbr_hf_adjust(const SBRElement *el, SBRChannel *ch, SBRScratch *sc,
 
 /* Run the analysis bank on one channel's core PCM, filling the scratch
  * X_low buffer (previous tail + 32 new slots). */
-static void sbr_analyse(SBRChannel *ch, SBRScratch *sc, const float *pcm)
+static void sbr_analyse(SBRChannel *ch, SBRScratch *sc, const real_t *pcm)
 {
     for (int k = 0; k < 32; k++)
         memcpy(sc->x_low[k], ch->x_low_tail[k], sizeof(ch->x_low_tail[k]));
@@ -1203,10 +1203,12 @@ static void sbr_assemble(const SBRElement *el, SBRChannel *ch, SBRScratch *sc, b
     }
 }
 
-static void sbr_process_channel(const SBRElement *el, SBRChannel *ch, SBRScratch *sc, const float *pcm,
+static void sbr_process_channel(const SBRElement *el, SBRChannel *ch, SBRScratch *sc, const real_t *pcm,
                                 float E[SBR_MAX_ENV][SBR_MAX_BANDS], float Q[2][SBR_MAX_NQ], bool have_hf, int nslots)
 {
-    sbr_analyse(ch, sc, pcm);
+    float pcm_flt[1024];
+    for (int i = 0; i < 1024; i++) pcm_flt[i] = real_to_float(pcm[i]);
+    sbr_analyse(ch, sc, pcm_flt);
 
     /* Y carries the previous frame's tail; the HF generator then writes
      * the region this frame adjusts, the adjuster rewrites it in place
@@ -1310,7 +1312,7 @@ static void sbr_dump_frame(FILE *df, unsigned int frame_idx, uint32_t ch, const 
 }
 #endif
 
-void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *pcm_out)
+void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, real_t *pcm_in, real_t *pcm_out)
 {
 #ifndef FAAD_DISABLE_SBR
     SBRScratch *sc = &dec->sbr_scratch;
@@ -1374,10 +1376,10 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
 #else
     (void)dec;
     for (uint32_t ch = 0; ch < num_ch; ch++) {
-        float prev = pcm_in[ch * FRAME_LEN_LONG];
+        real_t prev = pcm_in[ch * FRAME_LEN_LONG];
         for (uint32_t i = 0; i < FRAME_LEN_LONG; i++) {
-            float sample = pcm_in[ch * FRAME_LEN_LONG + i];
-            pcm_out[ch * 2048 + i * 2]     = 0.5f * (prev + sample);
+            real_t sample = pcm_in[ch * FRAME_LEN_LONG + i];
+            pcm_out[ch * 2048 + i * 2]     = MUL_REAL(REAL_CONST(0.5), ADD_REAL(prev, sample));
             pcm_out[ch * 2048 + i * 2 + 1] = sample;
             prev = sample;
         }

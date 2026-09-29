@@ -295,7 +295,7 @@ static inline float pow_4_3_fast(int x)
     return (x < 0) ? -val : val;
 }
 
-faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
+faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, real_t *spec
 #ifdef FAAD_STATS
     , FaadDecStats *stats
 #endif
@@ -321,16 +321,16 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
                 if (end_k > FRAME_LEN_LONG) end_k = FRAME_LEN_LONG;
 
                 for (int w = 0; w < win_group_len; w++) {
-                    float * restrict ptr = spec + (window_offset + w) * 128 + start_k;
+                    real_t * restrict ptr = spec + (window_offset + w) * 128 + start_k;
                     int k = start_k;
                     if (cb <= 4) {
                         while (k < end_k) {
                             int v, w_val, x, y;
                             decode_quad(bs, cb, &v, &w_val, &x, &y);
-                            ptr[0] = pow_4_3_fast(v) * scale;
-                            ptr[1] = pow_4_3_fast(w_val) * scale;
-                            ptr[2] = pow_4_3_fast(x) * scale;
-                            ptr[3] = pow_4_3_fast(y) * scale;
+                            ptr[0] = float_to_real(pow_4_3_fast(v) * scale);
+                            ptr[1] = float_to_real(pow_4_3_fast(w_val) * scale);
+                            ptr[2] = float_to_real(pow_4_3_fast(x) * scale);
+                            ptr[3] = float_to_real(pow_4_3_fast(y) * scale);
                             ptr += 4;
                             k += 4;
                         }
@@ -342,8 +342,8 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
                                 , stats
 #endif
                             );
-                            ptr[0] = pow_4_3_fast(x) * scale;
-                            ptr[1] = pow_4_3_fast(y) * scale;
+                            ptr[0] = float_to_real(pow_4_3_fast(x) * scale);
+                            ptr[1] = float_to_real(pow_4_3_fast(y) * scale);
                             ptr += 2;
                             k += 2;
                         }

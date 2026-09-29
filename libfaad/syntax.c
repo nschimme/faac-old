@@ -124,7 +124,7 @@ faad_status decode_cce(BitReader *bs, struct faad_decoder *dec)
 
     ICSInfo dummy_ics;
     memset(&dummy_ics, 0, sizeof(dummy_ics));
-    float dummy_spec[FRAME_LEN_LONG];
+    real_t dummy_spec[FRAME_LEN_LONG];
     return decode_ics(bs, dec, &dummy_ics, dummy_spec, false);
 }
 
@@ -139,7 +139,7 @@ faad_status decode_dse(BitReader *bs)
     return FAAD_OK;
 }
 
-faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, float *spec, bool common_window)
+faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, real_t *spec, bool common_window)
 {
 #ifdef FAAD_STATS
     dec->stats.icsCount++;

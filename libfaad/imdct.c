@@ -84,69 +84,73 @@ void init_windows(void)
 /* DCT-IV of length M through an M/2-point complex FFT: pack even-index
  * inputs against reversed odd-index inputs, rotate, transform, rotate again
  * and unzip. */
-static void dct4(const float *in, float *u, int M)
+static void dct4(const real_t *in, real_t *u, int M)
 {
     int K = M / 2;
     int logm = (M == 1024) ? 9 : 6;
-    const float *cs = (M == 1024) ? dct4_cos_1024 : dct4_cos_128;
-    const float *sn = (M == 1024) ? dct4_sin_1024 : dct4_sin_128;
-    float z[1024], w[1024];
+    float z[1024], w[1024], in_flt[1024], u_flt[1024];
+    for (int i = 0; i < M; i++) in_flt[i] = real_to_float(in[i]);
+
+    const float *cos_tbl = (M == 1024) ? dct4_cos_1024 : dct4_cos_128;
+    const float *sin_tbl = (M == 1024) ? dct4_sin_1024 : dct4_sin_128;
     float *zr = z, *zi = z + K;
 
     for (int n = 0; n < K; n++) {
-        float a = in[2 * n], b = in[M - 1 - 2 * n];
-        zr[n] = a * cs[n] - b * sn[n];
-        zi[n] = a * sn[n] + b * cs[n];
+        float a = in_flt[2 * n], b = in_flt[M - 1 - 2 * n];
+        zr[n] = a * cos_tbl[n] - b * sin_tbl[n];
+        zi[n] = a * sin_tbl[n] + b * cos_tbl[n];
     }
     fft(z, w, logm);
     const float *wr = w, *wi = w + K;
     for (int k = 0; k < K; k++) {
-        u[2 * k]         =  wr[k] * cs[k] - wi[k] * sn[k];
-        u[M - 1 - 2 * k] = -(wr[k] * sn[k] + wi[k] * cs[k]);
+        u_flt[2 * k]         =  wr[k] * cos_tbl[k] - wi[k] * sin_tbl[k];
+        u_flt[M - 1 - 2 * k] = -(wr[k] * sin_tbl[k] + wi[k] * cos_tbl[k]);
     }
+    for (int i = 0; i < M; i++) u[i] = float_to_real(u_flt[i]);
 }
 
 /* IMDCT (ISO/IEC 14496-3 §4.6.11.3.1): n0 = N/4 + 1/2 makes the transform a
  * DCT-IV of the coefficients, folded out with its odd/even symmetries. */
-static void fast_imdct(const float *in, float *out, int n)
+static void fast_imdct(const real_t *in, real_t *out, int n)
 {
     int M = n / 2, H = M / 2;
-    float u[1024];
-    float scale = 2.0f / (float)n;
+    real_t u[1024];
+    real_t scale = float_to_real(2.0f / (float)n);
 
     dct4(in, u, M);
     for (int i = 0; i < H; i++) {
-        out[i]             =  u[H + i] * scale;
-        out[M + H + i]     = -u[i] * scale;
+        out[i]             =  MUL_REAL(u[H + i], scale);
+        out[M + H + i]     = -MUL_REAL(u[i], scale);
     }
     for (int i = H; i < M + H; i++)
-        out[i] = -u[M + H - 1 - i] * scale;
+        out[i] = -MUL_REAL(u[M + H - 1 - i], scale);
 }
 
 /* The 2048-sample IMDCT output, folded out of the 1024-point DCT-IV u (see
  * fast_imdct), sample i, scaled. */
-static inline float imdct_sample(const float *u, int i, float scale)
+static inline real_t imdct_sample(const real_t *u, int i, real_t scale)
 {
-    if (i < 512) return u[512 + i] * scale;
-    if (i < 1536) return -u[1535 - i] * scale;
-    return -u[i - 1536] * scale;
+    if (i < 512) return MUL_REAL(u[512 + i], scale);
+    if (i < 1536) return -MUL_REAL(u[1535 - i], scale);
+    return -MUL_REAL(u[i - 1536], scale);
 }
 
 /* Left half: window, add the previous frame's overlap, emit. Right half:
  * window into the overlap for the next frame. */
-static inline void imdct_emit(float * restrict out_pcm, float * restrict overlap, const float *u, float scale,
+static inline void imdct_emit(real_t * restrict out_pcm, real_t * restrict overlap, const real_t *u, real_t scale,
                               int i0, int i1, const float * restrict wl, int wl_dir, float wflat)
 {
     /* window sample i is wl[i - i0] (wl_dir > 0), wl[i1 - 1 - i] (< 0) or wflat (wl == NULL) */
     for (int i = i0; i < i1; i++) {
         float w = wl ? (wl_dir > 0 ? wl[i - i0] : wl[i1 - 1 - i]) : wflat;
-        float x = imdct_sample(u, i, scale) * w;
-        if (i < FRAME_LEN_LONG) out_pcm[i] = x + overlap[i];
+        real_t r_w = float_to_real(w);
+        real_t x = MUL_REAL(imdct_sample(u, i, scale), r_w);
+        if (i < FRAME_LEN_LONG) out_pcm[i] = ADD_REAL(x, overlap[i]);
         else overlap[i - FRAME_LEN_LONG] = x;
     }
 }
 
-void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, float * restrict spec, float * restrict out_pcm)
+void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, real_t * restrict spec, real_t * restrict out_pcm)
 {
     /* ISO/IEC 14496-3 §4.6.11.3.2: the left half of the window uses the
      * previous block's shape, the right half this block's. */
@@ -155,32 +159,34 @@ void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, float
     const float * restrict win_short_l = (prev_shape == KBD_WINDOW) ? kbd_window_256 : sine_window_256;
     const float * restrict win_long = (ics->window_shape == KBD_WINDOW) ? kbd_window_2048 : sine_window_2048;
     const float * restrict win_short = (ics->window_shape == KBD_WINDOW) ? kbd_window_256 : sine_window_256;
-    float * restrict overlap = dec->overlap[ch];
+    real_t * restrict overlap = dec->overlap[ch];
     dec->prev_window_shape[ch] = ics->window_shape;
 
     if (ics->window_sequence == EIGHT_SHORT_SEQUENCE) {
         /* eight 256-sample blocks hopping by 128 cover samples 448..1599 */
-        float acc[1152];
+        real_t acc[1152];
         memset(acc, 0, sizeof(acc));
         for (int w = 0; w < 8; w++) {
-            float block[256];
+            real_t block[256];
             fast_imdct(spec + w * 128, block, 256);
             const float * restrict wl = (w == 0) ? win_short_l : win_short;
-            float *dst = acc + w * 128;
+            real_t *dst = acc + w * 128;
             for (int i = 0; i < 128; i++) {
-                dst[i]       += block[i] * wl[i];
-                dst[255 - i] += block[255 - i] * win_short[i];
+                real_t r_wl = float_to_real(wl[i]);
+                real_t r_ws = float_to_real(win_short[i]);
+                dst[i]       = ADD_REAL(dst[i], MUL_REAL(block[i], r_wl));
+                dst[255 - i] = ADD_REAL(dst[255 - i], MUL_REAL(block[255 - i], r_ws));
             }
         }
         for (int i = 0; i < 448; i++) out_pcm[i] = overlap[i];
-        for (int i = 448; i < FRAME_LEN_LONG; i++) out_pcm[i] = acc[i - 448] + overlap[i];
+        for (int i = 448; i < FRAME_LEN_LONG; i++) out_pcm[i] = ADD_REAL(acc[i - 448], overlap[i]);
         for (int i = 0; i < 576; i++) overlap[i] = acc[i + 576];
-        memset(overlap + 576, 0, sizeof(float) * 448);
+        memset(overlap + 576, 0, sizeof(real_t) * 448);
         return;
     }
 
-    float u[1024];
-    const float scale = 2.0f / 2048.0f;
+    real_t u[1024];
+    const real_t scale = float_to_real(2.0f / 2048.0f);
     dct4(spec, u, 1024);
 
     if (ics->window_sequence == LONG_STOP_SEQUENCE) {
