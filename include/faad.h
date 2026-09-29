@@ -82,7 +82,7 @@ enum faad_output_format {
 enum faad_downmix_mode {
     FAAD_DOWNMIX_NONE   = 0,          /* Preserve native channel layout */
     FAAD_DOWNMIX_STEREO = 1,          /* Downmix surround channels to 2-channel stereo */
-    FAAD_DOWNMIX_MONO   = 2           /* Downmix during IMDCT to mono (Saves ~45% CPU/RAM) */
+    FAAD_DOWNMIX_MONO   = 2           /* Downmix all channels to mono */
 };
 
 /* Decoder configuration provided at initialization */

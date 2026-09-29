@@ -441,7 +441,6 @@ void apply_ms_stereo(CPEInfo *cpe, float *spec_l, float *spec_r
 #endif
 );
 void apply_is_stereo(CPEInfo *cpe, float *spec_l, float *spec_r);
-void apply_freq_downmix_mono(float *spec_l, const float *spec_r);
 void apply_tns(ICSInfo *ics, float *spec);
 void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, float *spec, float *out_pcm);
 
