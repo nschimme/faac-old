@@ -41,6 +41,7 @@
 
 
 #include "faad.h"
+#include "faad_math.h"
 #include "huffdata.h"
 #include "sbr_tables.h"
 
@@ -391,8 +392,8 @@ struct faad_decoder {
     uint32_t sample_rate;      /* nominal (post-SBR) rate, for reporting */
     uint32_t core_sample_rate; /* the rate the AAC core codec itself (window/sfb layout) actually runs at -- Fs/2 of sample_rate when SBR is present */
 
-    float spec[MAX_CHANNELS][FRAME_LEN_LONG];
-    float overlap[MAX_CHANNELS][FRAME_LEN_LONG];
+    real_t spec[MAX_CHANNELS][FRAME_LEN_LONG];
+    real_t overlap[MAX_CHANNELS][FRAME_LEN_LONG];
     uint8_t prev_window_shape[MAX_CHANNELS]; /* the left window half follows the previous block's shape */
 
 #ifndef FAAD_DISABLE_SBR
@@ -409,11 +410,11 @@ struct faad_decoder {
 
     uint32_t pns_seed;
     uint32_t consecutive_errors;
-    float prev_spec[MAX_CHANNELS][FRAME_LEN_LONG];
+    real_t prev_spec[MAX_CHANNELS][FRAME_LEN_LONG];
 
     /* Frame decode scratch buffers moved from C call stack to reduce stack depth (<1 KB) */
-    float pcm_float[MAX_CHANNELS * FRAME_LEN_LONG];
-    float pcm_final[MAX_CHANNELS * 2048];
+    real_t pcm_float[MAX_CHANNELS * FRAME_LEN_LONG];
+    real_t pcm_final[MAX_CHANNELS * 2048];
 
 #ifdef FAAD_STATS
     FaadDecStats stats;
@@ -426,26 +427,26 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
     , FaadDecStats *stats
 #endif
 );
-faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
+faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, real_t *spec
 #ifdef FAAD_STATS
     , FaadDecStats *stats
 #endif
 );
-void apply_pns(ICSInfo *ics, float *spec, uint32_t *pns_seed);
-void apply_ms_stereo(CPEInfo *cpe, float *spec_l, float *spec_r
+void apply_pns(ICSInfo *ics, real_t *spec, uint32_t *pns_seed);
+void apply_ms_stereo(CPEInfo *cpe, real_t *spec_l, real_t *spec_r
 #ifdef FAAD_STATS
     , FaadDecStats *stats
 #endif
 );
-void apply_is_stereo(CPEInfo *cpe, float *spec_l, float *spec_r);
-void apply_freq_downmix_mono(float *spec_l, const float *spec_r);
-void apply_tns(ICSInfo *ics, float *spec);
-void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, float *spec, float *out_pcm);
+void apply_is_stereo(CPEInfo *cpe, real_t *spec_l, real_t *spec_r);
+void apply_freq_downmix_mono(real_t *spec_l, const real_t *spec_r);
+void apply_tns(ICSInfo *ics, real_t *spec);
+void imdct_and_window(struct faad_decoder *dec, uint32_t ch, ICSInfo *ics, real_t *spec, real_t *out_pcm);
 
 faad_status decode_pce(BitReader *bs, struct faad_decoder *dec);
 faad_status decode_cce(BitReader *bs, struct faad_decoder *dec);
 faad_status decode_dse(BitReader *bs);
-faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, float *spec, bool common_window);
+faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, real_t *spec, bool common_window);
 faad_status decode_cpe(BitReader *bs, struct faad_decoder *dec, CPEInfo *cpe, uint32_t ch);
 faad_status decode_sce(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, uint32_t ch);
 
@@ -456,7 +457,7 @@ void ps_read_data(struct faad_decoder *dec, BitReader *bs, uint32_t bits_left);
 void ps_frame_begin(struct faad_decoder *dec, float X[PS_IN_SLOTS][64][2], int top);
 void ps_slot(struct faad_decoder *dec, int n, float X[PS_IN_SLOTS][64][2], float L[64][2], float R[64][2]);
 void init_ps_tables(void);
-void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *pcm_out);
+void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, real_t *pcm_in, real_t *pcm_out);
 #ifdef FAAD_STATS
 FILE *faad_dump_file(struct faad_decoder *dec);
 #endif

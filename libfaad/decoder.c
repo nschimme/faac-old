@@ -516,7 +516,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
         sbr_apply(dec, dec->num_channels, pcm_float, pcm_final);
     } else {
         dec->frame_samples = 1024;
-        memcpy(pcm_final, pcm_float, dec->num_channels * 1024 * sizeof(float));
+        memcpy(pcm_final, pcm_float, dec->num_channels * 1024 * sizeof(real_t));
     }
 
     uint32_t total_samples = dec->frame_samples * dec->num_channels;
@@ -532,11 +532,11 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
     if (dec->config.output_format == FAAD_OUTPUT_16BIT) {
         int16_t * restrict out_int16 = (int16_t *)out_pcm;
         if (num_chs == 2) {
-            const float * restrict pcm_l = pcm_final;
-            const float * restrict pcm_r = pcm_final + frame_samples;
+            const real_t * restrict pcm_l = pcm_final;
+            const real_t * restrict pcm_r = pcm_final + frame_samples;
             for (uint32_t i = 0; i < frame_samples; i++) {
-                float val_l = pcm_l[i];
-                float val_r = pcm_r[i];
+                float val_l = real_to_float(pcm_l[i]);
+                float val_r = real_to_float(pcm_r[i]);
                 if (val_l > 32767.0f) val_l = 32767.0f;
                 if (val_l < -32768.0f) val_l = -32768.0f;
                 if (val_r > 32767.0f) val_r = 32767.0f;
@@ -545,9 +545,9 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                 out_int16[2 * i + 1] = (int16_t)val_r;
             }
         } else if (num_chs == 1) {
-            const float * restrict pcm_l = pcm_final;
+            const real_t * restrict pcm_l = pcm_final;
             for (uint32_t i = 0; i < frame_samples; i++) {
-                float val = pcm_l[i];
+                float val = real_to_float(pcm_l[i]);
                 if (val > 32767.0f) val = 32767.0f;
                 if (val < -32768.0f) val = -32768.0f;
                 out_int16[i] = (int16_t)val;
@@ -555,7 +555,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
         } else {
             for (uint32_t i = 0; i < frame_samples; i++) {
                 for (uint32_t c = 0; c < num_chs; c++) {
-                    float val = pcm_final[c * frame_samples + i];
+                    float val = real_to_float(pcm_final[c * frame_samples + i]);
                     if (val > 32767.0f) val = 32767.0f;
                     if (val < -32768.0f) val = -32768.0f;
                     out_int16[i * num_chs + c] = (int16_t)val;
@@ -567,16 +567,16 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
         const float norm = 1.0f / 32768.0f;
         float * restrict out_f32 = (float *)out_pcm;
         if (num_chs == 2) {
-            const float * restrict pcm_l = pcm_final;
-            const float * restrict pcm_r = pcm_final + frame_samples;
+            const real_t * restrict pcm_l = pcm_final;
+            const real_t * restrict pcm_r = pcm_final + frame_samples;
             for (uint32_t i = 0; i < frame_samples; i++) {
-                out_f32[2 * i]     = pcm_l[i] * norm;
-                out_f32[2 * i + 1] = pcm_r[i] * norm;
+                out_f32[2 * i]     = real_to_float(pcm_l[i]) * norm;
+                out_f32[2 * i + 1] = real_to_float(pcm_r[i]) * norm;
             }
         } else {
             for (uint32_t i = 0; i < frame_samples; i++) {
                 for (uint32_t c = 0; c < num_chs; c++) {
-                    out_f32[i * num_chs + c] = pcm_final[c * frame_samples + i] * norm;
+                    out_f32[i * num_chs + c] = real_to_float(pcm_final[c * frame_samples + i]) * norm;
                 }
             }
         }

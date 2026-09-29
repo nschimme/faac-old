@@ -19,32 +19,32 @@ static int tns_max_bands_for(int sr_idx, bool is_short)
 #define M_PI 3.14159265358979323846
 #endif
 
-static void tns_ar_filter(float * restrict spec, int length, int dir, const float * restrict lpc, int order)
+static void tns_ar_filter(real_t * restrict spec, int length, int dir, const real_t * restrict lpc, int order)
 {
     if (length <= 0 || order <= 0) return;
 
     if (!dir) {
         for (int i = 0; i < length; i++) {
-            float sum = spec[i];
+            real_t sum = spec[i];
             int limit = (i < order) ? i : order;
             for (int j = 1; j <= limit; j++) {
-                sum -= lpc[j - 1] * spec[i - j];
+                sum = SUB_REAL(sum, MUL_REAL(lpc[j - 1], spec[i - j]));
             }
             spec[i] = sum;
         }
     } else {
         for (int i = length - 1; i >= 0; i--) {
-            float sum = spec[i];
+            real_t sum = spec[i];
             int limit = (length - 1 - i < order) ? (length - 1 - i) : order;
             for (int j = 1; j <= limit; j++) {
-                sum -= lpc[j - 1] * spec[i + j];
+                sum = SUB_REAL(sum, MUL_REAL(lpc[j - 1], spec[i + j]));
             }
             spec[i] = sum;
         }
     }
 }
 
-void apply_tns(ICSInfo *ics, float *spec)
+void apply_tns(ICSInfo *ics, real_t *spec)
 {
 #ifndef FAAD_DISABLE_TNS
     if (!ics->tns_data_present) return;
@@ -54,7 +54,7 @@ void apply_tns(ICSInfo *ics, float *spec)
     int max_order = is_short ? 7 : 12;
 
     for (int w = 0; w < ics->num_windows; w++) {
-        float *window_spec = spec + w * 128;
+        real_t *window_spec = spec + w * 128;
         int limit = ics->max_sfb < tns_max_bands ? ics->max_sfb : tns_max_bands;
         int bottom = ics->num_sfbs;
 
@@ -77,9 +77,9 @@ void apply_tns(ICSInfo *ics, float *spec)
             if (num_lines <= 0) continue;
 
             /* Convert quantized Reflection Coefficients (parcor) to LPC coefficients via Levinson-Durbin step-down */
-            float rc[32];
-            float lpc[32];
-            float lpc_tmp[32];
+            real_t rc[32];
+            real_t lpc[32];
+            real_t lpc_tmp[32];
             /* §4.6.9.3: the quantiser is asymmetric, one more step on the
              * negative side: iqfac = (2^(bits-1) -/+ 0.5) / (pi/2). */
             float half = (ics->tns_coef_res[w] == 1) ? 8.0f : 4.0f;
@@ -88,13 +88,13 @@ void apply_tns(ICSInfo *ics, float *spec)
 
             for (int i = 0; i < order; i++) {
                 int8_t val = ics->tns_coef[w][f][i];
-                rc[i] = sinf((float)val / (val >= 0 ? iqfac : iqfac_m));
+                rc[i] = float_to_real(sinf((float)val / (val >= 0 ? iqfac : iqfac_m)));
             }
 
             for (int m = 0; m < order; m++) {
                 lpc[m] = rc[m];
                 for (int i = 0; i < m; i++) {
-                    lpc_tmp[i] = lpc[i] + rc[m] * lpc[m - 1 - i];
+                    lpc_tmp[i] = ADD_REAL(lpc[i], MUL_REAL(rc[m], lpc[m - 1 - i]));
                 }
                 for (int i = 0; i < m; i++) {
                     lpc[i] = lpc_tmp[i];

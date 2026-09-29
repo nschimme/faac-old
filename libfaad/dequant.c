@@ -4,7 +4,7 @@
 
 #include "faad_internal.h"
 
-void apply_pns(ICSInfo *ics, float *spec, uint32_t *pns_seed)
+void apply_pns(ICSInfo *ics, real_t *spec, uint32_t *pns_seed)
 {
     int window_offset = 0;
     uint32_t seed = *pns_seed;
@@ -30,20 +30,20 @@ void apply_pns(ICSInfo *ics, float *spec, uint32_t *pns_seed)
                 for (int w = 0; w < ics->window_group_length[g]; w++) {
                     int win_offset_k = (window_offset + w) * 128 + start_k;
                     if (win_offset_k < 0 || win_offset_k + len > FRAME_LEN_LONG) continue;
-                    float * restrict ptr = spec + win_offset_k;
+                    real_t * restrict ptr = spec + win_offset_k;
                     float energy = 0.0f;
 
                     for (int k = 0; k < len; k++) {
                         seed = (seed * 1664525U) + 1013904223U;
                         float noise = ((float)(int32_t)seed) * (1.0f / 2147483648.0f);
-                        ptr[k] = noise;
+                        ptr[k] = float_to_real(noise);
                         energy += noise * noise;
                     }
 
                     if (energy > 0.0f) {
-                        float norm = scale / sqrtf(energy);
+                        real_t norm = float_to_real(scale / sqrtf(energy));
                         for (int k = 0; k < len; k++) {
-                            ptr[k] *= norm;
+                            ptr[k] = MUL_REAL(ptr[k], norm);
                         }
                     }
                 }

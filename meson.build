@@ -35,6 +35,9 @@ config_h.set('FAAC_SBR_DECIMATION', get_option('sbr-decimation'))
 config_h.set('FAAC_STATS', get_option('stats'))
 config_h.set('FAAD_STATS', get_option('stats'))
 
+config_h.set10('FAAC_FIXED_POINT', get_option('fixed-point'))
+config_h.set10('FAAD_FIXED_POINT', get_option('fixed-point'))
+
 config_h.set('MAX_CHANNELS', get_option('max-channels'))
 
 c_args = []

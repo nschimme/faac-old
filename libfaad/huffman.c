@@ -6,8 +6,8 @@
 #include "sfb_tables.h"
 #include <math.h>
 
-static float pow_4_3_lut[128];
-static float sf_scale_lut[256];
+static real_t pow_4_3_lut[128];
+static real_t sf_scale_lut[256];
 
 static bool dequant_tables_init = false;
 
@@ -16,10 +16,10 @@ void init_dequant_tables(void)
     if (dequant_tables_init) return;
 
     for (int i = 0; i < 128; i++) {
-        pow_4_3_lut[i] = powf((float)i, 4.0f / 3.0f);
+        pow_4_3_lut[i] = float_to_real(powf((float)i, 4.0f / 3.0f));
     }
     for (int i = 0; i < 256; i++) {
-        sf_scale_lut[i] = powf(2.0f, 0.25f * (i - 100));
+        sf_scale_lut[i] = float_to_real(powf(2.0f, 0.25f * (i - 100)));
     }
 
     dequant_tables_init = true;
@@ -284,18 +284,18 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
     return FAAD_OK;
 }
 
-static inline float pow_4_3_fast(int x)
+static inline real_t pow_4_3_fast(int x)
 {
     int abs_x = abs(x);
     if (abs_x < 128) {
-        float val = pow_4_3_lut[abs_x];
+        real_t val = pow_4_3_lut[abs_x];
         return (x < 0) ? -val : val;
     }
-    float val = powf((float)abs_x, 4.0f / 3.0f);
+    real_t val = float_to_real(powf((float)abs_x, 4.0f / 3.0f));
     return (x < 0) ? -val : val;
 }
 
-faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
+faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, real_t *spec
 #ifdef FAAD_STATS
     , FaadDecStats *stats
 #endif
@@ -313,7 +313,7 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
             if (cb == 0 || cb >= 13) continue;
             {
                 int sf = ics->scalefactors[g][sfb];
-                float scale = (sf >= 0 && sf < 256) ? sf_scale_lut[sf] : powf(2.0f, 0.25f * (sf - 100));
+                real_t scale = (sf >= 0 && sf < 256) ? sf_scale_lut[sf] : float_to_real(powf(2.0f, 0.25f * (sf - 100)));
 
                 int start_k = sfb_offsets[sfb];
                 int end_k = sfb_offsets[sfb + 1];
@@ -321,16 +321,16 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
                 if (end_k > FRAME_LEN_LONG) end_k = FRAME_LEN_LONG;
 
                 for (int w = 0; w < win_group_len; w++) {
-                    float * restrict ptr = spec + (window_offset + w) * 128 + start_k;
+                    real_t * restrict ptr = spec + (window_offset + w) * 128 + start_k;
                     int k = start_k;
                     if (cb <= 4) {
                         while (k < end_k) {
                             int v, w_val, x, y;
                             decode_quad(bs, cb, &v, &w_val, &x, &y);
-                            ptr[0] = pow_4_3_fast(v) * scale;
-                            ptr[1] = pow_4_3_fast(w_val) * scale;
-                            ptr[2] = pow_4_3_fast(x) * scale;
-                            ptr[3] = pow_4_3_fast(y) * scale;
+                            ptr[0] = MUL_REAL(pow_4_3_fast(v), scale);
+                            ptr[1] = MUL_REAL(pow_4_3_fast(w_val), scale);
+                            ptr[2] = MUL_REAL(pow_4_3_fast(x), scale);
+                            ptr[3] = MUL_REAL(pow_4_3_fast(y), scale);
                             ptr += 4;
                             k += 4;
                         }
@@ -342,8 +342,8 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
                                 , stats
 #endif
                             );
-                            ptr[0] = pow_4_3_fast(x) * scale;
-                            ptr[1] = pow_4_3_fast(y) * scale;
+                            ptr[0] = MUL_REAL(pow_4_3_fast(x), scale);
+                            ptr[1] = MUL_REAL(pow_4_3_fast(y), scale);
                             ptr += 2;
                             k += 2;
                         }

@@ -126,7 +126,7 @@ static inline void mac64(float * restrict acc, const float * restrict x, const f
  * two 64-point ones: the even outputs directly, the odd outputs after
  * rotating the input by exp(-j*pi*n/64). The delay line is a ring of ten
  * 128-sample blocks; the newest block starts at qmf_v_pos. */
-static void qmf_synthesis_slot(SBRChannel *ch, float X[64][2], float *out)
+static void qmf_synthesis_slot(SBRChannel *ch, float X[64][2], real_t *out)
 {
     float z0[128], z1[128], w0[128], w1[128];
     for (int k = 0; k < 64; k++) {
@@ -155,8 +155,10 @@ static void qmf_synthesis_slot(SBRChannel *ch, float X[64][2], float *out)
         run[2 * i]     = ch->qmf_v + ((ch->qmf_v_pos + 256 * i) % 1280);
         run[2 * i + 1] = ch->qmf_v + ((ch->qmf_v_pos + 256 * i + 192) % 1280);
     }
-    for (int n = 0; n < 64; n++) out[n] = run[0][n] * qmf_c[n];
-    for (int i = 1; i < 10; i++) mac64(out, run[i], qmf_c + 64 * i);
+    float out_flt[64];
+    for (int n = 0; n < 64; n++) out_flt[n] = run[0][n] * qmf_c[n];
+    for (int i = 1; i < 10; i++) mac64(out_flt, run[i], qmf_c + 64 * i);
+    for (int n = 0; n < 64; n++) out[n] = float_to_real(out_flt[n]);
 }
 #endif
 
@@ -1163,13 +1165,15 @@ static void sbr_hf_adjust(const SBRElement *el, SBRChannel *ch, SBRScratch *sc,
 
 /* Run the analysis bank on one channel's core PCM, filling the scratch
  * X_low buffer (previous tail + 32 new slots). */
-static void sbr_analyse(SBRChannel *ch, SBRScratch *sc, const float *pcm)
+static void sbr_analyse(SBRChannel *ch, SBRScratch *sc, const real_t *pcm)
 {
     for (int k = 0; k < 32; k++)
         memcpy(sc->x_low[k], ch->x_low_tail[k], sizeof(ch->x_low_tail[k]));
     float slot[32][2];
     for (int t = 0; t < SBR_SLOTS; t++) {
-        qmf_analysis_slot(ch, pcm + t * 32, slot);
+        float pcm_slot[32];
+        for (int i = 0; i < 32; i++) pcm_slot[i] = real_to_float(pcm[t * 32 + i]);
+        qmf_analysis_slot(ch, pcm_slot, slot);
         for (int k = 0; k < 32; k++) {
             sc->x_low[k][SBR_T_HFGEN + t][0] = slot[k][0];
             sc->x_low[k][SBR_T_HFGEN + t][1] = slot[k][1];
@@ -1203,7 +1207,7 @@ static void sbr_assemble(const SBRElement *el, SBRChannel *ch, SBRScratch *sc, b
     }
 }
 
-static void sbr_process_channel(const SBRElement *el, SBRChannel *ch, SBRScratch *sc, const float *pcm,
+static void sbr_process_channel(const SBRElement *el, SBRChannel *ch, SBRScratch *sc, const real_t *pcm,
                                 float E[SBR_MAX_ENV][SBR_MAX_BANDS], float Q[2][SBR_MAX_NQ], bool have_hf, int nslots)
 {
     sbr_analyse(ch, sc, pcm);
@@ -1310,7 +1314,7 @@ static void sbr_dump_frame(FILE *df, unsigned int frame_idx, uint32_t ch, const 
 }
 #endif
 
-void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *pcm_out)
+void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, real_t *pcm_in, real_t *pcm_out)
 {
 #ifndef FAAD_DISABLE_SBR
     SBRScratch *sc = &dec->sbr_scratch;
@@ -1374,10 +1378,10 @@ void sbr_apply(struct faad_decoder *dec, uint32_t num_ch, float *pcm_in, float *
 #else
     (void)dec;
     for (uint32_t ch = 0; ch < num_ch; ch++) {
-        float prev = pcm_in[ch * FRAME_LEN_LONG];
+        real_t prev = pcm_in[ch * FRAME_LEN_LONG];
         for (uint32_t i = 0; i < FRAME_LEN_LONG; i++) {
-            float sample = pcm_in[ch * FRAME_LEN_LONG + i];
-            pcm_out[ch * 2048 + i * 2]     = 0.5f * (prev + sample);
+            real_t sample = pcm_in[ch * FRAME_LEN_LONG + i];
+            pcm_out[ch * 2048 + i * 2]     = MUL_REAL(REAL_CONST(0.5), ADD_REAL(prev, sample));
             pcm_out[ch * 2048 + i * 2 + 1] = sample;
             prev = sample;
         }

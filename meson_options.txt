@@ -55,6 +55,11 @@ option('max-channels',
     max: 8,
     value: 8)
 
+option('fixed-point',
+    description: 'Enable fixed-point arithmetic instead of floating-point (opt-in for FPU-less embedded targets)',
+    type: 'boolean',
+    value: false)
+
 # End-of-encode diagnostics banner (Qavg, transient/tool-usage %, rate-control
 # health, etc), printed to stderr on faacEncClose().
 option('stats',
