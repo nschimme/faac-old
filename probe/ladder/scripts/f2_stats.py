@@ -8,7 +8,7 @@ def freq(x,sb):
  off=short_off if x.win_seq==2 else long_off
  return (off[sb]+off[sb+1])*0.5*24000/(128 if x.win_seq==2 else 1024)
 for name,stem in clips.items():
- a=parse('probe/ladder/survey/apple/'+stem+'.dump');f=parse('/tmp/ladder_f/'+name+'_F1_normal.dump')
+ a=parse('probe/ladder/survey/apple/'+stem+'.dump');f=parse(str(root/(name+'_F1_normal.dump')))
  for label,d,delta in [('Apple',a,1),('FAAC',f,0)]:
   n=short=tns=0;maxs=[];bw=[];classes=collections.Counter();sf=collections.defaultdict(list);ms=nb=0
   for fr in f:

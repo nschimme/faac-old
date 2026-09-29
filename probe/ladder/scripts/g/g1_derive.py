@@ -1,5 +1,7 @@
+import os
+import sys
 import json,math,statistics,pathlib
-root=pathlib.Path('/tmp/ladder_g');scores=json.loads((root/'g1_scores.json').read_text());names=list(scores);decisions=('WIN','BW','CLS','SF','MS','TNS');arms=('F','rWIN','rBW','rCLS','rSF','rMS','rTNS','A');pairs=('rSF+rWIN','rSF+rBW','rSF+rCLS','rSF+rMS','rSF+rTNS','rWIN+rBW','rWIN+rCLS','rWIN+rMS','rWIN+rTNS','rMS+rCLS');records=[];inter=[]
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));scores=json.loads((root/'g1_scores.json').read_text());names=list(scores);decisions=('WIN','BW','CLS','SF','MS','TNS');arms=('F','rWIN','rBW','rCLS','rSF','rMS','rTNS','A');pairs=('rSF+rWIN','rSF+rBW','rSF+rCLS','rSF+rMS','rSF+rTNS','rWIN+rBW','rWIN+rCLS','rWIN+rMS','rWIN+rTNS','rMS+rCLS');records=[];inter=[]
 for name in names:
  d=scores[name];slope=(d['faac144']['mos']-d['faac112']['mos'])/math.log2(d['faac144']['bytes']/d['faac112']['bytes'])
  def delta(x,y):return (d[x]['mos']-d[y]['mos'])-slope*math.log2(d[x]['bytes']/d[y]['bytes'])

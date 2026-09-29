@@ -1,6 +1,7 @@
+import os
 import sys,collections,pathlib
 sys.path.insert(0,'probe/ladder');import parse_dump as pd,hybrid_merge as hm
-root=pathlib.Path('/tmp/ladder_f');names=['Severance','21classic','velvet','Greensleeves','German']
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));names=['Severance','21classic','velvet','Greensleeves','German']
 def pulse(path):
  d={}
  for line in open(path):

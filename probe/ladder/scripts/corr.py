@@ -5,7 +5,7 @@ def corr(a,b):
 for ref in ('apple','fdk'):
  r=m.ref_energy('probe/ladder/survey/'+ref+'/Severance__1.31-1.51_.16b48k.dump')
  for arm in ('unshifted','plus','minus') if ref=='apple' else ('unshifted',):
-  f=m.faac_energy('/tmp/ladder_e/Severance_'+arm+'.energy')
+  f=m.faac_energy(str(root/('Severance_'+arm+'.energy')))
   z=[]
   for off in range(-3,4):
    pairs=[(f[i],r[i+off]) for i in f if i+off in r and i>2]

@@ -1,6 +1,7 @@
+import os
 import sys,collections,pathlib
 sys.path.insert(0,'probe/ladder');import parse_dump as pd,hybrid_merge as hm
-root=pathlib.Path('/tmp/ladder_f')
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'))
 for name in ('Severance',):
  a=pd.parse(str(root/(name+'_KF_IS_BIAS.dump')));r=pd.parse(str(root/(name+'_F1_normal.dump')));c=collections.Counter();examples=[]
  for fr in r:

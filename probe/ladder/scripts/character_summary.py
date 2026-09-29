@@ -1,6 +1,6 @@
 import ast,re,collections
 rows=[]
-for line in open('/tmp/ladder_e/zs_character.log'):
+for line in open('zs_character.log'):
  m=re.match(r'^(\S+) (apple|fdk) (Z|S) lines (\d+) freq (\{.*?\}) peak_avg_med ([\d.]+|None) isolated% ([\d.]+) whole% ([\d.]+) near80% ([\d.]+) bands (\d+)',line)
  if m:rows.append((m[1],m[2],m[3],int(m[4]),ast.literal_eval(m[5]),float(m[6]),float(m[7]),float(m[8]),float(m[9]),int(m[10])))
 for ref in ('apple','fdk'):

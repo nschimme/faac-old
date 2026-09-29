@@ -1,5 +1,7 @@
+import os
+import sys
 import json,math,pathlib
-root=pathlib.Path('/tmp/ladder_f');s=json.loads((root/'f2_scores.json').read_text());u=json.loads((root/'f2_units.json').read_text());names=list(s);arms=('A','WIN','BW','CLS','SF','MS','TNS','ALLF');rows=[]
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));s=json.loads((root/'f2_scores.json').read_text());u=json.loads((root/'f2_units.json').read_text());names=list(s);arms=('A','WIN','BW','CLS','SF','MS','TNS','ALLF');rows=[]
 for name in names:
  d=s[name];slope=(d['faac144']['mos']-d['faac112']['mos'])/math.log2(d['faac144']['bytes']/d['faac112']['bytes'])
  def adj(arm):return (d[arm]['mos']-d['A']['mos'])-slope*math.log2(d[arm]['bytes']/d['A']['bytes'])

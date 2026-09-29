@@ -1,6 +1,7 @@
+import os
 import sys,json,pathlib,os,subprocess
-sys.path.insert(0,'/tmp/ladder_g');from g_make import make_one
-root=pathlib.Path('/tmp/ladder_g');repo=pathlib.Path.cwd();faac=str(repo/'build-ladder/frontend/faac');index=json.loads((root/'g2_index.json').read_text());status=json.loads((root/'g2_encode.json').read_text());prepared={}
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));repo=pathlib.Path(__file__).resolve().parents[4];faac=os.environ.get('FAAC_BIN', str(repo / 'build_ladder/frontend/faac'));index=json.loads((root/'g2_index.json').read_text());status=json.loads((root/'g2_encode.json').read_text());prepared={}
+sys.path.insert(0,str(root));from g_make import make_one
 for item in index:
  k=item['id']
  if not status[k].get('scorable',False):continue

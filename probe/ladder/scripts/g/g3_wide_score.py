@@ -1,5 +1,6 @@
+import sys
 import os,subprocess,pathlib,re,json,numpy as np,soundfile as sf
-root=pathlib.Path('/tmp/ladder_g');old=pathlib.Path('/tmp/ladder_f');sc='/Users/nschimme/gitprojects/faac-benchmark/scripts/score_clip.py';py='/Users/nschimme/gitprojects/faac-benchmark/.venv/bin/python';index=json.loads((root/'g2_index.json').read_text());prepared=json.loads((root/'g3_wide_prepare.json').read_text());scores={}
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));old=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));sc=os.environ.get('SCORE_CLIP', '/opt/faac-benchmark/scripts/score_clip.py');py=os.environ.get('PYTHON_BIN', sys.executable);index=json.loads((root/'g2_index.json').read_text());prepared=json.loads((root/'g3_wide_prepare.json').read_text());scores={}
 for item in index:
  k=item['id']
  if k not in prepared or not all(prepared[k][a] for a in ('SFt','SFs')):print(k,'SKIP',flush=True);continue

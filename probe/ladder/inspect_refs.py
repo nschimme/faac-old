@@ -3,8 +3,8 @@
 from pathlib import Path
 import os, subprocess, collections, json
 ROOT = Path(__file__).resolve().parent
-CORPUS = Path('/Users/nschimme/gitprojects/faac-benchmark/data/external/audio')
-FAAD = Path('/private/tmp/claude-501/faac-work/faad-dump/build-ladder/frontend/faad')
+CORPUS = Path(os.environ.get('FAAC_BENCHMARK_DATA', '/opt/faac-benchmark/data/external/audio'))
+FAAD = Path(os.environ.get('FAAD_BIN', '/tmp/faad-ladder-dump/build_faad/frontend/faad'))
 STEMS = ['Severance__1.31-1.51_.16b48k', '21-classic.441.16b48k',
          'velvet.16b48k', '24-Greensleeves-Korean-male-speech.441.16b48k',
          '12-German-male-speech.441.16b48k']

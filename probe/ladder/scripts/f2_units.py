@@ -1,13 +1,13 @@
 import sys,ast,json,collections
 sys.path.insert(0,'probe/ladder');from parse_dump import parse,ICS
-root='/tmp/ladder_f/'
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'))
 clips={'Severance':'Severance__1.31-1.51_.16b48k','21classic':'21-classic.441.16b48k','velvet':'velvet.16b48k','Greensleeves':'24-Greensleeves-Korean-male-speech.441.16b48k','German':'12-German-male-speech.441.16b48k'}
 out=collections.defaultdict(dict)
 for line in open(root+'f2_generate.log'):
  tok=line.strip().split(' ',2)
  if len(tok)==3 and tok[1] in ('A','ALLF','WIN','BW','CLS','SF','MS','TNS'):out[tok[0]][tok[1]]=ast.literal_eval(tok[2])
 for name,stem in clips.items():
- a=parse('probe/ladder/survey/apple/'+stem+'.dump');f=parse(root+name+'_F1_normal.dump');ic=ba=0
+ a=parse('probe/ladder/survey/apple/'+stem+'.dump');f=parse(str(root/(name+'_F1_normal.dump')));ic=ba=0
  for fr in f:
   for ch in (0,1):
    x=a.get(fr+1,{}).get(ch);y=f.get(fr,{}).get(ch)

@@ -1,5 +1,7 @@
+import os
+import sys
 import pathlib,re
-root=pathlib.Path('/tmp/ladder_e')
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'))
 for n in ('Severance','21classic','velvet','Greensleeves','German'):
  s=(root/(n+'_aligned.lines')).read_text().splitlines(); rows=[]
  for x in s:

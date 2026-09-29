@@ -1,5 +1,6 @@
+import sys
 import os,subprocess,pathlib,json
-root=pathlib.Path('/tmp/ladder_g');repo=pathlib.Path.cwd();faac=str(repo/'build-ladder/frontend/faac');index=json.loads((root/'g2_index.json').read_text());controls=json.loads((root/'g2_controls.json').read_text());status={}
+root=pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(os.environ.get('LADDER_WORK', './ladder_work'));repo=pathlib.Path(__file__).resolve().parents[4];faac=os.environ.get('FAAC_BIN', str(repo / 'build_ladder/frontend/faac'));index=json.loads((root/'g2_index.json').read_text());controls=json.loads((root/'g2_controls.json').read_text());status={}
 for item in index:
  k=item['id'];c=controls[k];status[k]={'stem':item['stem'],'arms':{},'reason':[]}
  if not all(c[z] for z in ('KA','KF','clean_A','clean_F')):status[k]['reason'].append('control failed');continue
