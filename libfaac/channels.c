@@ -205,9 +205,9 @@ int WriteElement(BitStream *bs, AACElement *elem, CoderInfo *coder)
                 /* The quantizer can revert M/S bands (e.g. to PNS) after the
                  * stereo decision, so signal the mask only if a band still uses it. */
                 int n = coder[elem->channels[0]].groups.n * coder[elem->channels[0]].sfbn;
-                int msPresent = 0;
-                for (int i = 0; i < n; i++) msPresent |= elem->msInfo.ms_used[i];
-                elem->msInfo.is_present = msPresent != 0;
+                int first = 0;
+                while (first < n && !elem->msInfo.ms_used[first]) first++;
+                bool msPresent = first < n;
                 PutBit(bs, msPresent, LEN_MASK_PRES);
                 bits += LEN_MASK_PRES;
                 if (msPresent) {
