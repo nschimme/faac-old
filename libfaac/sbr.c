@@ -35,43 +35,39 @@
  * rate here is the full output rate (= 2*core), which is what the decoder uses. */
 
 /* SBR start frequency (kx). Crossover alignment prevents aliasing/gaps. */
-static int compute_kx(int sampleRate, int bs_start_freq)
+static int compute_kx(int sampleRate)
 {
     int temp = (sampleRate < 32000) ? 3000 : (sampleRate < 64000) ? 4000 : 5000;
     int start_min = ((temp << 7) + (sampleRate >> 1)) / sampleRate;
     int row = (sampleRate <= 16000) ? 0 : (sampleRate <= 22050) ? 1 : (sampleRate <= 24000) ? 2 : (sampleRate <= 32000) ? 3 : (sampleRate <= 64000) ? 4 : 5;
-    return clamp_int(start_min + sbr_offset[row][bs_start_freq & 15], 1, 63);
+    return clamp_int(start_min + sbr_start_offset[row], 1, 63);
 }
 
 static int cmp_int16(const void *a, const void *b) { return (int)(*(const short *)a) - (int)(*(const short *)b); }
 static int cmp_int(const void *a, const void *b) { return *(const int *)a - *(const int *)b; }
 
 /* SBR stop frequency (k2), ISO 14496-3 §4.6.18.3.2.1. Decoders derive it
- * from bs_stop_freq alone, so it can't be adjusted here. */
+ * from bs_stop_freq alone, so it can't be adjusted here. Only the indices
+ * from SBR_STOP_FREQ_MIN to SBR_STOP_FREQ_MAX are ever asked for; 14 and 15
+ * (k2 = 64) are not. */
 static int compute_k2(int sampleRate, int bs_stop_freq)
 {
-    if (bs_stop_freq == 14 || bs_stop_freq == 15) return 64;
     int temp = (sampleRate < 32000) ? 3000 : (sampleRate < 64000) ? 4000 : 5000;
     int stop_min = ((temp << 8) + (sampleRate >> 1)) / sampleRate;
-    int k2;
-    if (bs_stop_freq < 14) {
-        short stop_dk[13];
-        float prod = (float)stop_min;
-        int prev = stop_min;
-        float base = powf(64.0f / (float)stop_min, (float)(1.0f / 13.0f));
-        for (int i = 0; i < 12; i++) {
-            prod *= base;
-            int present = (int)lrintf(prod);
-            stop_dk[i] = (short)(present - prev);
-            prev = present;
-        }
-        stop_dk[12] = (short)(64 - prev);
-        qsort(stop_dk, 13, sizeof(short), cmp_int16);
-        k2 = stop_min;
-        for (int i = 0; i < bs_stop_freq; i++) k2 += stop_dk[i];
-    } else {
-        k2 = 64;
+    short stop_dk[13];
+    float prod = (float)stop_min;
+    int prev = stop_min;
+    float base = powf(64.0f / (float)stop_min, (float)(1.0f / 13.0f));
+    for (int i = 0; i < 12; i++) {
+        prod *= base;
+        int present = (int)lrintf(prod);
+        stop_dk[i] = (short)(present - prev);
+        prev = present;
     }
+    stop_dk[12] = (short)(64 - prev);
+    qsort(stop_dk, 13, sizeof(short), cmp_int16);
+    int k2 = stop_min;
+    for (int i = 0; i < bs_stop_freq; i++) k2 += stop_dk[i];
 
     return k2;
 }
@@ -176,7 +172,7 @@ void SbrUpdate(SBRInfo *sbr, unsigned long bitRate)
     sbr->bs_alter_scale = 0; /* only warps a two-region table; see build_freq_table */
     sbr->bs_freq_res = 1; /* HIGH resolution */
     sbr->bs_xover_band = 0; /* every master band is an SBR band; no low-res split */
-    sbr->kx = compute_kx(sampleRate, sbr->bs_start_freq);
+    sbr->kx = compute_kx(sampleRate);
 
     /* Where the reconstruction stops. Aim at hearing rather than k2's ceiling:
      * bands above the target cost the same envelope bits as the ones below, so
