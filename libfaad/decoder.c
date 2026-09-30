@@ -408,7 +408,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
             while (skip + 1 < in_bytes && !(in_buf[skip] == 0xFF && (in_buf[skip + 1] & 0xF6) == 0xF0)) skip++;
             *bytes_consumed = (skip + 1 < in_bytes) ? skip : in_bytes;
             *bytes_written = 0;
-            return FAAD_ERR_SYNC_LOST;
+            return (st != FAAD_OK) ? st : FAAD_ERR_SYNC_LOST;
         } else if (adts_frame_len > in_bytes) {
             return FAAD_ERR_NEED_MORE_DATA;
         } else {
