@@ -93,7 +93,8 @@ void init_qmf_twiddles(void)
 static void qmf_analysis_window(SBRChannel *ch, const float *in, float u[64])
 {
     int pos = ch->qmf_x_pos - 32;
-    ch->qmf_x_pos = pos + ((pos >> 31) & 320);
+    if (pos < 0) pos += 320;
+    ch->qmf_x_pos = pos;
     float *x = ch->qmf_x + ch->qmf_x_pos;
     for (int n = 0; n < 32; n++) x[n] = x[320 + n] = in[31 - n];
     for (int n = 0; n < 64; n++) {
@@ -165,7 +166,8 @@ static void qmf_synthesis_slot(SBRChannel *ch, float X[64][2], float *out)
     fft(z, w, 6);
 
     int vpos = ch->qmf_v_pos - 128;
-    ch->qmf_v_pos = vpos + ((vpos >> 31) & 1280);
+    if (vpos < 0) vpos += 1280;
+    ch->qmf_v_pos = vpos;
     float *v = ch->qmf_v + ch->qmf_v_pos;
     const float *wr = w, *wi = w + 64;
     for (int k = 0; k < 32; k++) {
