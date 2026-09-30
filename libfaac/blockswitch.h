@@ -37,6 +37,7 @@ typedef struct {
 	float sampleRate;
 	/* Transient rule: see PSY_LEVEL_RATIO_LC in blockswitch.c. */
 	float levelRatio;
+	float dropRatio;
 	float levelSmooth;
 
 	/* shared work buffers */
