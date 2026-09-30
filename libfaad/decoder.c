@@ -24,7 +24,8 @@ static const uint8_t *output_channel_map(uint32_t channel_config, uint32_t num_c
     static const uint8_t map5[] = { 1, 2, 0, 3, 4 };             /* C L R Ls Rs -> L R C Ls Rs */
     static const uint8_t map6[] = { 1, 2, 0, 5, 3, 4 };          /* C L R Ls Rs LFE -> L R C LFE Ls Rs */
     static const uint8_t map8[] = { 1, 2, 0, 7, 5, 6, 3, 4 };    /* C L R Ls Rs Lb Rb LFE -> L R C LFE Lb Rb Ls Rs */
-    switch (channel_config) {
+    uint32_t cfg = channel_config ? channel_config : (num_chs == 8 ? 7 : num_chs);
+    switch (cfg) {
     case 3: return num_chs == 3 ? map3 : NULL;
     case 4: return num_chs == 4 ? map4 : NULL;
     case 5: return num_chs == 5 ? map5 : NULL;
