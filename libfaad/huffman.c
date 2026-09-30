@@ -9,20 +9,14 @@
 static float pow_4_3_lut[128];
 static float sf_scale_lut[256];
 
-static bool dequant_tables_init = false;
-
 void init_dequant_tables(void)
 {
-    if (dequant_tables_init) return;
-
     for (int i = 0; i < 128; i++) {
         pow_4_3_lut[i] = powf((float)i, 4.0f / 3.0f);
     }
     for (int i = 0; i < 256; i++) {
         sf_scale_lut[i] = powf(2.0f, 0.25f * (i - 100));
     }
-
-    dequant_tables_init = true;
 }
 
 void setup_sfb_offsets(ICSInfo *ics, uint32_t sample_rate)
@@ -70,7 +64,6 @@ typedef uint16_t HuffEntry; /* len (bits beyond the prefix at level two) | tuple
 static HuffEntry huff_lut[12][1 << HUFF_LUT_BITS];
 static HuffEntry huff_sub[HUFF_SUB_ENTRIES];
 static struct { uint16_t start; uint8_t depth; } huff_subtree[HUFF_SUBTREES];
-static bool huff_luts_initialized = false;
 
 static uint32_t huff_tuple(int book, int sym)
 {
@@ -84,7 +77,6 @@ static uint32_t huff_tuple(int book, int sym)
 
 void init_huffman_luts(void)
 {
-    if (huff_luts_initialized) return;
     int n_sub = 0, n_entries = 0;
     for (int book = 1; book <= 12; book++) {
         /* the scalefactor book's codes exceed 16 bits and sit in a wider entry */
@@ -138,7 +130,6 @@ void init_huffman_luts(void)
 #undef HUFF_CODE
     }
     for (int t = 0; t < n_sub; t++) huff_subtree[t].depth &= 0x7F;
-    huff_luts_initialized = true;
 }
 
 /* One codeword of book (1..12): the decoded tuple. */

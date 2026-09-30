@@ -22,7 +22,6 @@ static float dct4_sin_1024[512];
 static float dct4_cos_128[64];
 static float dct4_sin_128[64];
 
-static bool tables_init = false;
 
 /* Zeroth-order modified Bessel function, power series. */
 static double bessel_i0(double x)
@@ -54,8 +53,6 @@ static void kbd_window(float *w, int n, double alpha)
 
 void init_windows(void)
 {
-    if (tables_init) return;
-
     fft_init();
 
     for (int i = 0; i < 1024; i++) {
@@ -78,7 +75,6 @@ void init_windows(void)
         dct4_sin_128[k] = (float)sin(ang);
     }
 
-    tables_init = true;
 }
 
 /* DCT-IV of length M through an M/2-point complex FFT: pack even-index

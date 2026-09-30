@@ -44,11 +44,8 @@ static float syn_b_c[32], syn_b_s[32];       /* the same times exp(+j*2*pi*k/64)
 static float ds_pre_c[32], ds_pre_s[32];     /* exp(-j*127.5*pi*k/64) */
 static float ds_post_c[64], ds_post_s[64];   /* exp(+j*pi*(2n-127.5)/128) */
 #endif
-static bool qmf_twiddles_init = false;
-
 void init_qmf_twiddles(void)
 {
-    if (qmf_twiddles_init) return;
     fft_init();
     for (int n = 0; n < 64; n++) {
         ana_pre_c[n] = (float)cos(M_PI * n / 64.0);
@@ -79,7 +76,6 @@ void init_qmf_twiddles(void)
         ds_post_s[n] = (float)sin(M_PI * (2 * n - 127.5) / 128.0);
     }
 #endif
-    qmf_twiddles_init = true;
 }
 
 /* ------------------------------------------------------------------------ */
