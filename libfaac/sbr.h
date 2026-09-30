@@ -90,9 +90,8 @@ struct BitStream;
  * core. */
 #define SBR_TWO_ENV_BITRATE_BPS         17000u
 /* Master table density, bands per octave 12/10/8 for bs_freq_scale 1/2/3:
- * the coarsest table wins from 12 kbps/ch up to the fine table's rate, but
- * below that it costs speech-like clips more than it saves. */
-#define SBR_FREQ_SCALE_FINE_BPS         24000u
+ * the coarsest table wins from 12 kbps/ch up, but below that it costs
+ * speech-like clips more than it saves. */
 #define SBR_FREQ_SCALE_COARSE_BPS       12000u
 /* Stop-frequency search bounds (bs_stop_freq). The search starts at 0 so a
  * low crossover still finds a stop within the span decoders accept. 13 is
