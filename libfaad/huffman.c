@@ -288,11 +288,9 @@ static inline float pow_4_3_fast(int x)
 {
     int abs_x = abs(x);
     if (abs_x < 128) {
-        float val = pow_4_3_lut[abs_x];
-        return (x < 0) ? -val : val;
+        return copysignf(pow_4_3_lut[abs_x], (float)x);
     }
-    float val = powf((float)abs_x, 4.0f / 3.0f);
-    return (x < 0) ? -val : val;
+    return copysignf(powf((float)abs_x, 4.0f / 3.0f), (float)x);
 }
 
 /* §4.6.4.3: a pulse adds to the quantised value, away from zero, before
@@ -344,21 +342,13 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
                     float * restrict ptr = spec + (window_offset + w) * 128 + start_k;
                     int k = start_k;
                     if (cb <= 4) {
-                        bool is_cb12 = (cb <= 2);
                         while (k < end_k) {
                             int v, w_val, x, y;
                             decode_quad(bs, cb, &v, &w_val, &x, &y);
-                            if (is_cb12) {
-                                ptr[0] = (float)v * scale;
-                                ptr[1] = (float)w_val * scale;
-                                ptr[2] = (float)x * scale;
-                                ptr[3] = (float)y * scale;
-                            } else {
-                                ptr[0] = pow_4_3_fast(v) * scale;
-                                ptr[1] = pow_4_3_fast(w_val) * scale;
-                                ptr[2] = pow_4_3_fast(x) * scale;
-                                ptr[3] = pow_4_3_fast(y) * scale;
-                            }
+                            ptr[0] = pow_4_3_fast(v) * scale;
+                            ptr[1] = pow_4_3_fast(w_val) * scale;
+                            ptr[2] = pow_4_3_fast(x) * scale;
+                            ptr[3] = pow_4_3_fast(y) * scale;
                             ptr += 4;
                             k += 4;
                         }
