@@ -94,10 +94,12 @@ struct BitStream;
  * below that it costs speech-like clips more than it saves. */
 #define SBR_FREQ_SCALE_FINE_BPS         24000u
 #define SBR_FREQ_SCALE_COARSE_BPS       12000u
-/* Stop-frequency search bounds (bs_stop_freq). 13 is the largest worth
- * searching: it already pins k2 to its 64-band ceiling at every supported
- * rate, so higher indices would just signal more range for the same band. */
-#define SBR_STOP_FREQ_MIN               10
+/* Stop-frequency search bounds (bs_stop_freq). The search starts at 0 so a
+ * low crossover still finds a stop within the span decoders accept. 13 is
+ * the largest worth searching: it already pins k2 to its 64-band ceiling at
+ * every supported rate, so higher indices would just signal more range for
+ * the same band. */
+#define SBR_STOP_FREQ_MIN               0
 #define SBR_STOP_FREQ_MAX               13
 /* Where widening aims. Past this the bands are inaudible to essentially every
  * listener while costing exactly as much as the ones below. */
