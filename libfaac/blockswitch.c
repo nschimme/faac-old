@@ -62,6 +62,9 @@ psydata_t;
  * tighter band either way. */
 #define PSY_LEVEL_RATIO_LC  (2.5f)
 #define PSY_DROP_RATIO_LC   (12.0f)
+/* Below full band a long block spans more time, so a decay it hides smears
+ * further; there every drop-out stays a transient. */
+#define PSY_DROP_MIN_RATE   (44100)
 #define PSY_LEVEL_SMOOTH_LC (0.3f)
 #define PSY_LEVEL_RATIO_HE  (1.5f)
 
@@ -85,7 +88,9 @@ void PsyInit(GlobalPsyInfo * gpsyInfo, PsyInfo * psyInfo, unsigned int numChanne
 
   gpsyInfo->sampleRate = (float) sampleRate;
   gpsyInfo->levelRatio = heCore ? PSY_LEVEL_RATIO_HE : PSY_LEVEL_RATIO_LC;
-  gpsyInfo->dropRatio = heCore ? PSY_LEVEL_RATIO_HE : PSY_DROP_RATIO_LC;
+  gpsyInfo->dropRatio = heCore ? PSY_LEVEL_RATIO_HE
+                      : sampleRate >= PSY_DROP_MIN_RATE ? PSY_DROP_RATIO_LC
+                      : PSY_LEVEL_RATIO_LC;
   gpsyInfo->levelSmooth = heCore ? 1.0f : PSY_LEVEL_SMOOTH_LC;
 
   for (channel = 0; channel < numChannels; channel++)
