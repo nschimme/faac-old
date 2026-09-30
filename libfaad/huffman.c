@@ -347,10 +347,11 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
                         while (k < end_k) {
                             int v, w_val, x, y;
                             decode_quad(bs, cb, &v, &w_val, &x, &y);
-                            ptr[0] = pow_4_3_fast(v) * scale;
-                            ptr[1] = pow_4_3_fast(w_val) * scale;
-                            ptr[2] = pow_4_3_fast(x) * scale;
-                            ptr[3] = pow_4_3_fast(y) * scale;
+                            /* Quad books 1..4 hold values in {-1, 0, 1}, where x^(4/3) == x. */
+                            ptr[0] = (float)v * scale;
+                            ptr[1] = (float)w_val * scale;
+                            ptr[2] = (float)x * scale;
+                            ptr[3] = (float)y * scale;
                             ptr += 4;
                             k += 4;
                         }
