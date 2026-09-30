@@ -9,6 +9,13 @@
 static float pow_4_3_lut[128];
 static float sf_scale_lut[256];
 
+float get_sf_scale(int sf)
+{
+    if (sf < 0) sf = 0;
+    if (sf > 255) sf = 255;
+    return sf_scale_lut[sf];
+}
+
 static bool dequant_tables_init = false;
 
 void init_dequant_tables(void)

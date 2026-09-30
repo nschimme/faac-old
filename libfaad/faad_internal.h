@@ -426,6 +426,7 @@ struct faad_decoder {
 };
 
 void setup_sfb_offsets(ICSInfo *ics, uint32_t sample_rate);
+float get_sf_scale(int sf);
 faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sample_rate
 #ifdef FAAD_STATS
     , FaadDecStats *stats
