@@ -56,6 +56,9 @@
 /* The same gate for -q, which has no bitrate: long windows lose at -q 30
  * (the 24 kbps stereo rung) and win at -q 50 (32 kbps); this is the midpoint. */
 #define HE_SHORT_ONLY_QUANTQUAL 40
+/* bps per channel; at or above it a richer HE core codes low/mid tonal bands
+ * outright better than substituting noise, while a starved core needs PNS bits. */
+#define HE_PNS_RICH_BITRATE     24000
 
 /* Top of the bandwidth curve: widening past it loses at every reachable rate,
  * the band above holds ~0.006% of programme energy and sits at the edge of
@@ -334,13 +337,20 @@ int faacEncApplyConfig(faacEncStruct* hEncoder,
     {
         /* sampleRate is the core rate, halved above for HE-AAC. Narrowband mono
          * has few bands above the substitution threshold, and coding them
-         * outright beats the noise the default level puts there. */
+         * outright beats the noise the default level puts there. A richer HE
+         * core codes low/mid tonal bands outright better than substituting
+         * noise; a starved core needs the bits PNS saves. */
         unsigned long outputRate = hEncoder->sampleRate;
         if (hEncoder->config.aacObjectType == HE_V1)
             outputRate *= 2;
+        unsigned long ratePerCh = hEncoder->config.bitRate
+            ? hEncoder->config.bitRate
+            : ((unsigned long)hEncoder->config.quantqual * 1280 / hEncoder->numChannels);
         hEncoder->aacquantCfg.pnslevel = !config->usePns ? 0 :
             (outputRate <= 16000 && hEncoder->numChannels == 1)
-                ? PNSLEVEL_NARROWBAND_MONO : PNSLEVEL_DEFAULT;
+                ? PNSLEVEL_NARROWBAND_MONO :
+            (hEncoder->config.aacObjectType == HE_V1 && ratePerCh >= HE_PNS_RICH_BITRATE)
+                ? PNSLEVEL_HE_RICH : PNSLEVEL_DEFAULT;
     }
     /* set quantization quality */
     hEncoder->aacquantCfg.quality = config->quantqual;

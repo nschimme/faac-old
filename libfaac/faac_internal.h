@@ -36,7 +36,7 @@ enum { MPEG4 = 0, MPEG2 = 1 };
 enum { AUTO = 0, LOW = 2, HE_V1 = 5 };
 
 /* Perceptual noise substitution aggressiveness (see assign_band_codebooks). */
-enum { PNSLEVEL_NARROWBAND_MONO = 2, PNSLEVEL_DEFAULT = 4 };
+enum { PNSLEVEL_NARROWBAND_MONO = 2, PNSLEVEL_HE_RICH = 3, PNSLEVEL_DEFAULT = 4 };
 
 /* PCM input sample format. Named distinctly from the public faac_input_format
  * enumerators (<faac.h>) so the facade can include both headers; faac.c
