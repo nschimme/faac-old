@@ -7,15 +7,12 @@
 /* 0.5^(is_position/4) for is_position in [-IS_POS_RANGE, IS_POS_RANGE]. */
 #define IS_POS_RANGE 128
 static float is_scale_lut[2 * IS_POS_RANGE + 1];
-static bool is_tables_init = false;
 
-static void init_is_tables(void)
+void init_is_tables(void)
 {
-    if (is_tables_init) return;
     for (int p = -IS_POS_RANGE; p <= IS_POS_RANGE; p++) {
         is_scale_lut[p + IS_POS_RANGE] = powf(0.5f, 0.25f * (float)p);
     }
-    is_tables_init = true;
 }
 
 void apply_ms_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spec_r
@@ -79,7 +76,6 @@ void apply_ms_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spe
 
 void apply_is_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spec_r)
 {
-    init_is_tables();
     ICSInfo *ics_r = &cpe->ics[1];
 
     int window_offset = 0;

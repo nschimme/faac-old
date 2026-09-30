@@ -44,11 +44,8 @@ static float syn_b_c[32], syn_b_s[32];       /* the same times exp(+j*2*pi*k/64)
 static float ds_pre_c[32], ds_pre_s[32];     /* exp(-j*127.5*pi*k/64) */
 static float ds_post_c[64], ds_post_s[64];   /* exp(+j*pi*(2n-127.5)/128) */
 #endif
-static bool qmf_twiddles_init = false;
-
 void init_qmf_twiddles(void)
 {
-    if (qmf_twiddles_init) return;
     fft_init();
     for (int n = 0; n < 64; n++) {
         ana_pre_c[n] = (float)cos(M_PI * n / 64.0);
@@ -79,7 +76,6 @@ void init_qmf_twiddles(void)
         ds_post_s[n] = (float)sin(M_PI * (2 * n - 127.5) / 128.0);
     }
 #endif
-    qmf_twiddles_init = true;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -92,7 +88,9 @@ void init_qmf_twiddles(void)
  * runs never wrap. */
 static void qmf_analysis_window(SBRChannel *ch, const float *in, float u[64])
 {
-    ch->qmf_x_pos = (ch->qmf_x_pos + 320 - 32) % 320;
+    int pos = ch->qmf_x_pos - 32;
+    if (pos < 0) pos += 320;
+    ch->qmf_x_pos = pos;
     float *x = ch->qmf_x + ch->qmf_x_pos;
     for (int n = 0; n < 32; n++) x[n] = x[320 + n] = in[31 - n];
     for (int n = 0; n < 64; n++) {
@@ -163,7 +161,9 @@ static void qmf_synthesis_slot(SBRChannel *ch, float X[64][2], float *out)
     }
     fft(z, w, 6);
 
-    ch->qmf_v_pos = (ch->qmf_v_pos + 1280 - 128) % 1280;
+    int vpos = ch->qmf_v_pos - 128;
+    if (vpos < 0) vpos += 1280;
+    ch->qmf_v_pos = vpos;
     float *v = ch->qmf_v + ch->qmf_v_pos;
     const float *wr = w, *wi = w + 64;
     for (int k = 0; k < 32; k++) {
@@ -180,8 +180,12 @@ static void qmf_synthesis_slot(SBRChannel *ch, float X[64][2], float *out)
     /* Ten 64-tap runs, each inside one 128-sample block, so no run wraps. */
     const float *run[10];
     for (int i = 0; i < 5; i++) {
-        run[2 * i]     = ch->qmf_v + ((ch->qmf_v_pos + 256 * i) % 1280);
-        run[2 * i + 1] = ch->qmf_v + ((ch->qmf_v_pos + 256 * i + 192) % 1280);
+        int pos0 = ch->qmf_v_pos + 256 * i;
+        pos0 -= (pos0 >= 1280) ? 1280 : 0;
+        int pos1 = pos0 + 192;
+        pos1 -= (pos1 >= 1280) ? 1280 : 0;
+        run[2 * i]     = ch->qmf_v + pos0;
+        run[2 * i + 1] = ch->qmf_v + pos1;
     }
     for (int n = 0; n < 64; n++) out[n] = run[0][n] * qmf_c[n];
     for (int i = 1; i < 10; i++) mac64(out, run[i], qmf_c + 64 * i);
