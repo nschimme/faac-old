@@ -52,7 +52,8 @@ if default_lib == 'shared' or default_lib == 'both'
         'faad',
         faad_src,
         kwargs : common_args + {
-          'version' : project_ver,
+          'version' : '3.0.0',
+          'soversion' : '3',
         },
     )
 endif
@@ -68,7 +69,7 @@ pkgconfig.generate(
     libfaad,
     name: 'FAAD',
     description: 'Freeware Advanced Audio Decoder',
-    version: project_ver,
+    version: '3.0.0',
     filebase: 'faad'
 )
 

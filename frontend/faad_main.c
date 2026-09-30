@@ -227,7 +227,7 @@ static void print_usage(const char *prog)
     printf("Processing Options:\n");
     printf("  -d, --downmix [mode]   Downmix audio (mono/1 or stereo/2, default: mono)\n");
     printf("  -j, --jump <seconds>   Start decoding from specified timestamp\n");
-    printf("      --no-gapless       Disable automatic gapless trim/padding handling\n\n");
+    printf("  -g, --no-gapless       Disable automatic gapless trim/padding handling\n\n");
     printf("Information & General:\n");
     printf("  -i, --info             Display bitstream & container metadata, then exit\n");
     printf("      --json             Output bitstream info in JSON format\n");
@@ -288,7 +288,7 @@ int main(int argc, char **argv)
         {"adts", required_argument, 0, 'a'},
         {"downmix", optional_argument, 0, 'd'},
         {"jump", required_argument, 0, 'j'},
-        {"no-gapless", no_argument, 0, OPT_NO_GAPLESS},
+        {"no-gapless", no_argument, 0, 'g'},
         {"info", no_argument, 0, 'i'},
         {"json", no_argument, 0, OPT_JSON},
         {"quiet", no_argument, 0, 'q'},
@@ -299,14 +299,15 @@ int main(int argc, char **argv)
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "o:wf:b:a:d::j:iqh", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "o:wf:b:a:d::j:giqh", long_options, &option_index)) != -1) {
         switch (opt) {
         case 'o': outfile = optarg; break;
         case 'w': write_stdout = true; break;
         case 'f': if (strcmp(optarg, "raw") == 0) raw_format = true; break;
         case 'b':
-            if (strcmp(optarg, "24") == 0) bit_depth = 24;
-            else if (strcmp(optarg, "32f") == 0 || strcmp(optarg, "32") == 0) { bit_depth = 32; is_float = true; }
+            if (strcmp(optarg, "1") == 0 || strcmp(optarg, "16") == 0) { bit_depth = 16; is_float = false; }
+            else if (strcmp(optarg, "2") == 0 || strcmp(optarg, "24") == 0) { bit_depth = 24; is_float = false; }
+            else if (strcmp(optarg, "3") == 0 || strcmp(optarg, "4") == 0 || strcmp(optarg, "32f") == 0 || strcmp(optarg, "32") == 0) { bit_depth = 32; is_float = true; }
             else bit_depth = 16;
             break;
         case 'a': adts_outfile = optarg; break;
@@ -322,6 +323,7 @@ int main(int argc, char **argv)
             break;
         }
         case 'j': jump_seconds = atof(optarg); break;
+        case 'g': gapless = false; break;
         case OPT_NO_GAPLESS: gapless = false; break;
         case 'i': info_only = true; break;
         case OPT_JSON: json_info = true; info_only = true; break;
@@ -341,29 +343,56 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    FILE *fin = cli_fopen(infile, "rb");
-    if (!fin) {
-        fprintf(stderr, "Error opening input file %s\n", infile);
-        return 1;
-    }
+    FILE *fin = NULL;
+    uint8_t *inbuf = NULL;
+    long file_len = 0;
 
-    fseek(fin, 0, SEEK_END);
-    long file_len = ftell(fin);
-    fseek(fin, 0, SEEK_SET);
+    if (strcmp(infile, "-") == 0) {
+        fin = stdin;
+        if (!outfile && !write_stdout && !info_only && !adts_outfile) {
+            write_stdout = true;
+        }
+        size_t cap = 65536;
+        size_t len = 0;
+        inbuf = (uint8_t *)malloc(cap);
+        if (!inbuf) return 1;
+        while (!feof(fin)) {
+            if (len + 16384 > cap) {
+                cap *= 2;
+                uint8_t *new_buf = (uint8_t *)realloc(inbuf, cap);
+                if (!new_buf) { free(inbuf); return 1; }
+                inbuf = new_buf;
+            }
+            size_t n = fread(inbuf + len, 1, 16384, fin);
+            if (n == 0) break;
+            len += n;
+        }
+        file_len = (long)len;
+    } else {
+        fin = cli_fopen(infile, "rb");
+        if (!fin) {
+            fprintf(stderr, "Error opening input file %s\n", infile);
+            return 1;
+        }
 
-    uint8_t *inbuf = (uint8_t *)malloc(file_len > 0 ? file_len : 1);
-    if (!inbuf) {
+        fseek(fin, 0, SEEK_END);
+        file_len = ftell(fin);
+        fseek(fin, 0, SEEK_SET);
+
+        inbuf = (uint8_t *)malloc(file_len > 0 ? file_len : 1);
+        if (!inbuf) {
+            fclose(fin);
+            return 1;
+        }
+
+        if (fread(inbuf, 1, file_len, fin) != (size_t)file_len) {
+            fprintf(stderr, "Error reading input file\n");
+            free(inbuf);
+            fclose(fin);
+            return 1;
+        }
         fclose(fin);
-        return 1;
     }
-
-    if (fread(inbuf, 1, file_len, fin) != (size_t)file_len) {
-        fprintf(stderr, "Error reading input file\n");
-        free(inbuf);
-        fclose(fin);
-        return 1;
-    }
-    fclose(fin);
 
     MP4Track track;
     memset(&track, 0, sizeof(track));
