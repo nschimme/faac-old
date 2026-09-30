@@ -82,13 +82,15 @@ void apply_tns(ICSInfo *ics, float *spec)
             float lpc_tmp[32];
             /* §4.6.9.3: the quantiser is asymmetric, one more step on the
              * negative side: iqfac = (2^(bits-1) -/+ 0.5) / (pi/2). */
-            float half = (ics->tns_coef_res[w] == 1) ? 8.0f : 4.0f;
-            float iqfac   = (half - 0.5f) / (float)(M_PI / 2.0);
-            float iqfac_m = (half + 0.5f) / (float)(M_PI / 2.0);
+            static const float tns_rc_lut[2][16] = {
+                { -0.342020143f, -0.642787610f, -0.866025404f, -0.984807753f, -0.984807753f, -0.866025404f, -0.642787610f, -0.342020143f, 0.000000000f, 0.433883739f, 0.781831482f, 0.974927912f, 0.974927912f, 0.781831482f, 0.433883739f, 0.000000000f },
+                { -0.995734176f, -0.961825643f, -0.895163291f, -0.798017227f, -0.673695644f, -0.526432163f, -0.361241666f, -0.183749518f, 0.000000000f, 0.207911691f, 0.406736643f, 0.587785252f, 0.743144825f, 0.866025404f, 0.951056516f, 0.994521895f },
+            };
 
+            int res_idx = ics->tns_coef_res[w] ? 1 : 0;
             for (int i = 0; i < order; i++) {
                 int8_t val = ics->tns_coef[w][f][i];
-                rc[i] = sinf((float)val / (val >= 0 ? iqfac : iqfac_m));
+                rc[i] = tns_rc_lut[res_idx][(val >= -8 && val <= 7) ? (val + 8) : 8];
             }
 
             for (int m = 0; m < order; m++) {
