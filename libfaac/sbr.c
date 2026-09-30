@@ -251,21 +251,18 @@ int SbrContextGetASC(SBRContext *sbrCtx, int coreSRIdx, int channels, unsigned c
     BitStream bs;
     InitBitStream(&bs, buf, (uint32_t)size); /* zeroes the buffer, so the trailing pad bits need no write */
 
-    BitAccumulator a;
-    AccumBegin(&a, &bs);
-    AccumPutBits(&a, LOW,       5); /* core object type */
-    AccumPutBits(&a, coreSRIdx, 4); /* core rate (Fs/2, dual-rate) */
-    AccumPutBits(&a, GetChannelConfig(channels), 4);
-    AccumPutBits(&a, 0,         3); /* frameLengthFlag, dependsOnCoreCoder, extensionFlag */
-    AccumPutBits(&a, 0x2b7,    11); /* syncExtensionType */
-    AccumPutBits(&a, HE_V1,     5); /* extObjectType = SBR */
-    AccumPutBits(&a, 1,         1); /* sbrPresentFlag */
-    AccumPutBits(&a, sbrCtx->fullSampleRateIdx, 4); /* SBR output rate (2*core) */
+    PutBit(&bs, LOW,       5); /* core object type */
+    PutBit(&bs, coreSRIdx, 4); /* core rate (Fs/2, dual-rate) */
+    PutBit(&bs, GetChannelConfig(channels), 4);
+    PutBit(&bs, 0,         3); /* frameLengthFlag, dependsOnCoreCoder, extensionFlag */
+    PutBit(&bs, 0x2b7,    11); /* syncExtensionType */
+    PutBit(&bs, HE_V1,     5); /* extObjectType = SBR */
+    PutBit(&bs, 1,         1); /* sbrPresentFlag */
+    PutBit(&bs, sbrCtx->fullSampleRateIdx, 4); /* SBR output rate (2*core) */
     if (signalPS) {
-        AccumPutBits(&a, 0x548, 11); /* syncExtensionType = PS */
-        AccumPutBits(&a, 0,      1); /* psPresentFlag */
+        PutBit(&bs, 0x548, 11); /* syncExtensionType = PS */
+        PutBit(&bs, 0,      1); /* psPresentFlag */
     }
-    AccumEnd(&a);
 
     *ppBuffer = buf;
     *pSize = size;
