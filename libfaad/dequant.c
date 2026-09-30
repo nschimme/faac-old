@@ -17,7 +17,9 @@ void apply_pns(ICSInfo *ics, float *spec, uint32_t *pns_seed)
                 /* §4.6.13.3: the band's summed energy is 2^(noise_nrg/2), with
                  * no SF_OFFSET -- noise_nrg is not a scalefactor. */
                 int nrg = ics->scalefactors[g][sfb];
-                float scale = get_sf_scale(nrg + 100);
+                if (nrg < -120) nrg = -120;
+                if (nrg > 120) nrg = 120;
+                float scale = powf(2.0f, 0.25f * (float)nrg);
 
                 int start_k = ics->sfb_offsets[sfb];
                 int end_k = ics->sfb_offsets[sfb + 1];
