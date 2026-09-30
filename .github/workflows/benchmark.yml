@@ -132,22 +132,9 @@ jobs:
           faac-bin: ./baseline/build_base/frontend/faac
           libfaac-so: ./baseline/build_base/libfaac/libfaac.so
           rate-control: ${{ matrix.rate_control }}
-          run-name: ${{ matrix.arch }}_${{ matrix.rate_control }}_base
-          output-json: ./results/${{ matrix.arch }}_${{ matrix.rate_control }}_base.json
+          run-name: faac_${{ matrix.rate_control }}_base
+          output-json: ./results/faac_${{ matrix.rate_control }}_base.json
           build-dir: ./baseline/build_base
-          sha: ${{ steps.baseline-sha.outputs.sha }}
-
-      - name: Refresh Baseline Throughput
-        if: steps.cache-baseline.outputs.cache-hit == 'true' && steps.baseline-ok.outputs.usable == 'true'
-        uses: nschimme/faac-benchmark@master
-        with:
-          faac-bin: ./baseline/build_base/frontend/faac
-          libfaac-so: ./baseline/build_base/libfaac/libfaac.so
-          rate-control: ${{ matrix.rate_control }}
-          run-name: ${{ matrix.arch }}_${{ matrix.rate_control }}_base
-          output-json: ./results/${{ matrix.arch }}_${{ matrix.rate_control }}_base.json
-          build-dir: ./baseline/build_base
-          throughput-only: 'true'
           sha: ${{ steps.baseline-sha.outputs.sha }}
 
       - name: Save Baseline Results
@@ -165,8 +152,8 @@ jobs:
           faac-bin: ./candidate/build_cand/frontend/faac
           libfaac-so: ./candidate/build_cand/libfaac/libfaac.so
           rate-control: ${{ matrix.rate_control }}
-          run-name: ${{ matrix.arch }}_${{ matrix.rate_control }}_cand
-          output-json: ./results/${{ matrix.arch }}_${{ matrix.rate_control }}_cand.json
+          run-name: faac_${{ matrix.rate_control }}_cand
+          output-json: ./results/faac_${{ matrix.rate_control }}_cand.json
           build-dir: ./candidate/build_cand
           sha: ${{ github.event.pull_request.head.sha }}
 
