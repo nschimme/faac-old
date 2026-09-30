@@ -25,12 +25,14 @@ faad_status asc_decode(BitReader *bs, AudioSpecificConfig *asc)
     asc->sbr_sample_rate = info.sbr_sample_rate;
     asc->is_ps = info.ps_present;
 
-    /* Set default if AOT == LC */
-    if (asc->object_type == FAAD_OBJ_LC || asc->object_type == FAAD_OBJ_HE_AAC_V1 || asc->object_type == FAAD_OBJ_NULL) {
+    /* Validate supported Audio Object Types: LC (2), HE-AAC v1 (5), HE-AAC v2 (29), or NULL (0) */
+    if (asc->object_type == FAAD_OBJ_LC || asc->object_type == FAAD_OBJ_HE_AAC_V1 ||
+        asc->object_type == FAAD_OBJ_HE_AAC_V2 || asc->object_type == FAAD_OBJ_NULL) {
         asc->object_type = FAAD_OBJ_LC;
+        return FAAD_OK;
     }
 
-    return FAAD_OK;
+    return FAAD_ERR_UNSUPPORTED;
 }
 
 faad_status adts_decode_header(BitReader *bs, AudioSpecificConfig *asc, uint32_t *frame_length)
@@ -58,6 +60,10 @@ faad_status adts_decode_header(BitReader *bs, AudioSpecificConfig *asc, uint32_t
     }
 
     uint32_t min_hdr = (protection_absent == 0) ? 9 : 7;
+    if (profile != 1) {
+        return FAAD_ERR_UNSUPPORTED;
+    }
+
     if (sr_idx >= 12 || faad_sample_rates[sr_idx] == 0 || flen < min_hdr) {
         return FAAD_ERR_DECODE_FAILED;
     }

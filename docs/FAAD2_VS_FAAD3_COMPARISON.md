@@ -100,6 +100,14 @@ FAAD2 included support for several niche or legacy MPEG-4 audio profiles. FAAD3 
    - *Technical Description*: Bitstream syntax modifications for high-bit-error channels (Digital Radio Mondiale broadcast).
    - *Popularity & Market Status*: **Niche Broadcast**. Exclusively used in DRM AM/FM broadcasts.
 
+#### Unsupported Profile Error Diagnostics in FAAD3
+
+When `libfaad` encounters an unsupported profile or Audio Object Type (e.g. Main Profile AOT 1, SSR AOT 3, LTP AOT 4, LD AOT 23), `asc_decode()` and `adts_decode_header()` explicitly validate the profile and immediately return status code `FAAD_ERR_UNSUPPORTED` (`-2`). The C API strerror function (`faad_strerror`) translates this code to `"Unsupported configuration"`. When running the `faad` CLI executable in `--strict` mode, the diagnostic error message is output concisely to `stderr` as:
+
+```text
+input.aac:0x0000: frame 0: error -2 (Unsupported configuration)
+```
+
 ### 4.2 Other Dropped Features
 - **In-Library File I/O**: FAAD2 embedded MP4 container parsing directly inside `libfaad` (`NeAACDecInit2`). FAAD3 separates stream decoding (`libfaad`) from container parsing (`frontend/mp4read.c`), producing a clean, modular DSP library.
 - **Fixed-Point Math vs Floating-Point Performance**: FAAD3 is written in pure C11 floating-point math, which benchmarks show is **1.40x to 2.18x faster** than FAAD2 fixed-point baselines on modern CPUs while reducing `.text` footprint by 50% (~101 KB vs ~203 KB) and `.rodata` tables by 90% (~9 KB vs ~91 KB). For embedded platforms without hardware FPUs, FAAD3 provides an opt-in fixed-point abstraction layer (`FAAD_FIXED_POINT` / `libfaad/faad_math.h`).
