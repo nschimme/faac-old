@@ -93,9 +93,34 @@ static void test_asc_sbr_signalling(void)
     }
 }
 
+static void test_asc_drm_rejection(void)
+{
+    /* AAC-LC with frameLengthFlag = 1 (960-sample DRM frame size) */
+    static const uint8_t drm_frame_len_960[] = { 0x14, 0x0c };
+    /* ER AAC LC (AOT 17) */
+    static const uint8_t drm_er_aot17[]       = { 0x8c, 0x08 };
+
+    const struct { const uint8_t *asc; uint32_t len; } drm_cases[] = {
+        { drm_frame_len_960, sizeof(drm_frame_len_960) },
+        { drm_er_aot17,       sizeof(drm_er_aot17) },
+    };
+
+    faad_config cfg;
+    assert(faad_config_init(&cfg, sizeof(cfg)) == FAAD_OK);
+    cfg.stream_format = FAAD_STREAM_RAW;
+
+    for (size_t i = 0; i < sizeof(drm_cases) / sizeof(drm_cases[0]); i++) {
+        faad_decoder *dec = NULL;
+        faad_status st = faad_decoder_create(&cfg, drm_cases[i].asc, drm_cases[i].len, &dec);
+        assert(st == FAAD_ERR_UNSUPPORTED);
+        assert(dec == NULL);
+    }
+}
+
 int main(void)
 {
     test_asc_sbr_signalling();
+    test_asc_drm_rejection();
 
     faad_config cfg;
     faad_status st = faad_config_init(&cfg, sizeof(cfg));

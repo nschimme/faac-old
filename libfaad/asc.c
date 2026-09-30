@@ -25,6 +25,11 @@ faad_status asc_decode(BitReader *bs, AudioSpecificConfig *asc)
     asc->sbr_sample_rate = info.sbr_sample_rate;
     asc->is_ps = info.ps_present;
 
+    /* Reject 960-sample frame length (DRM / short frame) */
+    if (info.frame_length_flag) {
+        return FAAD_ERR_UNSUPPORTED;
+    }
+
     /* Validate supported Audio Object Types: LC (2), HE-AAC v1 (5), HE-AAC v2 (29), or NULL (0) */
     if (asc->object_type == FAAD_OBJ_LC || asc->object_type == FAAD_OBJ_HE_AAC_V1 ||
         asc->object_type == FAAD_OBJ_HE_AAC_V2 || asc->object_type == FAAD_OBJ_NULL) {

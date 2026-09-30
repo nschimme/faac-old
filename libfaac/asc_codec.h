@@ -44,6 +44,7 @@ typedef struct {
     bool     sbr_present;
     uint32_t sbr_sample_rate; /* post-SBR (extension) rate, Hz; == 2*sample_rate if not explicitly signaled */
     bool     ps_present;
+    bool     frame_length_flag; /* 0 = 1024 (standard), 1 = 960 (DRM / short frame) */
 } AscInfo;
 
 typedef struct { const uint8_t *buf; uint32_t len_bits; uint32_t pos; } asc_bitreader;
@@ -117,7 +118,7 @@ static inline void asc_codec_parse(const uint8_t *buf, uint32_t len, AscInfo *ou
 
     if (aot != 2) return; /* GASpecificConfig only walked here for AAC-LC */
 
-    asc_br_get(&br, 1); /* frameLengthFlag */
+    out->frame_length_flag = asc_br_get(&br, 1) != 0; /* frameLengthFlag */
     if (asc_br_get(&br, 1)) {
         asc_br_get(&br, 14); /* coreCoderDelay, iff dependsOnCoreCoder */
     }
