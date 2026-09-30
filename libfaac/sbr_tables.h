@@ -27,20 +27,33 @@ extern "C" {
 
 typedef float sbrfloat;
 
-typedef struct {
-    uint32_t code : 24;
-    uint32_t len  : 8;
-} SBRHuffEntry;
+typedef uint32_t SBRHuffEntry;
 
 #define F_HUFF_ENV_1_5DB_OFFSET  60
 #define F_HUFF_ENV_1_5DB_NSYMS   121
 #define F_HUFF_ENV_3_0DB_OFFSET  31
 #define F_HUFF_ENV_3_0DB_NSYMS   63
 
+/* Time-delta envelope codes, central entries only: a wider jump always costs
+ * less as frequency deltas, so the encoder never needs the rest. */
+#define T_HUFF_ENV_LAV    6
+#define T_HUFF_ENV_NSYMS  (2 * T_HUFF_ENV_LAV + 1)
+
 extern const sbrfloat qmf_c[640];
 extern const int8_t sbr_offset[6][16];
-extern const SBRHuffEntry f_huff_env_1_5dB[F_HUFF_ENV_1_5DB_NSYMS];
-extern const SBRHuffEntry f_huff_env_3_0dB[F_HUFF_ENV_3_0DB_NSYMS];
+extern const uint32_t f_huff_env_1_5dB[F_HUFF_ENV_1_5DB_NSYMS];
+extern const uint32_t f_huff_env_3_0dB[F_HUFF_ENV_3_0DB_NSYMS];
+extern const uint32_t t_huff_env_1_5dB[T_HUFF_ENV_NSYMS];
+extern const uint32_t t_huff_env_3_0dB[T_HUFF_ENV_NSYMS];
+/* Balance (coupled second channel) codes. */
+#define F_HUFF_ENV_BAL_1_5DB_OFFSET 24
+#define F_HUFF_ENV_BAL_1_5DB_NSYMS  49
+#define F_HUFF_ENV_BAL_3_0DB_OFFSET 12
+#define F_HUFF_ENV_BAL_3_0DB_NSYMS  25
+extern const uint32_t f_huff_env_bal_1_5dB[F_HUFF_ENV_BAL_1_5DB_NSYMS];
+extern const uint32_t f_huff_env_bal_3_0dB[F_HUFF_ENV_BAL_3_0DB_NSYMS];
+extern const uint32_t t_huff_env_bal_1_5dB[T_HUFF_ENV_NSYMS];
+extern const uint32_t t_huff_env_bal_3_0dB[T_HUFF_ENV_NSYMS];
 
 #ifdef __cplusplus
 }
