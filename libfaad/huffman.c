@@ -7,14 +7,21 @@
 #include <math.h>
 
 static float pow_4_3_lut[128];
-static float sf_scale_lut[256];
+static float sf_scale_lut[512];
+
+float get_sf_scale(int sf)
+{
+    if (sf < 0) sf = 0;
+    if (sf > 511) sf = 511;
+    return sf_scale_lut[sf];
+}
 
 void init_dequant_tables(void)
 {
     for (int i = 0; i < 128; i++) {
         pow_4_3_lut[i] = powf((float)i, 4.0f / 3.0f);
     }
-    for (int i = 0; i < 256; i++) {
+    for (int i = 0; i < 512; i++) {
         sf_scale_lut[i] = powf(2.0f, 0.25f * (i - 100));
     }
 }
@@ -322,7 +329,7 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
             if (cb == 0 || cb >= 13) continue;
             {
                 int sf = ics->scalefactors[g][sfb];
-                float scale = (sf >= 0 && sf < 256) ? sf_scale_lut[sf] : powf(2.0f, 0.25f * (sf - 100));
+                float scale = get_sf_scale(sf);
 
                 int start_k = sfb_offsets[sfb];
                 int end_k = sfb_offsets[sfb + 1];

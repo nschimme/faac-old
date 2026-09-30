@@ -58,7 +58,7 @@ void apply_ms_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spe
                 if (pns_l) {
                     /* §4.6.13.3: ms_used on a PNS band means correlated noise:
                      * the right channel reuses the left vector at its own level. */
-                    float gain = powf(2.0f, 0.25f * (float)(cpe->ics[1].scalefactors[g][sfb] - ics->scalefactors[g][sfb]));
+                    float gain = get_sf_scale(cpe->ics[1].scalefactors[g][sfb] - ics->scalefactors[g][sfb] + 100);
                     for (int k = 0; k < len; k++) r_ptr[k] = l_ptr[k] * gain;
                 } else {
                     for (int k = 0; k < len; k++) {
