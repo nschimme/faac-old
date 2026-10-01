@@ -1,6 +1,5 @@
 /*
  * FAAC - Freeware Advanced Audio Coder
- * Huffman codebook tables reproduced from ISO/IEC 14496-3 (non-copyrightable facts)
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -11,6 +10,10 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
+ */
+
+/*
+ * Huffman codebook tables reproduced from ISO/IEC 14496-3 (non-copyrightable facts)
  */
 
 #ifndef HUFFDATA_H
