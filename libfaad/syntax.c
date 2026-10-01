@@ -184,7 +184,7 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
 
     decode_scale_factor_data(bs, ics, dec->core_sample_rate
 #ifdef FAAD_STATS
-        , &dec->stats
+        , dec
 #endif
     );
 
@@ -250,7 +250,7 @@ faad_status decode_ics(BitReader *bs, struct faad_decoder *dec, ICSInfo *ics, fl
 
     return decode_spectral_data(bs, ics, spec
 #ifdef FAAD_STATS
-        , &dec->stats
+        , dec
 #endif
     );
 }

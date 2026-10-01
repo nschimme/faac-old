@@ -193,7 +193,7 @@ static inline void decode_quad(BitReader *bs, int book, int *v, int *w, int *x, 
 
 static inline void decode_pair(BitReader *bs, int book, int *x, int *y
 #ifdef FAAD_STATS
-    , FaadDecStats *stats
+    , struct faad_decoder *dec
 #endif
 )
 {
@@ -216,7 +216,7 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y
             while (bits_get_1(bs) == 1) prefix++;
             abs_x = (1 << (prefix + 4)) + bits_get_fast(bs, prefix + 4);
 #ifdef FAAD_STATS
-            stats->escbookMagnitudeEscapes++;
+            dec->stats.escbookMagnitudeEscapes++;
 #endif
         }
         if (abs_y == 16) {
@@ -224,7 +224,7 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y
             while (bits_get_1(bs) == 1) prefix++;
             abs_y = (1 << (prefix + 4)) + bits_get_fast(bs, prefix + 4);
 #ifdef FAAD_STATS
-            stats->escbookMagnitudeEscapes++;
+            dec->stats.escbookMagnitudeEscapes++;
 #endif
         }
         *x = neg_x ? -abs_x : abs_x;
@@ -238,7 +238,7 @@ static inline void decode_pair(BitReader *bs, int book, int *x, int *y
 
 faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sample_rate
 #ifdef FAAD_STATS
-    , FaadDecStats *stats
+    , struct faad_decoder *dec
 #endif
 )
 {
@@ -255,13 +255,13 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
         for (int sfb = 0; sfb < max_sfb; sfb++) {
             int cb = ics->sfb_cb[g][sfb];
 #ifdef FAAD_STATS
-            stats->totalBands++;
+            dec->stats.totalBands++;
 #endif
             if (cb == 0) {
                 continue;
             } else if (cb == 13) { /* PNS */
 #ifdef FAAD_STATS
-                stats->pnsBands++;
+                dec->stats.pnsBands++;
 #endif
                 if (is_first_pns) {
                     pns_energy += (int)bits_get(bs, 9) - 256;
@@ -273,7 +273,7 @@ faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sampl
                 ics->scalefactors[g][sfb] = (int16_t)pns_energy;
             } else if (cb == 14 || cb == 15) { /* Intensity stereo */
 #ifdef FAAD_STATS
-                stats->isBands++;
+                dec->stats.isBands++;
 #endif
                 int dis = DECODE_HUFF_SF(bs);
                 is_pos += dis - 60; /* signed: negative positions boost the right channel */
@@ -321,7 +321,7 @@ static void apply_pulses(const ICSInfo *ics, float *spec, int max_sfb)
 
 faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
 #ifdef FAAD_STATS
-    , FaadDecStats *stats
+    , struct faad_decoder *dec
 #endif
 )
 {
@@ -363,7 +363,7 @@ faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
                             int x, y;
                             decode_pair(bs, cb, &x, &y
 #ifdef FAAD_STATS
-                                , stats
+                                , dec
 #endif
                             );
                             ptr[0] = pow_4_3_fast(x) * scale;

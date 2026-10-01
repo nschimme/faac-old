@@ -29,9 +29,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#ifdef FAAD_STATS
-#include <stdio.h>
-#endif
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -56,6 +53,7 @@
 
 
 #include "faad.h"
+#include "stats.h"
 #include "huffdata.h"
 #include "sbr_tables.h"
 
@@ -216,53 +214,6 @@ typedef struct {
     ICSInfo ics[2];
 } CPEInfo;
 
-#ifdef FAAD_STATS
-/* Aggregate, opt-in decoder diagnostics -- mirrors libfaac's FAAC_STATS in
- * spirit (see libfaac/stats.h), but embedded per-decoder rather than a
- * process-wide global: test_faad.c decodes with multiple concurrent
- * faad_decoder instances, and a global would race and corrupt across them. */
-typedef struct FaadDecStats {
-    unsigned int totalFrames;
-    unsigned int elementCounts[8]; /* indexed by syntax_id: SCE,CPE,CCE,LFE,DSE,PCE,FIL,END */
-    unsigned int nonEndTermination;
-
-    unsigned int lastChannels;
-    bool haveLastChannels;
-    unsigned int channelCountChanges;
-    unsigned int minChannels, maxChannels;
-
-    unsigned int icsCount;
-    unsigned int tnsActiveFrames;
-    unsigned int shortBlockIcsCount;
-    unsigned int sbrActiveFrames;
-    unsigned int sbrHeaderCount;
-    unsigned int sbrEnvelopeSum;
-    unsigned int psActiveFrames;
-    unsigned int psIidBandsSum;
-    unsigned int psIccBandsSum;
-
-    /* Per-channel-band codebook mix, counted the way libfaac's FAAC_STATS
-     * counts them on the encode side (see libfaac/stats.h) so a stream
-     * decoded here and the same content run through faac report directly
-     * comparable percentages. */
-    unsigned long totalBands;
-    unsigned long msBands;
-    unsigned long isBands;
-    unsigned long pnsBands;
-
-    unsigned int escbookMagnitudeEscapes; /* book 11 values needing the >=16 escape path */
-
-    unsigned int fillElementCount;
-    unsigned int fillElementPadBitsSum;
-    unsigned int fillElementMaxPad;
-
-    unsigned int errorConcealmentFrames;
-
-    /* Per-frame decision dump, opened lazily from FAAD_DUMP (decoder.c). */
-    FILE *dumpFile;
-    bool dumpOpenTried;
-} FaadDecStats;
-#endif
 
 /* ---- Parametric stereo (ISO/IEC 14496-3 §8.6) ---- */
 #define PS_MAX_ENV      5   /* four coded envelopes plus the implicit trailing one */
@@ -436,25 +387,25 @@ struct faad_decoder {
     float pcm[MAX_CHANNELS * 2048]; /* core output, then SBR output in place */
 
 #ifdef FAAD_STATS
-    FaadDecStats stats;
+    faadDecStats stats;
 #endif
 };
 
 void setup_sfb_offsets(ICSInfo *ics, uint32_t sample_rate);
 faad_status decode_scale_factor_data(BitReader *bs, ICSInfo *ics, uint32_t sample_rate
 #ifdef FAAD_STATS
-    , FaadDecStats *stats
+    , struct faad_decoder *dec
 #endif
 );
 faad_status decode_spectral_data(BitReader *bs, ICSInfo *ics, float *spec
 #ifdef FAAD_STATS
-    , FaadDecStats *stats
+    , struct faad_decoder *dec
 #endif
 );
 void apply_pns(ICSInfo *ics, float *spec, uint32_t *pns_seed);
 void apply_ms_stereo(CPEInfo *cpe, float *spec_l, float *spec_r
 #ifdef FAAD_STATS
-    , FaadDecStats *stats
+    , struct faad_decoder *dec
 #endif
 );
 void apply_is_stereo(CPEInfo *cpe, float *spec_l, float *spec_r);

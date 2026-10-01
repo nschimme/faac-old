@@ -234,7 +234,7 @@ FAADAPI faad_status faad_decoder_create(const faad_config *cfg,
 #ifdef FAAD_STATS
 static void faad_print_stats(const struct faad_decoder *dec)
 {
-    const FaadDecStats *s = &dec->stats;
+    const faadDecStats *s = &dec->stats;
     if (s->totalFrames == 0) return;
 
     double tns_pct = s->icsCount > 0 ? 100.0 * s->tnsActiveFrames / s->icsCount : 0.0;
@@ -264,6 +264,10 @@ static void faad_print_stats(const struct faad_decoder *dec)
             s->tnsActiveFrames, s->icsCount, tns_pct);
     fprintf(stderr, " SBR                 : active in %u/%u frames (%.1f%%)\n",
             s->sbrActiveFrames, s->totalFrames, sbr_pct);
+    fprintf(stderr, " SBR payloads        : %u headers, %u envelopes\n",
+            s->sbrHeaderCount, s->sbrEnvelopeSum);
+    fprintf(stderr, " Parametric stereo   : active in %u/%u frames\n",
+            s->psActiveFrames, s->totalFrames);
     fprintf(stderr, " Short blocks        : %u/%u ics (%.1f%%)\n",
             s->shortBlockIcsCount, s->icsCount, short_pct);
     fprintf(stderr, " M/S, IS, PNS bands  : %.1f%% / %.1f%% / %.1f%% of %lu total\n",
@@ -336,7 +340,7 @@ FAADAPI faad_status faad_decoder_flush(faad_decoder *dec)
  *   P frame iid icc num_env */
 FILE *faad_dump_file(struct faad_decoder *dec)
 {
-    FaadDecStats *st = &dec->stats;
+    faadDecStats *st = &dec->stats;
     if (!st->dumpOpenTried) {
         st->dumpOpenTried = true;
         const char *path = getenv("FAAD_DUMP");
@@ -505,7 +509,7 @@ FAADAPI faad_status faad_decode_frame(faad_decoder *dec,
                 apply_pns(&cpe.ics[1], dec->spec[ch_idx + 1], &dec->pns_seed);
                 apply_ms_stereo(&cpe, dec->spec[ch_idx], dec->spec[ch_idx + 1]
 #ifdef FAAD_STATS
-                    , &dec->stats
+                    , dec
 #endif
                 );
                 apply_is_stereo(&cpe, dec->spec[ch_idx], dec->spec[ch_idx + 1]);

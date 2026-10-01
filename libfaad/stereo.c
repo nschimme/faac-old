@@ -32,7 +32,7 @@ void init_is_tables(void)
 
 void apply_ms_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spec_r
 #ifdef FAAD_STATS
-    , FaadDecStats *stats
+    , struct faad_decoder *dec
 #endif
 )
 {
@@ -55,7 +55,7 @@ void apply_ms_stereo(CPEInfo *cpe, float * restrict spec_l, float * restrict spe
 #ifdef FAAD_STATS
             /* Counted per channel slot, same granularity as totalBands, so
              * msBands/totalBands lines up with libfaac's own ratio. */
-            stats->msBands += 2;
+            dec->stats.msBands += 2;
 #endif
 
             int start_k = ics->sfb_offsets[sfb];
