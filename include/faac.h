@@ -244,7 +244,7 @@ typedef struct faac_encoder_info {
     /* Priming delay in samples/channel at the output rate, as gapless tags
      * (iTunSMPB, edit list) declare it. Use verbatim for tagging -- not the same
      * as frame_samples for HE-AAC, and excludes the SBR decoder delay, which
-     * decoders add themselves. */
+     * decoders add themselves when trimming. */
     uint32_t                encoder_delay;
 
     enum faac_rate_control  rate_control;     /* resolved mode (AUTO becomes VBR or ABR)          */

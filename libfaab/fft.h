@@ -16,6 +16,8 @@
 #ifndef _FFT_H_
 #define _FFT_H_
 
+#include "faab_export.h"
+
 typedef float fftfloat;
 
 #define FFT_LOGM_SHORT 6  /* 256-sample short block MDCT, SBR QMF */
@@ -26,10 +28,10 @@ typedef float fftfloat;
 #define FFT_TBL_LEN ((1 << FFT_LOGM_SHORT) + (1 << FFT_LOGM_LONG))
 
 /* Builds the process-wide twiddle tables; the caller runs it exactly once. */
-void fft_init(void);
+FAABAPI void fft_init(void);
 
 /* Complex FFT of x into y, natural order; each holds the real half then the
  * imaginary half, 2 << logm floats. x is used as scratch and destroyed. */
-void fft(float * restrict x, float * restrict y, int logm);
+FAABAPI void fft(float * restrict x, float * restrict y, int logm);
 
 #endif

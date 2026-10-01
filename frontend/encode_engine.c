@@ -545,6 +545,14 @@ int run_encoding_session_ext(const encode_options_t *opts,
                  opts->input_filename, faac_strerror(st));
     }
 
+    const uint8_t *asc_data = NULL;
+    uint32_t asc_size = 0;
+    if (hEncoder)
+    {
+        faac_encoder_asc(hEncoder, &asc_data, &asc_size);
+        mp4_set_decoder_config((unsigned char *)asc_data, asc_size);
+    }
+
     faac_encoder_info info = { .struct_size = sizeof(info) };
     faac_encoder_get_info(hEncoder, &info);
 

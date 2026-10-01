@@ -11,6 +11,7 @@ if config_h.get('HAVE_SSE2')
 endif
 
 common_src = [
+    'asc_codec.h',
     'bitstream.c',
     'bitstream.h',
     'blockswitch.c',
@@ -24,14 +25,10 @@ common_src = [
     'faac_internal.h',
     'filtbank.c',
     'filtbank.h',
-    'fft.c',
-    'fft.h',
     'frame.c',
     'frame.h',
     'huff2.c',
     'huff2.h',
-    'huffdata.c',
-    'huffdata.h',
     'quantize.c',
     'quantize.h',
     'ratecontrol.c',
@@ -40,8 +37,6 @@ common_src = [
     'sbr.h',
     'sbr_internal.h',
     'sbr_bitstream.c',
-    'sbr_tables.c',
-    'sbr_tables.h',
     'sbr_analysis.c',
     'sbr_analysis.h',
     'resample.c',
@@ -56,10 +51,13 @@ common_src = [
 
 libfaac = disabler()
 
+# Derives library shared object version directly from project_version in root meson.build
+project_ver = meson.project_version()
+
 common_args = {
-    'include_directories' : ['..', '../include'],
+    'include_directories' : ['..', '../include', '../common'],
     'c_args' : c_args,
-    'dependencies' : [libm],
+    'dependencies' : [libm, faab_dep],
     'link_with' : quantize_simd_libs,
     'install' : true,
     'gnu_symbol_visibility' : 'hidden',
@@ -67,7 +65,6 @@ common_args = {
 
 default_lib = get_option('default_library')
 
-# LTO on the static archive ships unportable compiler bytecode, so keep it off.
 if default_lib == 'static' or default_lib == 'both'
     libfaac_static = static_library(
         'faac',
@@ -83,8 +80,7 @@ if default_lib == 'shared' or default_lib == 'both'
         'faac',
         common_src,
         kwargs : common_args + {
-          # Keep in sync with FAAC_VERSION_MAJOR/MINOR/PATCH in include/faac.h.
-          'version' : '2.0.0',
+          'version' : project_ver,
           'vs_module_defs' : 'libfaac.def',
         },
     )
@@ -102,6 +98,6 @@ pkgconfig.generate(
     libfaac,
     name: 'FAAC',
     description: 'Freeware Advanced Audio Coder',
-    version: meson.project_version(),
+    version: project_ver,
     filebase: 'faac'
 )

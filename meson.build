@@ -24,7 +24,6 @@ endforeach
 
 config_h.set('WORDS_BIGENDIAN', host_machine.endian() == 'big')
 
-
 libm = cc.find_library('m', required: false)
 
 cpu_family = target_machine.cpu_family()
@@ -34,6 +33,7 @@ config_h.set('HAVE_SSE2', (cpu_family in ['x86', 'x86_64']) and config_h.get('HA
 config_h.set('FAAC_SBR_DECIMATION', get_option('sbr-decimation'))
 
 config_h.set('FAAC_STATS', get_option('stats'))
+config_h.set('FAAD_STATS', get_option('stats'))
 
 config_h.set('MAX_CHANNELS', get_option('max-channels'))
 
@@ -54,10 +54,18 @@ else
     add_project_arguments('-include', meson.current_build_dir() / 'config.h', language: 'c')
 endif
 
-
 subdir('docs')
 subdir('include')
+subdir('libfaab')
 subdir('libfaac')
+
+if get_option('muxer')
+    subdir('libfaam')
+endif
+
+if get_option('decoder')
+    subdir('libfaad')
+endif
 
 if get_option('frontend')
     subdir('frontend')

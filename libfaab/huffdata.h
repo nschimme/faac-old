@@ -1,6 +1,5 @@
 /*
  * FAAC - Freeware Advanced Audio Coder
- * Huffman codebook tables reproduced from ISO/IEC 14496-3 (non-copyrightable facts)
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -13,12 +12,16 @@
  * Lesser General Public License for more details.
  */
 
+/*
+ * Huffman codebook tables reproduced from ISO/IEC 14496-3 (non-copyrightable facts)
+ */
+
 #ifndef HUFFDATA_H
 #define HUFFDATA_H
 
-#include "huff2.h"
-
 #include <stdint.h>
+
+#include "faab_export.h"
 
 typedef struct {
     uint16_t len;
@@ -30,17 +33,18 @@ typedef struct {
     uint32_t data : 24;   /* codes are <= 19 bits */
 } hcode32_t;
 
-extern const hcode16_t book01[81];
-extern const hcode16_t book02[81];
-extern const hcode16_t book03[81];
-extern const hcode16_t book04[81];
-extern const hcode16_t book05[81];
-extern const hcode16_t book06[81];
-extern const hcode16_t book07[64];
-extern const hcode16_t book08[64];
-extern const hcode16_t book09[169];
-extern const hcode16_t book10[169];
-extern const hcode16_t book11[289];
-extern const hcode32_t book12[2 * SF_DELTA + 1];
+extern FAABAPI const hcode16_t book01[81];
+extern FAABAPI const hcode16_t book02[81];
+extern FAABAPI const hcode16_t book03[81];
+extern FAABAPI const hcode16_t book04[81];
+extern FAABAPI const hcode16_t book05[81];
+extern FAABAPI const hcode16_t book06[81];
+extern FAABAPI const hcode16_t book07[64];
+extern FAABAPI const hcode16_t book08[64];
+extern FAABAPI const hcode16_t book09[169];
+extern FAABAPI const hcode16_t book10[169];
+extern FAABAPI const hcode16_t book11[289];
+/* Scalefactor-delta book: ISO/IEC 14496-3 SF_DELTA range is +/-60. */
+extern FAABAPI const hcode32_t book12[121];
 
 #endif /* HUFFDATA_H */

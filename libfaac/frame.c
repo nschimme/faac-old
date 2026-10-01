@@ -31,6 +31,8 @@
 #include "sbr.h"
 #include "ratecontrol.h"
 #include "atomic.h"
+#include "asc_codec.h"
+#include "endian.h"
 
 /* HE-AAC auto-mode thresholds; tuned via ViSQOL on a 49-clip corpus. */
 #define HE_MIN_SAMPLE_RATE    32000  /* Fs/2 < 16 kHz below this → core too narrow for SBR */
@@ -150,14 +152,14 @@ int faacEncGetDecoderSpecificInfo(faacEncHandle hpEncoder,unsigned char** ppBuff
     }
 
     *pSizeOfDecoderSpecificInfo = 2;
-    *ppBuffer = (unsigned char *)malloc(2);
+    *ppBuffer = (unsigned char *)AllocMemory(2);
 
     if(*ppBuffer != NULL){
-        BitStream bs;
-        InitBitStream(&bs, *ppBuffer, 2); /* zeroes the buffer, so the 3 trailing pad bits need no write */
-        PutBit(&bs, hEncoder->config.aacObjectType, 5);
-        PutBit(&bs, hEncoder->sampleRateIdx,        4);
-        PutBit(&bs, GetChannelConfig((int)hEncoder->numChannels), 4);
+        AscBuildInfo info = {0};
+        info.object_type = (uint8_t)hEncoder->config.aacObjectType;
+        info.sr_idx = (uint8_t)hEncoder->sampleRateIdx;
+        info.channels = (uint8_t)hEncoder->numChannels;
+        asc_codec_build(&info, *ppBuffer, 2);
         return 0;
     } else {
         return -3;
@@ -465,7 +467,7 @@ faacEncHandle faacEncOpen(unsigned long sampleRate,
     unsigned int channel;
     faacEncStruct* hEncoder;
 
-    if (GetChannelConfig((int)numChannels) == 0)
+    if (numChannels < 1 || numChannels > MAX_CHANNELS)
 	return NULL;
 
     *inputSamples = FRAME_LEN*numChannels;
@@ -547,11 +549,10 @@ static int appendInputFifo(faacEncStruct *hEncoder, int32_t *inputBuffer,
                 for (i = 0; i < spch; i++) {
                     const uint8_t *src = src_base + (i * numChannels + hEncoder->config.channel_map[channel]) * 3;
 #if WORDS_BIGENDIAN
-                    int32_t s = ((int32_t)src[0] << 16) | ((int32_t)src[1] << 8) | (int32_t)src[2];
+                    int32_t s = read_pcm24(src, true);
 #else
-                    int32_t s = (int32_t)src[0] | ((int32_t)src[1] << 8) | ((int32_t)src[2] << 16);
+                    int32_t s = read_pcm24(src, false);
 #endif
-                    if (s & 0x800000) s |= (int32_t)0xff000000;
                     dst[i] = (1.0f / 256.0f) * (float)s;
                 }
                 break;
