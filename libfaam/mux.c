@@ -102,7 +102,7 @@ static inline long start_atom(faam_muxer *m, const char *name) {
 static inline void end_atom(faam_muxer *m, long pos) {
     if (m->membuf) {
         uint32_t size = (uint32_t)(m->mempos - pos);
-#ifndef WORDS_BIGENDIAN
+#if !WORDS_BIGENDIAN
         size = bswap32(size);
 #endif
         memcpy(m->membuf + pos, &size, 4);
@@ -154,7 +154,7 @@ static void put_tag_u8(faam_muxer *m, const char *name, uint8_t val) {
 }
 
 static void put_tag_genre(faam_muxer *m, uint16_t genre) {
-#ifndef WORDS_BIGENDIAN
+#if !WORDS_BIGENDIAN
     uint16_t val = bswap16(genre);
 #else
     uint16_t val = genre;
@@ -165,7 +165,7 @@ static void put_tag_genre(faam_muxer *m, uint16_t genre) {
 static void put_tag_index(faam_muxer *m, const char *name, uint16_t num, uint16_t total) {
     uint16_t buf[4] = {
         0,
-#ifndef WORDS_BIGENDIAN
+#if !WORDS_BIGENDIAN
         bswap16(num),
         bswap16(total),
 #else
