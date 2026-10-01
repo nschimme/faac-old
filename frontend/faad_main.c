@@ -397,6 +397,12 @@ int main(int argc, char **argv)
     MP4Track track;
     memset(&track, 0, sizeof(track));
     bool is_mp4 = mp4_read_track_buf(inbuf, file_len, &track);
+    if (is_mp4 && (!track.asc_buf || track.num_samples == 0)) {
+        fprintf(stderr, "%s: no supported AAC audio track found in MP4 file\n", infile);
+        free(inbuf);
+        mp4_free_track(&track);
+        return 1;
+    }
 
     /* Direct ADTS extraction from MP4 container without decoding */
     if (adts_outfile && is_mp4) {
