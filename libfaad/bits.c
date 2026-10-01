@@ -102,18 +102,3 @@ uint32_t bits_get_consumed(BitReader *bs)
 {
     return bs->byte_pos * 8 + bs->bit_pos;
 }
-
-/* Zero-copy memory-mapped slice reader for RFC 3640 RTP AAC Access Units */
-void bits_slice_rtp_au(BitReader *sub_bs, const BitReader *parent_bs, uint32_t byte_offset, uint32_t au_len)
-{
-    if (!sub_bs || !parent_bs) return;
-    uint32_t start_byte = parent_bs->byte_pos + byte_offset;
-    if (start_byte > parent_bs->len) start_byte = parent_bs->len;
-    uint32_t rem_len = parent_bs->len - start_byte;
-    if (au_len > rem_len) au_len = rem_len;
-
-    sub_bs->buffer = parent_bs->buffer + start_byte;
-    sub_bs->len = au_len;
-    sub_bs->byte_pos = 0;
-    sub_bs->bit_pos = 0;
-}

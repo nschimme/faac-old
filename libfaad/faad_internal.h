@@ -154,7 +154,6 @@ static inline uint32_t bits_show_fast(BitReader *bs, uint32_t nbits)
 void bits_skip(BitReader *bs, uint32_t nbits);
 void bits_byte_align(BitReader *bs);
 uint32_t bits_get_consumed(BitReader *bs);
-void bits_slice_rtp_au(BitReader *sub_bs, const BitReader *parent_bs, uint32_t byte_offset, uint32_t au_len);
 
 typedef struct {
     enum faad_object_type object_type;
