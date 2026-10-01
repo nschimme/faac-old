@@ -137,10 +137,10 @@ bool mp4_read_track_buf(const uint8_t *buf, long file_size, MP4Track *track)
 
     faam_demuxer_close(d);
     free(mem);
-    /* A structurally valid MP4 is still an MP4 even if it has no AAC audio;
-     * let the caller report that case instead of treating container bytes as
-     * an ADTS stream. */
-    return true;
+    /* A valid MP4 without AAC audio is still an MP4: the caller reports that.
+     * Without any track the input is not a container at all (e.g. ADTS), so
+     * hand it back to be treated as a raw stream. */
+    return num_tracks > 0;
 #else
     (void)buf; (void)file_size;
     return false;
