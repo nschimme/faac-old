@@ -73,8 +73,7 @@ static void print_usage(void)
     printf("                               Mux elementary streams (H.264, H.265, AAC) into MP4\n");
     printf("                               (no subcommand word; ffmpeg-style -i/-o)\n");
     printf("                               --codec:N <h264|h265|aac>  Codec for the Nth -i (0-based)\n\n");
-    printf("Options:\n");
-    printf("  --strict                    Enable strict error handling and debug diagnostics\n\n");
+    printf("Options:\n\n");
     printf("Tag options (faam tag <input.mp4> ...):\n");
     printf("  --title/--artist/--album/--albumartist/--composer <text>\n");
     printf("  --titlesort is not supported; --artistsort/--albumsort/--albumartistsort/--composersort <text>\n");
@@ -100,7 +99,6 @@ enum {
     OPT_TITLE,
     OPT_ARTIST,
     OPT_ALBUM,
-    OPT_STRICT,
     OPT_ARTIST_SORT,
     OPT_ALBUM_SORT,
     OPT_ALBUM_ARTIST,
@@ -128,17 +126,14 @@ enum {
 static int cmd_info(int argc, char **argv)
 {
     const char *filepath = NULL;
-    bool strict_mode = false;
     static struct option long_options[] = {
-        {"strict", no_argument, 0, OPT_STRICT},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
     int opt;
     optind = 1;
     while ((opt = getopt_long(argc, argv, "h", long_options, NULL)) != -1) {
-        if (opt == OPT_STRICT) { strict_mode = true; }
-        else if (opt == 'h') { print_usage(); return 0; }
+        if (opt == 'h') { print_usage(); return 0; }
     }
     if (optind < argc) filepath = argv[optind];
 
@@ -162,11 +157,7 @@ static int cmd_info(int argc, char **argv)
     faam_demuxer *d = NULL;
     faam_status st = faam_demuxer_init(mem, demux_size, &io, &d);
     if (st != FAAM_OK) {
-        if (strict_mode) {
-            fprintf(stderr, "%s: info: error %d (%s)\n", filepath, st, faam_strerror(st));
-        } else {
-            fprintf(stderr, "Error parsing %s: %s\n", filepath, faam_strerror(st));
-        }
+        fprintf(stderr, "Error parsing %s: %s\n", filepath, faam_strerror(st));
         free(mem);
         fclose(f);
         return 1;
@@ -1184,7 +1175,6 @@ static bool remove_metadata_field(faam_metadata *meta, const char *name)
 static int cmd_tag(int argc, char **argv)
 {
     const char *filepath = NULL;
-    bool strict_mode = false;
     faam_metadata meta;
     memset(&meta, 0, sizeof(meta));
 
@@ -1215,7 +1205,6 @@ static int cmd_tag(int argc, char **argv)
         {"language", required_argument, 0, OPT_LANG},
         {"remove", required_argument, 0, OPT_REMOVE},
         {"clear", no_argument, 0, OPT_CLEAR},
-        {"strict", no_argument, 0, OPT_STRICT},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
@@ -1351,7 +1340,6 @@ static int cmd_tag(int argc, char **argv)
         }
         case OPT_REMOVE: /* handled in pass 1 */
         case OPT_CLEAR:  /* handled in pass 1 */
-        case OPT_STRICT: strict_mode = true; break;
         case 'h': print_usage(); free(cover_buf); fclose(f); return 0;
         default: break;
         }
@@ -1370,11 +1358,7 @@ static int cmd_tag(int argc, char **argv)
     fclose(f);
 
     if (st != FAAM_OK) {
-        if (strict_mode) {
-            fprintf(stderr, "%s: tag: error %d (%s)\n", filepath, st, faam_strerror(st));
-        } else {
-            fprintf(stderr, "Error updating tags on %s: %s\n", filepath, faam_strerror(st));
-        }
+        fprintf(stderr, "Error updating tags on %s: %s\n", filepath, faam_strerror(st));
         return 1;
     }
 
