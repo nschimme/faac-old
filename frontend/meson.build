@@ -80,6 +80,10 @@ if get_option('decoder')
         dependencies: [libshell32, libiconv],
         install: true
     )
+    if not meson.is_cross_build()
+        test('faad_frontend_test', find_program('python3'),
+            args: [files('../tests/faad_frontend_test.py'), faac, faad])
+    endif
 endif
 
 if target_machine.system() == 'windows'

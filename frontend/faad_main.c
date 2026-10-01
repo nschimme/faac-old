@@ -165,10 +165,13 @@ static uint32_t wav_channel_mask(uint16_t num_channels)
  * channel mask above that, so players place the surround channels. */
 static void write_wav_header(FILE *f, uint32_t sample_rate, uint16_t num_channels, uint32_t total_pcm_bytes, uint16_t bits_per_sample, bool is_float)
 {
-    fseek(f, 0, SEEK_SET);
+    /* stdout cannot be patched afterwards: declare an unknown length (all ones)
+     * the way streaming writers do, so readers consume to EOF */
+    bool stream = (f == stdout);
+    if (!stream) fseek(f, 0, SEEK_SET);
     bool extensible = num_channels > 2;
     uint32_t fmt_size = extensible ? 40 : 16;
-    uint32_t file_size = htole32(4 + 8 + fmt_size + 8 + total_pcm_bytes);
+    uint32_t file_size = htole32(stream ? UINT32_MAX : 4 + 8 + fmt_size + 8 + total_pcm_bytes);
     uint16_t bytes_per_sample = bits_per_sample / 8;
     uint32_t byte_rate = htole32(sample_rate * num_channels * bytes_per_sample);
     uint16_t block_align = htole16(num_channels * bytes_per_sample);
@@ -203,7 +206,7 @@ static void write_wav_header(FILE *f, uint32_t sample_rate, uint16_t num_channel
         fwrite(guid, 1, 16, f);
     }
 
-    uint32_t pcm_bytes_le = htole32(total_pcm_bytes);
+    uint32_t pcm_bytes_le = htole32(stream ? UINT32_MAX : total_pcm_bytes);
     fwrite("data", 1, 4, f);
     fwrite(&pcm_bytes_le, 4, 1, f);
 }
@@ -465,6 +468,7 @@ int main(int argc, char **argv)
         if (write_stdout) {
             fout = stdout;
             quiet = true;
+            header_pending = !raw_format;
         } else {
             if (!outfile) {
                 char *out_path = (char *)malloc(strlen(infile) + 8);
