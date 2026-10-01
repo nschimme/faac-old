@@ -1,0 +1,76 @@
+name: Big-endian
+
+on:
+  push:
+    branches: [ "master", "big-endian-ci" ]
+    tags-ignore: ['*']
+    paths-ignore: ['**.md']
+  pull_request:
+    branches: [ "master" ]
+    paths-ignore: ['**.md']
+
+jobs:
+  s390x:
+    name: Linux s390x (qemu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson gcc-s390x-linux-gnu qemu-user
+
+      - name: Generate test input
+        run: |
+          python3 - <<'PY'
+          import math, struct, wave
+          rate, secs = 44100, 3
+          seed = 12345
+          w = wave.open('input.wav', 'wb')
+          w.setnchannels(2); w.setsampwidth(2); w.setframerate(rate)
+          out = bytearray()
+          for i in range(rate * secs):
+              seed = (seed * 1103515245 + 12345) & 0x7fffffff
+              noise = ((seed >> 16) & 0x3ff) - 512
+              t = i / rate
+              l = int(9000 * math.sin(2 * math.pi * 440 * t) + 3000 * math.sin(2 * math.pi * 3520 * t) + noise)
+              r = int(8000 * math.sin(2 * math.pi * 660 * t) + noise)
+              out += struct.pack('<hh', l, r)
+          w.writeframes(bytes(out)); w.close()
+          PY
+
+      - name: Build native reference
+        run: |
+          meson setup build-native -Ddefault_library=static
+          ninja -C build-native
+
+      - name: Build s390x (big-endian)
+        run: |
+          cat > s390x.txt <<'EOF'
+          [binaries]
+          c = 's390x-linux-gnu-gcc'
+          ar = 's390x-linux-gnu-ar'
+          strip = 's390x-linux-gnu-strip'
+
+          [host_machine]
+          system = 'linux'
+          cpu_family = 's390x'
+          cpu = 's390x'
+          endian = 'big'
+
+          [properties]
+          needs_exe_wrapper = true
+          EOF
+          meson setup build-s390x --cross-file s390x.txt -Ddefault_library=static -Dc_link_args=-static
+          grep WORDS_BIGENDIAN build-s390x/config.h
+          ninja -C build-s390x
+
+      - name: Encode natively and under qemu, compare
+        run: |
+          for fmt in aac m4a; do
+            build-native/frontend/faac -o native.$fmt input.wav
+            qemu-s390x build-s390x/frontend/faac -o s390x.$fmt input.wav
+            ls -l native.$fmt s390x.$fmt
+            cmp native.$fmt s390x.$fmt
+          done
